@@ -31,6 +31,13 @@ interface ImmichAsset {
   thumbhash?: string | null;
   localDateTime?: string;
   fileCreatedAt?: string;
+  /**
+   * Display dimensions, already corrected for EXIF orientation by Immich
+   * itself. Added after 1.133 — absent on older servers, hence the fallback
+   * in `displayDimensions`.
+   */
+  width?: number | null;
+  height?: number | null;
   exifInfo?: {
     exifImageWidth?: number | null;
     exifImageHeight?: number | null;
@@ -56,7 +63,14 @@ interface ImmichAsset {
  * Immich's own web client does (`isFlipped` in web/src/lib/utils/asset-utils.ts,
  * treating 5/6/90 and 7/8/-90 as sideways).
  */
-function displayDimensions(exif: ImmichAsset['exifInfo']): { w: number; h: number } {
+function displayDimensions(asset: ImmichAsset): { w: number; h: number } {
+  // Preferred: the asset's own width/height. Immich writes these already
+  // corrected for orientation, and unlike exifInfo they do not depend on the
+  // query asking for EXIF — so they are there even when exifInfo is not.
+  if (asset.width && asset.height) return { w: asset.width, h: asset.height };
+
+  // Fallback for Immich ≤ 1.133, which had no top-level dimensions.
+  const exif = asset.exifInfo;
   const w = exif?.exifImageWidth ?? 0;
   const h = exif?.exifImageHeight ?? 0;
   const orientation = Number(exif?.orientation);
@@ -354,7 +368,7 @@ function toPhotoRefs(assets: ImmichAsset[]): PhotoRef[] {
     if (!asset?.id) continue;
 
     const exif = asset.exifInfo ?? undefined;
-    const { w, h } = displayDimensions(exif);
+    const { w, h } = displayDimensions(asset);
 
     const ref: PhotoRef = { id: asset.id, w: w || 0, h: h || 0 };
 

@@ -160,11 +160,39 @@ export class Playlist {
       shuffle(fresh);
       this.#queue.push(...fresh);
 
-      log.info(`Playlist refilled: +${fresh.length} photos (${this.#queue.length} queued)`);
+      log.info(
+        `Playlist refilled: +${fresh.length} photos (${this.#queue.length} queued; ` +
+          `${describeShapes(fresh)})`,
+      );
     } finally {
       this.#refilling = false;
     }
   }
+}
+
+/**
+ * Summarise the shapes in a batch, for the refill log.
+ *
+ * Portrait pairing depends entirely on knowing each photo's shape, and when
+ * it silently does nothing there is no way to tell from the outside whether
+ * the library has no portraits, or the dimensions never arrived, or the
+ * pairing itself is broken. One line in the log distinguishes all three.
+ *
+ * `unsized` is the interesting number: it means Immich reported no usable
+ * dimensions, so nothing downstream can reason about orientation.
+ */
+function describeShapes(photos: PhotoRef[]): string {
+  let portrait = 0;
+  let landscape = 0;
+  let unsized = 0;
+
+  for (const p of photos) {
+    if (!p.w || !p.h) unsized += 1;
+    else if (p.w / p.h <= 1) portrait += 1;
+    else landscape += 1;
+  }
+
+  return `${portrait} portrait, ${landscape} landscape, ${unsized} unsized`;
 }
 
 /** Fisher-Yates. Interleaves sources properly, which sorting by random does not. */

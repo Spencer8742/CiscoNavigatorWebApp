@@ -57,11 +57,18 @@ export class MockImmich {
       // real library actually look like, and reading the raw numbers as-is
       // makes them all appear landscape.
       const rotated = portrait && i % 8 === 0;
+      // Every fifth asset omits the top-level width/height, standing in for
+      // Immich <= 1.133 where AssetResponseDto had no such fields. The rest
+      // carry them, as a current server does — already orientation-corrected.
+      const legacy = i % 5 === 0;
+      const displayW = portrait ? 3000 : 4000;
+      const displayH = portrait ? 4000 : 3000;
       this.assets.push({
         id: uuidFor(i),
         type: i % 11 === 0 ? 'VIDEO' : 'IMAGE',
         thumbhash: makeThumbhash(i),
         localDateTime: new Date(Date.UTC(2020 + (i % 5), i % 12, 1 + (i % 27))).toISOString(),
+        ...(legacy ? {} : { width: displayW, height: displayH }),
         exifInfo: {
           exifImageWidth: portrait && !rotated ? 3000 : 4000,
           exifImageHeight: portrait && !rotated ? 4000 : 3000,

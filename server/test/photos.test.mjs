@@ -190,6 +190,72 @@ after(async () => {
   await immich?.stop();
 });
 
+/**
+ * Everything started by `isolated()`, torn down unconditionally.
+ *
+ * Without this a *failing* test skips its own cleanup, leaving a spawned
+ * backend holding the event loop open — so the run hangs instead of
+ * reporting the failure, which is the worst possible way to learn about it.
+ */
+const started = [];
+after(async () => {
+  for (const t of started.splice(0)) await t.stop();
+});
+
+/** Start an isolated backend + Immich pair. Returns both, plus a stop(). */
+async function isolated(configure = () => {}, configPath = CONFIG) {
+  const [immichPort, panelPort] = [await freePort(), await freePort()];
+
+  const server = new MockImmich(immichPort);
+  server.seed(60);
+  configure(server);
+  await server.start();
+
+  const child = spawn(process.execPath, [SERVER], {
+    env: {
+      ...process.env,
+      PORT: String(panelPort),
+      HOST: '127.0.0.1',
+      PANEL_TOKEN: TOKEN,
+      CONFIG_PATH: configPath,
+      HA_URL: '',
+      HA_TOKEN: '',
+      IMMICH_URL: `http://127.0.0.1:${immichPort}`,
+      IMMICH_API_KEY: 'mock-immich-key',
+      LOG_LEVEL: 'error',
+    },
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+  child.stderr.on('data', (d) => process.stderr.write(`[isolated] ${d}`));
+
+  await waitFor(async () => {
+    try {
+      return (await fetch(`http://127.0.0.1:${panelPort}/api/health`)).ok;
+    } catch {
+      return false;
+    }
+  }, 'isolated backend to listen');
+
+  const panel = new PhotoPanel(panelPort);
+  await panel.connect();
+
+  let stopped = false;
+  const t = {
+    immich: server,
+    panel,
+    async stop() {
+      if (stopped) return;
+      stopped = true;
+      panel.close();
+      child.kill('SIGKILL');
+      await server.stop();
+    },
+  };
+  started.push(t);
+  return t;
+}
+
+
 describe('playlist', () => {
   test('serves photos to the panel', async () => {
     const panel = new PhotoPanel();
@@ -219,6 +285,55 @@ describe('playlist', () => {
       assert.ok(!(key in photo), `${key} must not reach the panel`);
     }
     panel.close();
+  });
+
+  test("prefers the asset's own dimensions over raw EXIF", async () => {
+    /*
+     * `AssetResponseDto.width`/`height` are written by Immich already
+     * corrected for orientation, and are required fields — so unlike
+     * `exifInfo` they arrive whether or not the query asked for EXIF. That
+     * makes them the authoritative source, and the one that keeps working if
+     * a search ever comes back without EXIF attached.
+     */
+    const panel = new PhotoPanel();
+    await panel.connect();
+    const batch = await panel.request(40);
+    panel.close();
+
+    const withTopLevel = immich.assets.filter((a) => a.width && a.height);
+    assert.ok(withTopLevel.length > 0, 'precondition: assets carry top-level dimensions');
+
+    let checked = 0;
+    for (const asset of withTopLevel) {
+      const photo = batch.find((p) => p.id === asset.id);
+      if (!photo) continue;
+      checked += 1;
+      assert.equal(photo.w, asset.width, `${asset.id}: width must come from the asset`);
+      assert.equal(photo.h, asset.height, `${asset.id}: height must come from the asset`);
+    }
+    assert.ok(checked > 0, 'the batch must contain at least one such photo');
+  });
+
+  test('falls back to EXIF when the server is too old for asset dimensions', async () => {
+    const panel = new PhotoPanel();
+    await panel.connect();
+    const batch = await panel.request(40);
+    panel.close();
+
+    // Immich <= 1.133 had no top-level width/height at all. Those assets must
+    // still get usable dimensions, or nothing downstream can tell a portrait
+    // from a landscape.
+    const legacy = immich.assets.filter((a) => !a.width && !a.height);
+    assert.ok(legacy.length > 0, 'precondition: some assets have no top-level dimensions');
+
+    let checked = 0;
+    for (const asset of legacy) {
+      const photo = batch.find((p) => p.id === asset.id);
+      if (!photo) continue;
+      checked += 1;
+      assert.ok(photo.w > 0 && photo.h > 0, `${asset.id}: dimensions must still be resolved`);
+    }
+    assert.ok(checked > 0, 'the batch must contain at least one legacy-shaped photo');
   });
 
   test('reports the dimensions a rotated photo is DISPLAYED at', async () => {
@@ -298,21 +413,25 @@ describe('playlist', () => {
   });
 
   test('position survives a panel reconnect', async () => {
-    const first = new PhotoPanel();
-    await first.connect();
-    const batchA = await first.request(20);
-    first.close();
+    // Its own backend, because this asserts zero overlap and the playlist
+    // deliberately permits repeats once a library runs dry. On the shared
+    // backend the result depended on how many photos earlier tests had
+    // consumed — so adding a test elsewhere could fail this one.
+    const t = await isolated();
+    const batchA = await t.panel.request(20);
+    t.panel.close();
     await sleep(200);
 
     // A new panel — as after RoomOS wipes storage overnight — must continue
     // the playlist, not restart it.
-    const second = new PhotoPanel();
+    const second = new PhotoPanel(t.panel.port);
     await second.connect();
     const batchB = await second.request(20);
     second.close();
 
     const overlap = batchA.filter((a) => batchB.some((b) => b.id === a.id));
     assert.equal(overlap.length, 0, 'a reconnecting panel must not replay the same photos');
+    await t.stop();
   });
 });
 
@@ -433,71 +552,6 @@ describe('diagnosability', () => {
    * shared backend would answer them from a playlist filled earlier — which
    * is exactly the buffering that hid the problem in the first place.
    */
-
-  /**
-   * Everything started by `isolated()`, torn down unconditionally.
-   *
-   * Without this a *failing* test skips its own cleanup, leaving a spawned
-   * backend holding the event loop open — so the run hangs instead of
-   * reporting the failure, which is the worst possible way to learn about it.
-   */
-  const started = [];
-  after(async () => {
-    for (const t of started.splice(0)) await t.stop();
-  });
-
-  /** Start an isolated backend + Immich pair. Returns both, plus a stop(). */
-  async function isolated(configure = () => {}, configPath = CONFIG) {
-    const [immichPort, panelPort] = [await freePort(), await freePort()];
-
-    const server = new MockImmich(immichPort);
-    server.seed(60);
-    configure(server);
-    await server.start();
-
-    const child = spawn(process.execPath, [SERVER], {
-      env: {
-        ...process.env,
-        PORT: String(panelPort),
-        HOST: '127.0.0.1',
-        PANEL_TOKEN: TOKEN,
-        CONFIG_PATH: configPath,
-        HA_URL: '',
-        HA_TOKEN: '',
-        IMMICH_URL: `http://127.0.0.1:${immichPort}`,
-        IMMICH_API_KEY: 'mock-immich-key',
-        LOG_LEVEL: 'error',
-      },
-      stdio: ['ignore', 'ignore', 'pipe'],
-    });
-    child.stderr.on('data', (d) => process.stderr.write(`[isolated] ${d}`));
-
-    await waitFor(async () => {
-      try {
-        return (await fetch(`http://127.0.0.1:${panelPort}/api/health`)).ok;
-      } catch {
-        return false;
-      }
-    }, 'isolated backend to listen');
-
-    const panel = new PhotoPanel(panelPort);
-    await panel.connect();
-
-    let stopped = false;
-    const t = {
-      immich: server,
-      panel,
-      async stop() {
-        if (stopped) return;
-        stopped = true;
-        panel.close();
-        child.kill('SIGKILL');
-        await server.stop();
-      },
-    };
-    started.push(t);
-    return t;
-  }
 
   test('an empty result is distinguishable from a failed query', async () => {
     const t = await isolated((s) => {
