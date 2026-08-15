@@ -6,6 +6,7 @@ import type { PanelAuth } from '~/http/auth.ts';
 import type { ConfigStore } from '~/config/load.ts';
 import type {
   BackendHealth,
+  PanelPrefs,
   ClientMessage,
   EntityState,
   ServerMessage,
@@ -44,6 +45,10 @@ export interface HubDeps {
   onCall?: (msg: Extract<ClientMessage, { t: 'call' }>) => Promise<string | null>;
   /** Supply the next batch of slideshow photos (phase 6). */
   onPhotos?: (count: number) => Promise<ServerMessage | null>;
+  /** Current panel preferences, sent in `hello`. */
+  getPrefs: () => PanelPrefs;
+  /** Apply a preference change. Returns an error string, or null. */
+  onPref?: (key: string, value: string) => string | null;
 }
 
 interface Panel {
@@ -126,6 +131,7 @@ export class Hub {
       states: this.#deps.getStates(),
       health: this.#deps.getHealth(),
       now: Date.now(),
+      prefs: this.#deps.getPrefs(),
     });
   }
 
@@ -143,6 +149,18 @@ export class Hub {
       case 'ping':
         this.#send(panel, { t: 'pong', ref: msg.id });
         break;
+
+      case 'pref': {
+        if (!this.#deps.onPref) return;
+        const problem = this.#deps.onPref(msg.key, msg.value);
+        if (problem) {
+          this.#send(panel, { t: 'error', ref: msg.id, code: 'pref_rejected', message: problem });
+        }
+        // The broadcast is driven by the store's change event rather than
+        // sent from here, so a panel that changes a preference and one that
+        // merely observes it both learn about it the same way.
+        break;
+      }
 
       case 'call': {
         if (!this.#deps.onCall) {
@@ -191,6 +209,10 @@ export class Hub {
 
   broadcastHealth(health: BackendHealth): void {
     this.broadcast({ t: 'health', health });
+  }
+
+  broadcastPrefs(prefs: PanelPrefs): void {
+    this.broadcast({ t: 'prefs', prefs });
   }
 
   #send(panel: Panel, msg: ServerMessage): void {

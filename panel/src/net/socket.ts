@@ -2,12 +2,13 @@ import { Backoff } from '@shared/backoff.ts';
 import { socketUrl } from '~/net/auth.ts';
 import { applyPatch, applySnapshot } from '~/state/entities.ts';
 import { setConfig } from '~/config/index.ts';
-import { connectionProblem, health, ready, showToast, socketState } from '~/state/ui.ts';
+import { connectionProblem, health, prefs, ready, showToast, socketState } from '~/state/ui.ts';
 import { diagnose } from '~/net/diagnose.ts';
 import {
   HEARTBEAT_MS,
   HEARTBEAT_TIMEOUT_MS,
   type ClientMessage,
+  type PanelPrefs,
   type PhotoRef,
   type ServerMessage,
 } from '@shared/protocol.ts';
@@ -151,6 +152,7 @@ function handle(msg: ServerMessage): void {
       setConfig(msg.config);
       applySnapshot(msg.states);
       health.value = msg.health;
+      prefs.value = msg.prefs;
       socketState.value = 'connected';
       ready.value = true;
       // Clear any diagnosis: whatever was wrong is now demonstrably fixed.
@@ -173,6 +175,10 @@ function handle(msg: ServerMessage): void {
 
     case 'health':
       health.value = msg.health;
+      break;
+
+    case 'prefs':
+      prefs.value = msg.prefs;
       break;
 
     case 'photos': {
@@ -259,6 +265,19 @@ export function callService(
   data?: Record<string, unknown>,
 ): boolean {
   return send({ t: 'call', id: nextId(), domain, service, entity, data });
+}
+
+/**
+ * Change a panel preference.
+ *
+ * Applied optimistically so the setting responds to the tap immediately; the
+ * backend's broadcast then confirms it, and corrects it if the value was
+ * refused. Preferences are stored server-side because RoomOS clears web
+ * storage nightly (docs/ROOMOS.md §3).
+ */
+export function setPref<K extends keyof PanelPrefs>(key: K, value: PanelPrefs[K]): boolean {
+  prefs.value = { ...prefs.value, [key]: value };
+  return send({ t: 'pref', id: nextId(), key, value });
 }
 
 /** Request the next batch of slideshow photos. Resolves empty on timeout. */

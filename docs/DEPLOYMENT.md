@@ -492,6 +492,8 @@ worth taking literally:
 | Connection dot amber, never green | Backend cannot reach Home Assistant | `docker compose logs`; check `HA_URL` and `HA_TOKEN` |
 | Dot green but no entities | Entities not in `dashboard.yaml` | Only configured entities are sent — that is the allow-list working |
 | Panel re-downloads everything daily | `RoomCleanup` still on | `xConfiguration RoomCleanup AutoRun ContentType WebData: Off` |
+| Home screen side card shows the wrong thing | It is a per-installation setting, not YAML | Settings → Home screen. Stored in `panel-prefs.json` beside `dashboard.yaml` |
+| A setting reverts overnight | Should not happen — preferences are stored on the server, not in the browser | If it does, check the appdata volume is writable; the log warns when it cannot persist |
 | Config edit does nothing | YAML failed to parse | `docker compose logs` — the last good config is still running, on purpose |
 | Photos never load | Several possible causes | The Photos screen now names the actual one — it shows Immich's own error, not a guess. Start there |
 | Photos: "API key rejected" | Key wrong, revoked, or too narrow | Needs `asset.read`, plus `album.read` for album sources |

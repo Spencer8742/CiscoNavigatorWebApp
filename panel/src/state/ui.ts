@@ -1,5 +1,5 @@
 import { signal, computed } from '@preact/signals';
-import type { BackendHealth, LinkState } from '@shared/protocol.ts';
+import { DEFAULT_PREFS, type BackendHealth, type LinkState, type PanelPrefs } from '@shared/protocol.ts';
 import type { ConnectionProblem } from '~/net/diagnose.ts';
 
 /**
@@ -45,6 +45,14 @@ export const socketState = signal<LinkState>('connecting');
 
 /** Backend -> HA / Immich, as reported by the backend. */
 export const health = signal<BackendHealth | null>(null);
+
+/**
+ * Settings chosen at the panel, held by the backend.
+ *
+ * Server-side because RoomOS deletes web storage daily (docs/ROOMOS.md §3) —
+ * a preference kept here would quietly revert overnight.
+ */
+export const prefs = signal<PanelPrefs>({ ...DEFAULT_PREFS });
 
 /**
  * What the connection dot shows. Deliberately conservative: we report the

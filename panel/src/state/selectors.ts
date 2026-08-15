@@ -124,6 +124,43 @@ export const roomActivity = computed<Map<string, number>>(() => {
  * Reads only the configured media players, so a house full of Chromecasts
  * that are not on the dashboard cannot wake this computed.
  */
+/**
+ * The player the panel should show when the user has not picked one.
+ *
+ * `media.default: active` picks whatever is currently playing, which is
+ * almost always what you want on a wall panel: you walked over because music
+ * is playing, and it should already be showing rather than making you find
+ * which of five speakers it is.
+ *
+ * Shared so the Home card and the Media screen never disagree about which
+ * player is "the" one.
+ */
+export const defaultPlayerId = computed<string>(() => {
+  const cfg = mediaConfig.value;
+  const first = cfg.players[0]?.entity ?? '';
+
+  if (cfg.default !== 'active') {
+    return cfg.players.some((p) => p.entity === cfg.default) ? cfg.default : first;
+  }
+
+  for (const p of cfg.players) {
+    if (entity(p.entity).value?.s === 'playing') return p.entity;
+  }
+  for (const p of cfg.players) {
+    const s = entity(p.entity).value?.s;
+    if (s === 'paused' || s === 'buffering') return p.entity;
+  }
+  return first;
+});
+
+/** True when a configured player is actively producing sound. */
+export const anythingPlaying = computed<boolean>(() =>
+  mediaConfig.value.players.some((p) => {
+    const s = entity(p.entity).value?.s;
+    return s === 'playing' || s === 'paused' || s === 'buffering';
+  }),
+);
+
 export const nowPlaying = computed<string | null>(() => {
   for (const p of mediaConfig.value.players) {
     const state = entity(p.entity).value;

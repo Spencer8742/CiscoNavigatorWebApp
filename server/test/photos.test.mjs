@@ -2,7 +2,7 @@ import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { WebSocket } from 'ws';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, rmSync } from 'node:fs';
 import { fileURLToPath, URL } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -94,6 +94,8 @@ class PhotoPanel {
     this.photos = [];
     this.config = null;
     this.health = null;
+    this.prefs = null;
+    this.errors = [];
   }
 
   async connect() {
@@ -103,10 +105,15 @@ class PhotoPanel {
       if (msg.t === 'hello') {
         this.config = msg.config;
         this.health = msg.health;
+        this.prefs = msg.prefs;
       } else if (msg.t === 'photos') {
         this.photos.push(msg.photos);
       } else if (msg.t === 'health') {
         this.health = msg.health;
+      } else if (msg.t === 'prefs') {
+        this.prefs = msg.prefs;
+      } else if (msg.t === 'error') {
+        this.errors.push(msg);
       }
     });
     await new Promise((res, rej) => {
@@ -121,6 +128,11 @@ class PhotoPanel {
     this.ws.send(JSON.stringify({ t: 'photos', id: Date.now() % 10000, count }));
     await waitFor(() => this.photos.length > before, 'photos response');
     return this.photos[this.photos.length - 1];
+  }
+
+  /** Send a raw client message, for cases with no helper. */
+  send(msg) {
+    this.ws.send(JSON.stringify(msg));
   }
 
   close() {
@@ -537,6 +549,81 @@ describe('resilience', () => {
       'health carries an Immich link state',
     );
     panel.close();
+  });
+});
+
+describe('panel preferences', () => {
+  /*
+   * Lives in this file because it needs `isolated()`: a preference test wants
+   * its own backend, so restarting one is meaningful.
+   *
+   * The property that matters is persistence. RoomOS deletes web storage
+   * daily (docs/ROOMOS.md §3), so a preference held in the browser would
+   * revert overnight — the worst kind of setting, one that appears to work
+   * for a day.
+   */
+
+  const PREFS_FILE = join(tmpdir(), 'panel-prefs.json');
+
+  test('defaults, then accepts and broadcasts a change', async () => {
+    rmSync(PREFS_FILE, { force: true });
+    const t = await isolated();
+
+    assert.equal(t.panel.config.ui.title, 'Photos Test', 'sanity: config arrived');
+    assert.equal(t.panel.prefs.homeSide, 'media', 'the default is Now Playing');
+
+    // A second panel must learn about a change made on the first, or two
+    // panels on the same wall disagree about what they are showing.
+    const observer = new PhotoPanel(t.panel.port);
+    await observer.connect();
+
+    t.panel.send({ t: 'pref', id: 1, key: 'homeSide', value: 'photos' });
+
+    await waitFor(() => observer.prefs.homeSide === 'photos', 'the other panel to be told');
+    assert.equal(observer.prefs.homeSide, 'photos');
+    observer.close();
+    await t.stop();
+  });
+
+  test('survives a backend restart', async () => {
+    rmSync(PREFS_FILE, { force: true });
+    const first = await isolated();
+    first.panel.send({ t: 'pref', id: 1, key: 'homeSide', value: 'photos' });
+    await sleep(300);
+    await first.stop();
+
+    // A container restart — a nightly image pull, say — must not silently
+    // put the panel back to a setting the user changed away from.
+    const second = await isolated();
+    assert.equal(second.panel.prefs.homeSide, 'photos', 'the choice outlived the process');
+    await second.stop();
+  });
+
+  test('refuses anything not on the allow-list', async () => {
+    rmSync(PREFS_FILE, { force: true });
+    const t = await isolated();
+
+    // This arrives from a client. It reaching only a small enum is what makes
+    // it uninteresting to anyone holding a panel token.
+    for (const [key, value] of [
+      ['homeSide', 'rm -rf'],
+      ['homeSide', '../../etc/passwd'],
+      ['homeSide', ''],
+      ['__proto__', 'polluted'],
+      ['haToken', 'stolen'],
+    ]) {
+      t.panel.send({ t: 'pref', id: 2, key, value });
+    }
+    await sleep(400);
+
+    assert.equal(t.panel.prefs.homeSide, 'media', 'nothing invalid was applied');
+    assert.ok(t.panel.errors.length > 0, 'and the panel was told why');
+    assert.equal(
+      Object.keys(t.panel.prefs).length,
+      1,
+      'no extra keys were introduced by a hostile payload',
+    );
+    await t.stop();
   });
 });
 
