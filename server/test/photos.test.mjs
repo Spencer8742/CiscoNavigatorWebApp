@@ -394,7 +394,7 @@ describe('diagnosability', () => {
   });
 
   /** Start an isolated backend + Immich pair. Returns both, plus a stop(). */
-  async function isolated(configure = () => {}) {
+  async function isolated(configure = () => {}, configPath = CONFIG) {
     const [immichPort, panelPort] = [await freePort(), await freePort()];
 
     const server = new MockImmich(immichPort);
@@ -408,7 +408,7 @@ describe('diagnosability', () => {
         PORT: String(panelPort),
         HOST: '127.0.0.1',
         PANEL_TOKEN: TOKEN,
-        CONFIG_PATH: CONFIG,
+        CONFIG_PATH: configPath,
         HA_URL: '',
         HA_TOKEN: '',
         IMMICH_URL: `http://127.0.0.1:${immichPort}`,
@@ -485,6 +485,35 @@ describe('diagnosability', () => {
     );
 
     await t.stop();
+  });
+
+  test('portrait pairing is on by default and can be switched off', async () => {
+    // The panel decides the collage layout, but it can only honour a setting
+    // the backend actually parses and forwards.
+    const t = await isolated();
+    assert.equal(
+      t.panel.config.immich.pairPortraits,
+      true,
+      'unset means on — a portrait alone wastes two thirds of a 16:9 panel',
+    );
+    await t.stop();
+
+    const offConfig = join(tmpdir(), 'navigator-photos-nopair.yaml');
+    writeFileSync(
+      offConfig,
+      `
+version: 1
+ui: { title: No Pair, timezone: UTC }
+immich:
+  enabled: true
+  pairPortraits: false
+  sources: [{ type: random }]
+media: { players: [] }
+`,
+    );
+    const off = await isolated(() => {}, offConfig);
+    assert.equal(off.panel.config.immich.pairPortraits, false, 'an explicit false is honoured');
+    await off.stop();
   });
 
   test('works against Immich older than 1.133, which had no `visibility`', async () => {

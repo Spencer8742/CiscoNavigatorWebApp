@@ -109,6 +109,12 @@ immich:
   # the device's own video pipeline.
   imagesOnly: true
 
+  # Show two portrait photos side by side instead of one in the middle with
+  # empty bars either side. A portrait uses about a third of a 16:9 panel;
+  # this fills the rest with a second photo rather than background.
+  # Landscape photos are never paired — they already fill the screen.
+  pairPortraits: true
+
   # Don't show photos older than this many years. Omit for no limit.
   # maxAgeYears: 10
 

@@ -446,9 +446,24 @@ copy is not.
   a neutral-chroma hash must decode to grey, which the browser test asserts
   (measured: `rgb(133, 129, 127)`, channel spread 6). Upgrading later is a
   self-contained change to `panel/src/lib/thumbhash.ts`.
-- **Orientation.** `object-fit: contain` on a dark backdrop for portraits;
-  `cover` for landscape when it matches the panel's aspect ratio within 15%.
-  No letterbox bars on photos that don't need them.
+- **Orientation.** Landscape photos `cover` the screen. A portrait is paired
+  with another portrait and the two are shown side by side, each filling half
+  — a portrait alone on a 16:9 panel uses about a third of the screen and
+  fills the rest with nothing. Paired halves are close enough to their own
+  aspect ratio to `cover` without losing anything worth keeping; an *unpaired*
+  portrait still falls back to `contain`, which is why `pairPortraits` can be
+  turned off without breaking the layout.
+
+  The partner is found by looking a bounded distance ahead in the queue,
+  because portraits are scattered through a mixed library and strict adjacency
+  would almost never pair. Both halves are decoded before the crossfade
+  starts, or the collage would assemble itself on screen one photo at a time.
+
+  This is also why the preloader predicts the next slide's pairing rather than
+  taking the next two from the queue: the image cache is sized at exactly
+  three slides (previous, current, next), so fetching the wrong photos evicts
+  one that is still fading out and clears its `src` mid-transition. A browser
+  test asserts no on-screen image ever loses its `src`.
 
 ---
 

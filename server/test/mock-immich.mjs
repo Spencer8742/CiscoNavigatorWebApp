@@ -36,6 +36,12 @@ export class MockImmich {
   /** The key this server accepts. Change it to simulate a wrong/revoked key. */
   expectedKey = 'mock-immich-key';
 
+  /**
+   * Optional: `(id, size) => { body: Buffer, type: string }` to serve real
+   * image bytes. Unset means a 1×1 JPEG, which is all most tests need.
+   */
+  imageFor = null;
+
   assets = [];
 
   constructor(port) {
@@ -99,8 +105,16 @@ export class MockImmich {
     if (thumb) {
       const size = url.searchParams.get('size') ?? '(none)';
       this.thumbnailRequests.push({ id: thumb[1], size });
-      res.writeHead(200, { 'content-type': 'image/jpeg' });
-      res.end(onePixelJpeg());
+      // `imageFor` lets a test serve real pixels at a real aspect ratio,
+      // which is the only way to check a layout decision like the collage.
+      const custom = this.imageFor?.(thumb[1], size);
+      if (custom) {
+        res.writeHead(200, { 'content-type': custom.type });
+        res.end(custom.body);
+      } else {
+        res.writeHead(200, { 'content-type': 'image/jpeg' });
+        res.end(onePixelJpeg());
+      }
       return;
     }
 

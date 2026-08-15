@@ -61,6 +61,7 @@ export const FALLBACK_CONFIG: DashboardConfig = {
     transitionMs: 1200,
     sources: [],
     imagesOnly: true,
+    pairPortraits: true,
   },
   rooms: [],
   home: { favorites: [], scenes: [], status: [], alerts: [] },
@@ -220,6 +221,7 @@ function validate(raw: unknown): DashboardConfig {
       transitionMs: num(immichRaw['transitionMs'], 1200, 'immich.transitionMs', 0, 10_000),
       sources: immichSources(immichRaw['sources']),
       imagesOnly: bool(immichRaw['imagesOnly'], true, 'immich.imagesOnly'),
+      pairPortraits: bool(immichRaw['pairPortraits'], true, 'immich.pairPortraits'),
       ...(typeof immichRaw['maxAgeYears'] === 'number'
         ? { maxAgeYears: num(immichRaw['maxAgeYears'], 0, 'immich.maxAgeYears', 0, 200) }
         : {}),

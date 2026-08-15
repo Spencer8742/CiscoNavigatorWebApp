@@ -53,6 +53,15 @@ export interface ImmichConfig {
   sources: ImmichSource[];
   imagesOnly: boolean;
   maxAgeYears?: number;
+  /**
+   * Show two portrait photos side by side instead of one centred with empty
+   * bars beside it.
+   *
+   * A portrait photo on a 16:9 panel uses about a third of the screen; the
+   * rest is filler. Pairing fills it with a second photo instead. Landscape
+   * photos are never paired — they already fill the screen.
+   */
+  pairPortraits: boolean;
 }
 
 /**

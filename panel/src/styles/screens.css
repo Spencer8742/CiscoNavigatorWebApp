@@ -771,8 +771,7 @@
 .saver-layer {
   position: absolute;
   inset: 0;
-  width: 100%;
-  height: 100%;
+  display: flex;
   opacity: 0;
   /* opacity ONLY — the entire crossfade is a compositor operation.
      Duration comes from immich.transitionMs as an inline style. */
@@ -782,6 +781,19 @@
 }
 
 .saver-layer[data-front] { opacity: 1; }
+
+.saver-photo {
+  flex: 1 1 0;
+  /* Explicit zero basis + min-width: two halves stay exactly half each,
+     rather than the wider image winning space from the narrower one. */
+  min-width: 0;
+  height: 100%;
+}
+
+/* Two portraits side by side. The seam is a hairline of background rather
+   than a border, so it reads as a gap between prints instead of a UI frame —
+   and costs no layout, since the gap is the flex container's own colour. */
+.saver-layer[data-paired] { gap: 2px; }
 
 .saver-overlays {
   position: absolute;
