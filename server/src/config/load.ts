@@ -62,6 +62,7 @@ export const FALLBACK_CONFIG: DashboardConfig = {
     sources: [],
     imagesOnly: true,
     pairPortraits: true,
+    homeCardSeconds: 15,
   },
   rooms: [],
   home: { favorites: [], scenes: [], status: [], alerts: [] },
@@ -222,6 +223,9 @@ function validate(raw: unknown): DashboardConfig {
       sources: immichSources(immichRaw['sources']),
       imagesOnly: bool(immichRaw['imagesOnly'], true, 'immich.imagesOnly'),
       pairPortraits: bool(immichRaw['pairPortraits'], true, 'immich.pairPortraits'),
+      // 0 is meaningful — "hold one photo" — so the floor is 0, not the 5s
+      // minimum the panel applies to any non-zero value.
+      homeCardSeconds: num(immichRaw['homeCardSeconds'], 15, 'immich.homeCardSeconds', 0, 3600),
       ...(typeof immichRaw['maxAgeYears'] === 'number'
         ? { maxAgeYears: num(immichRaw['maxAgeYears'], 0, 'immich.maxAgeYears', 0, 200) }
         : {}),

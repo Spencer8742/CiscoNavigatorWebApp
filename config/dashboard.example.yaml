@@ -115,6 +115,12 @@ immich:
   # Landscape photos are never paired — they already fill the screen.
   pairPortraits: true
 
+  # How often the Home screen's photo card changes, in seconds.
+  # Set to 0 to hold one photo until you leave the screen.
+  # Separate from intervalSeconds above: 45s is right for a fullscreen
+  # slideshow and restless for a card you glance past.
+  homeCardSeconds: 15
+
   # Don't show photos older than this many years. Omit for no limit.
   # maxAgeYears: 10
 

@@ -62,6 +62,16 @@ export interface ImmichConfig {
    * photos are never paired — they already fill the screen.
    */
   pairPortraits: boolean;
+  /**
+   * How often the Home screen's photo card changes, in seconds. 0 holds one
+   * photo until you leave the screen.
+   *
+   * Separate from `intervalSeconds` because they are different jobs: the
+   * slideshow is the thing you are looking at, while this is a card you
+   * glance past. A 45-second slideshow cadence is restless on a card, and a
+   * 15-second card cadence is frantic full-screen.
+   */
+  homeCardSeconds: number;
 }
 
 /**

@@ -681,6 +681,43 @@ describe('diagnosability', () => {
     await t.stop();
   });
 
+  test('the Home card interval defaults to 15s and is clamped', async () => {
+    const t = await isolated();
+    assert.equal(t.panel.config.immich.homeCardSeconds, 15, 'unset means 15 seconds');
+    await t.stop();
+
+    const cfgPath = join(tmpdir(), 'navigator-photos-cardsecs.yaml');
+    // 0 must survive as 0 — it is the documented way to hold one photo, not a
+    // missing value to be defaulted. A silly value gets clamped rather than
+    // rejected, so a typo does not stop the card working.
+    for (const [written, expected] of [
+      [0, 0],
+      [90, 90],
+      [999999, 3600],
+      [-5, 0],
+    ]) {
+      writeFileSync(
+        cfgPath,
+        `
+version: 1
+ui: { title: Card, timezone: UTC }
+immich:
+  enabled: true
+  homeCardSeconds: ${written}
+  sources: [{ type: random }]
+media: { players: [] }
+`,
+      );
+      const c = await isolated(() => {}, cfgPath);
+      assert.equal(
+        c.panel.config.immich.homeCardSeconds,
+        expected,
+        `homeCardSeconds: ${written} should reach the panel as ${expected}`,
+      );
+      await c.stop();
+    }
+  });
+
   test('portrait pairing is on by default and can be switched off', async () => {
     // The panel decides the collage layout, but it can only honour a setting
     // the backend actually parses and forwards.
