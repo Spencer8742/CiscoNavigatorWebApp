@@ -1,7 +1,7 @@
 import { computed } from '@preact/signals';
 import { entity, maPlayerIds } from '~/state/entities.ts';
 import { homeConfig, mediaConfig, roomsById } from '~/config/index.ts';
-import { activeRoom } from '~/state/ui.ts';
+import { activeRoom, prefs } from '~/state/ui.ts';
 import { countsAsOn, describe, friendlyName, type EntityDescriptor } from '~/domains/registry.ts';
 import {
   canGroup,
@@ -263,3 +263,60 @@ export const joinableSpeakers = computed<SpeakerInfo[]>(() =>
 export const speakerGroups = computed<SpeakerInfo[]>(() =>
   speakers.value.filter((s) => s.isGroup),
 );
+
+export interface SpeakerSection {
+  name: string;
+  players: SpeakerInfo[];
+}
+
+/**
+ * The player list as arranged on this panel: sections, order, hidden.
+ *
+ * The layout is deliberately sparse — a speaker nobody has filed appears in
+ * the first section automatically. That means discovering a new speaker
+ * requires no write at all, and someone who never opens the editor still gets
+ * a sensible list rather than an empty one.
+ */
+export const speakerSections = computed<SpeakerSection[]>(() => {
+  const all = speakers.value;
+  const layout = prefs.value.players;
+  const names = mediaConfig.value.sections;
+  const byId = new Map(all.map((s) => [s.id, s]));
+
+  const hidden = new Set(layout.hidden);
+  const placed = new Set<string>();
+  const out: SpeakerSection[] = [];
+
+  for (const name of names) {
+    const ids = layout.sections[name] ?? [];
+    const players: SpeakerInfo[] = [];
+    for (const id of ids) {
+      if (hidden.has(id)) continue;
+      const s = byId.get(id);
+      // A speaker that has gone away leaves its entry behind harmlessly; it
+      // simply stops rendering until it comes back.
+      if (s) {
+        players.push(s);
+        placed.add(id);
+      }
+    }
+    out.push({ name, players });
+  }
+
+  // Anything unfiled goes in the first section, keeping the discovery order.
+  const first = out[0];
+  if (first) {
+    for (const s of all) {
+      if (placed.has(s.id) || hidden.has(s.id)) continue;
+      first.players.push(s);
+    }
+  }
+
+  return out.filter((section) => section.players.length > 0);
+});
+
+/** Speakers the user has chosen not to see. Only the editor shows these. */
+export const hiddenSpeakers = computed<SpeakerInfo[]>(() => {
+  const hidden = new Set(prefs.value.players.hidden);
+  return speakers.value.filter((s) => hidden.has(s.id));
+});

@@ -45,7 +45,8 @@ const DEFAULTS: DashboardConfig = {
   },
   rooms: [],
   home: { favorites: [], scenes: [], status: [], alerts: [] },
-  media: { players: [], default: 'active', volumeStep: 0.05, discoverMusicAssistant: true },
+  media: { players: [], default: 'active', volumeStep: 0.05, discoverMusicAssistant: true,
+    sections: ['Speakers', 'TVs'] },
 };
 
 export const config = signal<DashboardConfig>(DEFAULTS);

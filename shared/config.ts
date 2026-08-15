@@ -150,6 +150,16 @@ export interface MediaConfig {
    * any other domain.
    */
   discoverMusicAssistant: boolean;
+  /**
+   * Section headings for the player list, in the order they appear.
+   *
+   * Names live here rather than being typed at the panel because naming is a
+   * typing job and the RoomOS soft keyboard has no numeric, date or colour
+   * modes and, in Cisco's own words, "does not encourage a lot of text input"
+   * (docs/ROOMOS.md §6). Which speaker goes in which section IS a tapping job,
+   * so that is done on the panel and stored in panel-prefs.json.
+   */
+  sections: string[];
 }
 
 export interface DashboardConfig {

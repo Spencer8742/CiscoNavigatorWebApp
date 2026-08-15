@@ -189,6 +189,7 @@ async function main(): Promise<void> {
 
     getPrefs: () => prefs.current,
     onPref: (key, value) => prefs.set(key, value),
+    onLayout: (layout) => prefs.setLayout(layout, config.current.media.sections),
 
     onPhotos: async (count) => {
       const photos = await playlist.take(count);

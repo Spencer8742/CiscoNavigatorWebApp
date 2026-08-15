@@ -9,6 +9,7 @@ import {
   HEARTBEAT_TIMEOUT_MS,
   type ClientMessage,
   type PanelPrefs,
+  type PlayerLayout,
   type PhotoRef,
   type ServerMessage,
 } from '@shared/protocol.ts';
@@ -275,9 +276,22 @@ export function callService(
  * refused. Preferences are stored server-side because RoomOS clears web
  * storage nightly (docs/ROOMOS.md §3).
  */
-export function setPref<K extends keyof PanelPrefs>(key: K, value: PanelPrefs[K]): boolean {
+export function setPref(key: 'homeSide', value: PanelPrefs['homeSide']): boolean {
   prefs.value = { ...prefs.value, [key]: value };
   return send({ t: 'pref', id: nextId(), key, value });
+}
+
+/**
+ * Rearrange the player list.
+ *
+ * Applied optimistically so a tap responds at once; the backend's broadcast
+ * then confirms it. Sends the whole layout rather than a move, so retries and
+ * races settle on one coherent arrangement instead of a merge nobody asked
+ * for.
+ */
+export function setPlayerLayout(layout: PlayerLayout): boolean {
+  prefs.value = { ...prefs.value, players: layout };
+  return send({ t: 'layout', id: nextId(), layout });
 }
 
 /** Request the next batch of slideshow photos. Resolves empty on timeout. */

@@ -246,6 +246,15 @@ home:
 
 # ─── Media players ─────────────────────────────────────────────────────────
 media:
+  # Headings for the player list, in order. Which speaker goes under which
+  # heading is chosen by tapping Organize on the Media screen and is stored in
+  # panel-prefs.json — naming needs a keyboard, filing does not.
+  sections:
+    - Downstairs
+    - Upstairs
+    - Outside
+    - TVs
+
   # Music Assistant speakers are discovered automatically — you do not need to
   # list them. Music Assistant already knows what your speakers are, what they
   # can do and how they are grouped; retyping that here would be a second

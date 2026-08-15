@@ -1,7 +1,13 @@
 import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { logger } from '~/lib/log.ts';
-import { DEFAULT_PREFS, PREF_VALUES, type PanelPrefs } from '@shared/protocol.ts';
+import {
+  DEFAULT_PREFS,
+  LAYOUT_LIMITS,
+  PREF_VALUES,
+  type PanelPrefs,
+  type PlayerLayout,
+} from '@shared/protocol.ts';
 
 const log = logger('prefs');
 
@@ -51,6 +57,14 @@ export class PrefsStore {
             this.#prefs = { ...this.#prefs, [key]: value };
           }
         }
+        // The layout is shape-checked rather than enum-checked. Section names
+        // are NOT validated here: the config may legitimately have changed
+        // since this was written, and dropping a whole arrangement because a
+        // heading was renamed would be worse than carrying a stale key that
+        // the panel simply ignores.
+        const players = (raw as Record<string, unknown>)['players'];
+        const layout = sanitizeLayout(players, null);
+        if (layout) this.#prefs = { ...this.#prefs, players: layout };
       }
       log.info(`Loaded panel preferences from ${this.#path}`);
     } catch (err) {
@@ -85,6 +99,23 @@ export class PrefsStore {
     return null;
   }
 
+  /**
+   * Replace the player layout.
+   *
+   * `sections` is the list the config currently declares; a heading the
+   * config does not know about is dropped, because it would render as an
+   * empty group nobody could remove from the panel.
+   */
+  setLayout(raw: unknown, sections: readonly string[]): string | null {
+    const layout = sanitizeLayout(raw, sections);
+    if (!layout) return 'Invalid layout';
+
+    this.#prefs = { ...this.#prefs, players: layout };
+    this.#save();
+    for (const fn of this.#listeners) fn(this.#prefs);
+    return null;
+  }
+
   #save(): void {
     try {
       mkdirSync(dirname(this.#path), { recursive: true });
@@ -99,4 +130,49 @@ export class PrefsStore {
       log.warn(`Could not persist preferences to ${this.#path}:`, err);
     }
   }
+}
+
+/**
+ * Validate a layout arriving from a panel.
+ *
+ * Everything here is bounded: this ends up on disk, and a client is allowed
+ * to write it. Entity ids must look like media players, sections must be
+ * declared (when a list is supplied), and every collection is capped.
+ *
+ * Returns null when the value is not a layout at all; unusable PARTS are
+ * dropped rather than rejecting the whole thing, so one bad entry cannot cost
+ * someone their arrangement.
+ */
+function sanitizeLayout(raw: unknown, sections: readonly string[] | null): PlayerLayout | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const input = raw as Record<string, unknown>;
+
+  const ids = (value: unknown, cap: number): string[] => {
+    if (!Array.isArray(value)) return [];
+    const out: string[] = [];
+    for (const item of value) {
+      if (typeof item !== 'string') continue;
+      if (!item.startsWith('media_player.')) continue;
+      // A speaker in two places at once would render twice and toggle
+      // unpredictably.
+      if (out.includes(item)) continue;
+      out.push(item);
+      if (out.length >= cap) break;
+    }
+    return out;
+  };
+
+  const outSections: Record<string, string[]> = {};
+  const rawSections = input['sections'];
+  if (rawSections && typeof rawSections === 'object' && !Array.isArray(rawSections)) {
+    let count = 0;
+    for (const [name, value] of Object.entries(rawSections as Record<string, unknown>)) {
+      if (count >= LAYOUT_LIMITS.sections) break;
+      if (sections && !sections.includes(name)) continue;
+      outSections[name] = ids(value, LAYOUT_LIMITS.playersPerSection);
+      count += 1;
+    }
+  }
+
+  return { sections: outSections, hidden: ids(input['hidden'], LAYOUT_LIMITS.hidden) };
 }

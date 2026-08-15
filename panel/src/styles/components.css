@@ -937,3 +937,86 @@
   letter-spacing: -0.01em;
   color: var(--text);
 }
+
+/* ── Organizing the player list ───────────────────────────────────────────
+   Tap to assign rather than drag. RoomOS reorders touch events unpredictably
+   (docs/ROOMOS.md §5) and HTML drag-and-drop never fires on touch, so a drag
+   has to be hand-tracked and can lose the gesture halfway — while standing at
+   a wall, reaching up. Chips are a bigger target and cannot be half-done. */
+
+.sheet-edit {
+  flex: 0 0 auto;
+  padding: 0 var(--s-3);
+  min-height: var(--touch-sm, 2.25rem);
+  border-radius: var(--r-full);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--accent);
+  background: transparent;
+}
+
+.speaker-row.is-editing {
+  display: block;
+  cursor: default;
+}
+
+.speaker-edit-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.speaker-nudge {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 0.25rem;
+}
+
+.nudge-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: var(--r-md);
+  background: var(--surface-3);
+  color: var(--text-dim);
+}
+
+.speaker-move {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  margin-top: var(--s-3);
+}
+
+.move-chip {
+  min-height: 2.5rem;
+  padding: 0 var(--s-3);
+  border-radius: var(--r-full);
+  font-size: 0.875rem;
+  font-weight: 560;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+}
+
+.move-chip.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent-dim);
+}
+
+.picker-hint {
+  margin: var(--s-4) 0 var(--s-2);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: var(--text-faint);
+}
+
+.picker-hint code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--surface-2);
+  border-radius: var(--r-sm);
+  padding: 0.1em 0.4em;
+}

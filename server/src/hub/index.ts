@@ -49,6 +49,8 @@ export interface HubDeps {
   getPrefs: () => PanelPrefs;
   /** Apply a preference change. Returns an error string, or null. */
   onPref?: (key: string, value: string) => string | null;
+  /** Apply a player-layout change. Returns an error string, or null. */
+  onLayout?: (layout: unknown) => string | null;
 }
 
 interface Panel {
@@ -149,6 +151,15 @@ export class Hub {
       case 'ping':
         this.#send(panel, { t: 'pong', ref: msg.id });
         break;
+
+      case 'layout': {
+        if (!this.#deps.onLayout) return;
+        const problem = this.#deps.onLayout(msg.layout);
+        if (problem) {
+          this.#send(panel, { t: 'error', ref: msg.id, code: 'layout_rejected', message: problem });
+        }
+        break;
+      }
 
       case 'pref': {
         if (!this.#deps.onPref) return;
