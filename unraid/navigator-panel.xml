@@ -1,0 +1,179 @@
+<?xml version="1.0"?>
+<!--
+  Unraid container template.
+
+  Install:
+    Docker tab → Add Container → Template dropdown → paste this file's raw URL,
+    or drop the file into /boot/config/plugins/dockerMan/templates-user/ and it
+    appears in the template list.
+
+  See docs/DEPLOYMENT.md for the full walkthrough.
+-->
+<Container version="2">
+  <Name>navigator-panel</Name>
+  <Repository>ghcr.io/spencer8742/cisconavigatorwebapp:latest</Repository>
+  <Registry>https://github.com/Spencer8742/CiscoNavigatorWebApp/pkgs/container/cisconavigatorwebapp</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/Spencer8742/CiscoNavigatorWebApp/issues</Support>
+  <Project>https://github.com/Spencer8742/CiscoNavigatorWebApp</Project>
+  <Overview>
+    Smart home, media and photo dashboard built specifically for the Cisco Room
+    Navigator running RoomOS, in Persistent Web App mode.
+
+    Connects to Home Assistant over its WebSocket API for real-time entity
+    state, and to Immich for a photo screensaver. All credentials stay in this
+    container &#8212; the panel itself never receives them.
+
+    After starting: edit dashboard.yaml in the appdata folder to list your
+    entities (a documented example is created for you on first run), then set
+    the Navigator's Persistent Web App URL to:
+
+    http://[YOUR-UNRAID-IP]:8099/?t=YOUR_PANEL_TOKEN
+  </Overview>
+  <Category>HomeAutomation: Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8099]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/Spencer8742/CiscoNavigatorWebApp/main/unraid/navigator-panel.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/Spencer8742/CiscoNavigatorWebApp/main/panel/public/icon-192.png</Icon>
+  <ExtraParams>--memory=256m</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+
+  <Config
+    Name="WebUI Port"
+    Target="8099"
+    Default="8099"
+    Mode="tcp"
+    Description="Port the panel is served on. This is the port you put in the Navigator's URL."
+    Type="Port"
+    Display="always"
+    Required="true"
+    Mask="false">8099</Config>
+
+  <Config
+    Name="Config Folder"
+    Target="/config"
+    Default="/mnt/user/appdata/navigator-panel"
+    Mode="rw"
+    Description="Holds dashboard.yaml, which lists your rooms, favourites, scenes and Immich albums. A documented example is created here on first run. Edit it and the panel updates within a second - no restart needed."
+    Type="Path"
+    Display="always"
+    Required="true"
+    Mask="false">/mnt/user/appdata/navigator-panel</Config>
+
+  <Config
+    Name="Panel Token"
+    Target="PANEL_TOKEN"
+    Default=""
+    Mode=""
+    Description="Shared secret the Navigator uses to authenticate. Generate one with: openssl rand -hex 32   Then provision the Navigator with http://YOUR-IP:8099/?t=THIS_VALUE   Leave empty to disable authentication (bench testing only - anyone on your LAN could then control your house)."
+    Type="Variable"
+    Display="always"
+    Required="true"
+    Mask="true"/>
+
+  <Config
+    Name="Home Assistant URL"
+    Target="HA_URL"
+    Default="http://192.168.1.10:8123"
+    Mode=""
+    Description="Base URL of your Home Assistant, no trailing slash. Use an IP or a hostname your Unraid server can resolve. If HA runs in Docker on this same Unraid box, its container name works when both are on the same custom network."
+    Type="Variable"
+    Display="always"
+    Required="true"
+    Mask="false">http://192.168.1.10:8123</Config>
+
+  <Config
+    Name="Home Assistant Token"
+    Target="HA_TOKEN"
+    Default=""
+    Mode=""
+    Description="Long-lived access token. In Home Assistant: click your user name at the bottom of the sidebar, then Security, then Long-lived access tokens. Strongly recommended: create a dedicated non-admin user called 'panel' first and generate the token as that user, so it is independently revocable."
+    Type="Variable"
+    Display="always"
+    Required="true"
+    Mask="true"/>
+
+  <Config
+    Name="Immich URL"
+    Target="IMMICH_URL"
+    Default=""
+    Mode=""
+    Description="Base URL of your Immich server, no trailing slash. Leave empty to disable photo features."
+    Type="Variable"
+    Display="always"
+    Required="false"
+    Mask="false"/>
+
+  <Config
+    Name="Immich API Key"
+    Target="IMMICH_API_KEY"
+    Default=""
+    Mode=""
+    Description="Immich: Account Settings, then API Keys. Grant ONLY asset.read and album.read - no upload, no delete, no admin. Leave empty to disable photo features."
+    Type="Variable"
+    Display="always"
+    Required="false"
+    Mask="true"/>
+
+  <Config
+    Name="PUID"
+    Target="PUID"
+    Default="99"
+    Mode=""
+    Description="User ID the app runs as. 99 is Unraid's 'nobody' - leave this alone unless you know you need something else."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">99</Config>
+
+  <Config
+    Name="PGID"
+    Target="PGID"
+    Default="100"
+    Mode=""
+    Description="Group ID the app runs as. 100 is Unraid's 'users' - leave this alone unless you know you need something else."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">100</Config>
+
+  <Config
+    Name="Log Level"
+    Target="LOG_LEVEL"
+    Default="info"
+    Mode=""
+    Description="debug, info, warn or error. Use debug when troubleshooting a connection - tokens are redacted from logs at every level."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">info</Config>
+
+  <Config
+    Name="Unavailable Grace (ms)"
+    Target="HA_UNAVAILABLE_GRACE_MS"
+    Default="30000"
+    Mode=""
+    Description="How long Home Assistant may be unreachable before the panel stops showing last-known values and marks entities unavailable. Long enough to ride out an HA restart without the dashboard flickering."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">30000</Config>
+
+  <Config
+    Name="Allow Self-Signed HA Certificate"
+    Target="HA_INSECURE_TLS"
+    Default="0"
+    Mode=""
+    Description="Set to 1 only if Home Assistant uses a self-signed certificate you have not added to a trust store. Prefer fixing the certificate."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">0</Config>
+</Container>

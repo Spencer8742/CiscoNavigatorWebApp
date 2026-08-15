@@ -1,0 +1,87 @@
+name: Publish image
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  # GHCR requires a lowercase image path; the repo name is mixed case.
+  IMAGE_NAME: ${{ github.repository_owner }}/cisconavigatorwebapp
+
+jobs:
+  publish:
+    name: Build and push to GHCR
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          # Built-in token — no PAT to create, rotate, or leak.
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            # Moving tag that Unraid follows.
+            type=raw,value=latest,enable={{is_default_branch}}
+            # Immutable, so a specific build can always be pinned or rolled
+            # back to — `latest` alone gives you nowhere to go when a deploy
+            # misbehaves.
+            type=sha,format=long,prefix=
+            # Semver, when a v* tag is pushed.
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+          labels: |
+            org.opencontainers.image.title=Cisco Navigator Panel
+            org.opencontainers.image.description=Smart home, media and photo panel for the Cisco Room Navigator (RoomOS)
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          # Unraid is x86_64 only, so an emulated arm64 build would add
+          # several minutes per push for an image nobody would pull. Add
+          # linux/arm64 here if you ever want to run this on a Pi.
+          platforms: linux/amd64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            APP_VERSION=${{ github.ref_type == 'tag' && github.ref_name || format('main-{0}', github.sha) }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        run: |
+          {
+            echo "### Image published"
+            echo ""
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+            echo ""
+            echo "On Unraid: **Docker** tab → the container → **Force Update**,"
+            echo "or let the *Auto Update Applications* plugin pick it up."
+          } >> "$GITHUB_STEP_SUMMARY"

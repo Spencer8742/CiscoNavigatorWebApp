@@ -52,10 +52,27 @@ backend is not optional: **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)**.
 
 ## Quick start
 
+### Unraid
+
+*Docker* → **Add Container** → paste this into the **Template** field:
+
+```
+https://raw.githubusercontent.com/Spencer8742/CiscoNavigatorWebApp/main/unraid/navigator-panel.xml
+```
+
+Fill in your panel token and Home Assistant URL + token, hit Apply. A
+documented `dashboard.yaml` is written to
+`/mnt/user/appdata/navigator-panel/` on first start — edit it to list your
+entities and the panel updates within a second, no restart.
+
+Pushes to `main` publish a new image automatically, so updating is **Force
+Update** in the Docker tab (or the *Auto Update Applications* plugin).
+
+### Anywhere else
+
 ```bash
-cp .env.example .env                              # add tokens
-cp config/dashboard.example.yaml config/dashboard.yaml   # add entities
-docker compose up -d --build
+cp .env.example .env                    # add tokens
+docker compose -f docker-compose.prebuilt.yml up -d
 ```
 
 Then provision the Navigator with `https://your-host/?t=<PANEL_TOKEN>` in
@@ -121,7 +138,7 @@ fully documented reference.
 | 8 | Idle and screensaver | ⬜ |
 | 9 | Failure hardening | ⬜ |
 | 10 | Performance pass on-device | ⬜ |
-| 11 | Deployment polish | ⬜ |
+| 11 | Deployment polish | 🟡 CI, GHCR images and Unraid template done |
 
 Each phase is verified working before the next begins.
 
@@ -142,7 +159,9 @@ Enforced, not aspirational.
 ## Project layout
 
 ```
+.github/    CI (typecheck, tests, bundle budget) + GHCR image publish
 docs/       ROOMOS.md · ARCHITECTURE.md · DEPLOYMENT.md
+unraid/     Unraid container template
 config/     dashboard.yaml — rooms, favourites, scenes, albums
 shared/     types and helpers used verbatim by both ends
 panel/      frontend (Preact + signals, Vite, target chrome102)

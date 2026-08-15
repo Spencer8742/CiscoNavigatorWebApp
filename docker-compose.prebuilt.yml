@@ -1,0 +1,62 @@
+# Deploy from the published image — no source checkout, no build.
+#
+#   docker compose -f docker-compose.prebuilt.yml up -d
+#
+# Use this on a server. Use the plain docker-compose.yml when you want to build
+# from a local checkout.
+#
+# Update to the latest published build:
+#
+#   docker compose -f docker-compose.prebuilt.yml pull
+#   docker compose -f docker-compose.prebuilt.yml up -d
+#
+# On Unraid, prefer the container template in unraid/ — see docs/DEPLOYMENT.md.
+
+services:
+  navigator-panel:
+    # Published by .github/workflows/publish.yml on every push to main.
+    # Pin to a specific commit sha instead of `latest` if you would rather
+    # decide when to move: ghcr.io/spencer8742/cisconavigatorwebapp:<sha>
+    image: ghcr.io/spencer8742/cisconavigatorwebapp:latest
+    container_name: navigator-panel
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    environment:
+      PORT: 8099
+      HOST: 0.0.0.0
+      CONFIG_PATH: /config/dashboard.yaml
+      # Unraid's nobody:users. Change to 1000:1000 on a normal Linux host if
+      # your config directory is owned by your own user.
+      PUID: 99
+      PGID: 100
+
+    ports:
+      # LAN only. If you want this reachable remotely, put it behind your
+      # existing VPN rather than forwarding the port.
+      - '8099:8099'
+
+    volumes:
+      # Seeded with a default dashboard.yaml on first run if empty.
+      - ./config:/config
+
+    # The panel holds one WebSocket to Home Assistant and a few bounded
+    # caches. The limit is here so a leak shows up as a restart rather than as
+    # memory pressure on the host.
+    mem_limit: 256m
+
+    healthcheck:
+      test: ['CMD', 'wget', '--quiet', '--tries=1', '--spider', 'http://127.0.0.1:8099/api/health']
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+    logging:
+      # Unbounded logs on a machine that runs for months is its own outage.
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'

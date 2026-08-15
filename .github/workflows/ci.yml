@@ -1,0 +1,152 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Nothing here needs write access.
+permissions:
+  contents: read
+
+concurrency:
+  # A newer push supersedes an in-flight run on the same ref.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Typecheck, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # Integration tests: a real backend process against a mock Home
+      # Assistant speaking the real protocol. This is the job that matters —
+      # the compressed-diff handling is where a silent regression would
+      # otherwise reach a wall-mounted panel before anyone noticed.
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+        env:
+          APP_VERSION: ci-${{ github.sha }}
+
+      # The panel ships to a device with a small, unpublished memory budget
+      # and a CPU deprioritised behind a video pipeline. Bundle size is a
+      # correctness concern here, not a nicety, so a regression fails the
+      # build rather than being noticed six months later.
+      - name: Enforce bundle budget
+        run: |
+          set -euo pipefail
+
+          JS_BUDGET=51200   # 50 KB gzipped
+          CSS_BUDGET=12288  # 12 KB gzipped
+
+          js=$(cat panel/dist/a/*.js | gzip -9 | wc -c)
+          css=$(cat panel/dist/a/*.css | gzip -9 | wc -c)
+
+          printf 'JS  %6d bytes gzipped (budget %d)\n' "$js" "$JS_BUDGET"
+          printf 'CSS %6d bytes gzipped (budget %d)\n' "$css" "$CSS_BUDGET"
+
+          fail=0
+          [ "$js"  -le "$JS_BUDGET"  ] || { echo "::error::JS bundle over budget";  fail=1; }
+          [ "$css" -le "$CSS_BUDGET" ] || { echo "::error::CSS bundle over budget"; fail=1; }
+          exit "$fail"
+
+  docker:
+    name: Docker image builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Build only — publishing happens in publish.yml on main. This exists so
+      # a Dockerfile change that breaks the image is caught on the PR rather
+      # than after merge, when the next deploy would fail.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: navigator-panel:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # A container that builds but exits on startup is not a passing build.
+      - name: Smoke test the container
+        run: |
+          set -euo pipefail
+
+          docker run -d --name smoke -p 18099:8099 \
+            -e PANEL_TOKEN=ci-smoke-token \
+            navigator-panel:ci
+
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18099/api/health > /dev/null 2>&1; then
+              echo "Container is healthy after ${i}s"
+
+              echo "--- health ---"
+              curl -fsS http://127.0.0.1:18099/api/health
+
+              echo "--- the panel shell is served ---"
+              curl -fsS http://127.0.0.1:18099/ | head -c 120
+
+              echo ""
+              echo "--- an unauthenticated API call is refused ---"
+              code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18099/api/config)
+              [ "$code" = "401" ] || { echo "::error::expected 401, got $code"; exit 1; }
+
+              echo "--- the default config was seeded into /config ---"
+              docker exec smoke test -f /config/dashboard.yaml \
+                || { echo "::error::config was not seeded"; exit 1; }
+
+              # NOTE: `docker exec ... id -u` would report the IMAGE's user,
+              # which is root — the entrypoint needs it to fix appdata
+              # ownership. What matters is the uid the node process ended up
+              # running as after su-exec, so read it out of /proc.
+              #
+              # Matched on the process NAME (pgrep -x), not on a cmdline
+              # substring: grepping cmdline for "dist/server.js" also matches
+              # any shell whose own command line happens to contain that text,
+              # which silently reports the wrong uid.
+              echo "--- the node process dropped privileges ---"
+              uid=$(docker exec smoke sh -c '
+                pid=$(pgrep -x node 2>/dev/null | head -n 1)
+                [ -n "$pid" ] || exit 1
+                awk "/^Uid:/ { print \$2; exit }" "/proc/$pid/status"
+              ') || { echo "::error::could not find the server process"; exit 1; }
+
+              echo "server process uid: $uid"
+              [ "$uid" != "0" ] || { echo "::error::server is running as root"; exit 1; }
+              [ "$uid" = "1000" ] || { echo "::error::expected default uid 1000, got $uid"; exit 1; }
+
+              docker rm -f smoke > /dev/null
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "::error::Container did not become healthy"
+          docker logs smoke
+          docker rm -f smoke > /dev/null
+          exit 1

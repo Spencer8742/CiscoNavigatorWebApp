@@ -2,11 +2,13 @@
 
 Three parts: run the backend, put it behind TLS, point the Navigator at it.
 
+**On Unraid, skip to [§1a](#1a-unraid).**
+
 ---
 
 ## 1. Backend
 
-### Docker Compose (recommended)
+### Docker Compose (from source)
 
 ```bash
 git clone <your-fork> navigator-panel
@@ -28,11 +30,15 @@ docker compose logs -f
 The container:
 
 - serves the built panel and the API on `:8099`
-- mounts `./config` **read-only** at `/config` — hot reload still works, and a
-  bug in the backend cannot corrupt your config
+- mounts `./config` at `/config`, and **seeds a documented `dashboard.yaml`
+  there on first run** if the folder is empty. After that the backend only
+  reads it; hot reload works through the mount
 - restarts unless stopped, and is capped at 256 MB so a leak surfaces as a
   restart in `docker ps` rather than as host memory pressure
-- runs as uid 1000 (`node`), not root
+- **runs Node as uid 1000, not root.** The entrypoint starts as root only long
+  enough to seed the config and fix ownership, then drops privileges via
+  `su-exec`. Override with `PUID`/`PGID`; CI asserts the server process is not
+  root
 - rotates its own logs (3 × 10 MB)
 
 Verify:
@@ -67,6 +73,139 @@ docker compose up -d --build
 Connected panels see the socket close, reconnect within a second or two, and
 receive a fresh snapshot. No user action, no visible interruption beyond a
 brief amber connection dot.
+
+### Docker Compose (published image, no build)
+
+If you just want to run it:
+
+```bash
+docker compose -f docker-compose.prebuilt.yml up -d
+```
+
+This pulls `ghcr.io/spencer8742/cisconavigatorwebapp:latest`, published by
+GitHub Actions on every push to `main`. Update with `pull` then `up -d`.
+
+---
+
+## 1a. Unraid
+
+The image is published to GHCR **publicly**, so Unraid pulls it with no
+credentials and no registry login.
+
+### Why not a GitHub Action that deploys straight to Unraid?
+
+Because the two ways to do it are both worse than this:
+
+- **SSH from Actions** needs your Unraid box reachable from the internet (or a
+  tunnel), plus root-level credentials for your NAS sitting in GitHub secrets.
+- **A self-hosted runner on Unraid** gives any workflow in the repo arbitrary
+  code execution on your server.
+
+Push-to-registry, pull-from-Unraid gets the same "push code, it deploys"
+outcome, with nothing inbound and no secrets that can reach your NAS. Adding a
+`git push` → Unraid path later is easy if you already run Tailscale or
+similar; ask and I'll wire it up.
+
+### Install
+
+**1. Generate a panel token** — on Unraid, *Terminal*:
+
+```bash
+openssl rand -hex 32
+```
+
+Keep it; you need it twice (container config, and the Navigator's URL).
+
+**2. Add the container.** *Docker* tab → **Add Container**. In the **Template**
+dropdown, paste:
+
+```
+https://raw.githubusercontent.com/Spencer8742/CiscoNavigatorWebApp/main/unraid/navigator-panel.xml
+```
+
+That fills in the image, port, appdata path and every environment variable
+with descriptions.
+
+*Alternative:* copy `unraid/navigator-panel.xml` into
+`/boot/config/plugins/dockerMan/templates-user/` and it appears in the
+template list directly.
+
+**3. Fill in four fields:**
+
+| Field | Value |
+|---|---|
+| Panel Token | the token from step 1 |
+| Home Assistant URL | `http://192.168.1.x:8123` (no trailing slash) |
+| Home Assistant Token | a long-lived access token — see [Getting the credentials](#getting-the-credentials) |
+| Immich URL / API Key | optional; leave blank to disable photos |
+
+**4. Apply.** On first start the container writes a fully documented
+`dashboard.yaml` into `/mnt/user/appdata/navigator-panel/`.
+
+**5. Edit that file** to list your entities. Unraid's file manager works, or:
+
+```bash
+nano /mnt/user/appdata/navigator-panel/dashboard.yaml
+```
+
+It hot-reloads — save and connected panels update within a second. **No
+container restart.** If you make a YAML syntax error the container keeps
+running the last good config and logs the problem, so a typo can't take the
+panel down.
+
+**6. Point the Navigator at it** (Persistent Web App mode, see [§3](#3-provisioning-the-room-navigator)):
+
+```
+http://YOUR-UNRAID-IP:8099/?t=YOUR_PANEL_TOKEN
+```
+
+### Updating
+
+Push to `main` → GitHub Actions builds and publishes → Unraid's *Docker* tab
+shows **update ready** on the container. Click **Force Update**.
+
+To do it automatically, install **Auto Update Applications** from Community
+Applications and enable it for `navigator-panel`. During the pull the panel
+shows an amber connection dot for a second or two and then reconnects on its
+own — the backend closes panel sockets cleanly on SIGTERM specifically so a
+deploy doesn't leave a wall-mounted device waiting out a heartbeat timeout.
+
+To pin a specific build instead of tracking `latest`, change the repository to
+a commit SHA tag:
+
+```
+ghcr.io/spencer8742/cisconavigatorwebapp:<full-commit-sha>
+```
+
+Every push publishes one, so rolling back is changing that string.
+
+### Networking notes
+
+- **Home Assistant on the same Unraid box?** Put both containers on the same
+  custom Docker network and use HA's container name as the hostname. On
+  `bridge`, use the Unraid host's LAN IP — `localhost` refers to the container
+  itself.
+- **Bridge is the right choice** here. `host` mode gains nothing; the panel
+  only needs one inbound port.
+
+### File permissions
+
+The container starts as root only long enough to seed the config and fix
+ownership of the appdata folder, then drops to `PUID:PGID` (99:100, Unraid's
+`nobody:users`) before running Node. CI asserts the server process is not
+root. Leave PUID/PGID alone unless you know you need something else.
+
+If the log says `WARNING: could not write ... (permissions?)`, the appdata
+folder isn't writable. Fix it and restart:
+
+```bash
+mkdir -p /mnt/user/appdata/navigator-panel
+chown -R 99:100 /mnt/user/appdata/navigator-panel
+chmod -R 0775 /mnt/user/appdata/navigator-panel
+```
+
+The panel still starts in that state — it just shows an empty dashboard rather
+than going dark.
 
 ---
 
@@ -295,6 +434,9 @@ worth taking literally:
 | Photos never load | Immich key lacks scopes | Needs `asset.read` **and** `album.read` |
 | Web view crashes / reloads itself | Memory ceiling hit | Remote DevTools → Memory → heap snapshot. See `docs/ROOMOS.md` §2 |
 | Layout wrong / cut off | Unexpected viewport | Settings screen shows the measured viewport. Everything is fluid, so report the number |
+| Unraid: no `dashboard.yaml` appears | appdata folder not writable | See [File permissions](#file-permissions) |
+| Unraid: container won't pull | Image path is case-sensitive | Must be lowercase: `ghcr.io/spencer8742/cisconavigatorwebapp` |
+| Unraid: HA unreachable from container | `localhost` points at the container | Use the Unraid host's LAN IP, or a shared Docker network + container name |
 
 ### Reading the connection indicator
 

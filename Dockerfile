@@ -73,9 +73,11 @@ ENV NODE_ENV=production \
 
 WORKDIR /app
 
-# wget is used by the healthcheck below; tini reaps zombies and forwards
-# signals so SIGTERM reaches Node and the graceful shutdown path runs.
-RUN apk add --no-cache tini wget
+# tini reaps zombies and forwards signals so SIGTERM reaches Node and the
+# graceful shutdown path runs (panels then reconnect immediately on the new
+# container instead of waiting out a heartbeat timeout).
+# su-exec drops privileges in the entrypoint; wget backs the healthcheck.
+RUN apk add --no-cache tini su-exec wget
 
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=build /app/server/dist ./dist
@@ -85,20 +87,30 @@ COPY --from=build /app/panel/dist ./panel
 #   new URL('../panel', import.meta.url)  →  /app/panel
 # See server/src/index.ts.
 
-# Config is mounted read-only at /config. Shipping a default means the
-# container starts and serves a working (empty) dashboard even with nothing
-# mounted, rather than failing in a way that looks like a broken image.
-COPY config/dashboard.example.yaml /config/dashboard.yaml
+# The example lives OUTSIDE /config on purpose. /config is a mount point, and
+# anything baked in at that path is hidden the moment a host directory is
+# mounted over it — which is exactly what Unraid does. The entrypoint copies
+# this in on first run instead, so a fresh install gets a real, editable file.
+COPY config/dashboard.example.yaml /app/dashboard.example.yaml
 
-# Drop privileges. The node image already provides uid/gid 1000.
-USER node
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# Deliberately NOT `USER node`: the entrypoint needs root briefly to fix
+# ownership of a freshly created appdata directory, then drops to PUID:PGID
+# via su-exec. The Node process never runs as root — CI asserts this.
+# Defaults match the `node` user so compose behaviour is unchanged.
+ENV PUID=1000 \
+    PGID=1000
 
 EXPOSE 8099
+
+VOLUME ["/config"]
 
 # Hits the unauthenticated liveness endpoint — see server/src/index.ts for why
 # that route deliberately requires no token.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD wget --quiet --tries=1 --spider http://127.0.0.1:${PORT}/api/health || exit 1
 
-ENTRYPOINT ["/sbin/tini", "--"]
+ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
 CMD ["node", "--enable-source-maps", "dist/server.js"]
