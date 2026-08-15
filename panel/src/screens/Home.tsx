@@ -8,6 +8,7 @@ import { favorites, houseAlerts, sceneButtons, statusItems, weather } from '~/st
 import { openEntity, markActivity } from '~/state/ui.ts';
 import { Pressable } from '~/components/Pressable.tsx';
 import { activate } from '~/state/actions.ts';
+import { HomeSide } from '~/components/HomeSide.tsx';
 
 /**
  * Home — the panel's resting face.
@@ -92,44 +93,54 @@ export function Home() {
           </div>
         ) : null}
 
-        {favs.length > 0 ? (
-          <>
-            <div class="section-head">
-              <h2 class="section-title">Favourites</h2>
-            </div>
-            <div class="tile-grid">
-              {favs.map((item) => (
-                <EntityTile key={item.id} item={item} size="lg" />
-              ))}
-            </div>
-          </>
-        ) : null}
+        {/* Two columns on a wide panel: controls on the left, a glanceable
+            card on the right. A Navigator is 16:9 with only a handful of
+            favourites on it, so a single stacked column left most of the
+            screen empty. Falls back to one column when narrow. */}
+        <div class="home-split">
+          <div class="home-col">
+            {favs.length > 0 ? (
+              <>
+                <div class="section-head">
+                  <h2 class="section-title">Favorites</h2>
+                </div>
+                <div class={favs.length <= 4 ? 'tile-grid tile-grid-roomy' : 'tile-grid'}>
+                  {favs.map((item) => (
+                    <EntityTile key={item.id} item={item} size="lg" />
+                  ))}
+                </div>
+              </>
+            ) : null}
 
-        {scenes.length > 0 ? (
-          <>
-            <div class="section-head">
-              <h2 class="section-title">Scenes</h2>
-            </div>
-            <div class="scene-row">
-              {scenes.map((item) => (
-                <Pressable
-                  key={item.id}
-                  class="scene-chip"
-                  onPress={() => activate(item.id)}
-                  onLongPress={() => {
-                    openEntity.value = item.id;
-                    markActivity();
-                  }}
-                  ariaLabel={item.name}
-                  disabled={item.unavailable}
-                >
-                  <Icon name={item.icon} size="1.25rem" weight={1.7} />
-                  <span class="truncate">{item.name}</span>
-                </Pressable>
-              ))}
-            </div>
-          </>
-        ) : null}
+            {scenes.length > 0 ? (
+              <>
+                <div class="section-head">
+                  <h2 class="section-title">Scenes</h2>
+                </div>
+                <div class="scene-row">
+                  {scenes.map((item) => (
+                    <Pressable
+                      key={item.id}
+                      class="scene-chip"
+                      onPress={() => activate(item.id)}
+                      onLongPress={() => {
+                        openEntity.value = item.id;
+                        markActivity();
+                      }}
+                      ariaLabel={item.name}
+                      disabled={item.unavailable}
+                    >
+                      <Icon name={item.icon} size="1.25rem" weight={1.7} />
+                      <span class="truncate">{item.name}</span>
+                    </Pressable>
+                  ))}
+                </div>
+              </>
+            ) : null}
+          </div>
+
+          <HomeSide />
+        </div>
       </div>
     </div>
   );

@@ -92,7 +92,7 @@ immich:
     # Random from the whole library.
     - type: random
 
-    # Only favourites.
+    # Only favorites.
     # - type: favorites
 
     # Specific albums. Get the ID from the Immich album URL:

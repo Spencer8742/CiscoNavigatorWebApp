@@ -7,6 +7,7 @@ import { Pressable } from '~/components/Pressable.tsx';
 import { Slider } from '~/components/Slider.tsx';
 import { OptionRow } from '~/components/Sheet.tsx';
 import { attrNumber, attrString, friendlyName } from '~/domains/registry.ts';
+import { defaultPlayerId } from '~/state/selectors.ts';
 import { getToken } from '~/net/auth.ts';
 import * as act from '~/state/actions.ts';
 import type { EntityState } from '@shared/protocol.ts';
@@ -49,7 +50,7 @@ export function Media() {
     );
   }
 
-  const activeId = chosen ?? pickDefault();
+  const activeId = chosen ?? defaultPlayerId.value;
   const state = entity(activeId).value;
 
   return (
@@ -85,30 +86,6 @@ export function Media() {
   );
 }
 
-/**
- * `media.default: active` picks whatever is currently playing.
- *
- * That is almost always what you want on a wall panel: you walked over
- * because music is playing, and the panel should already be showing it rather
- * than making you find which of five speakers it is.
- */
-function pickDefault(): string {
-  const cfg = mediaConfig.value;
-  const first = cfg.players[0]?.entity ?? '';
-
-  if (cfg.default !== 'active') {
-    return cfg.players.some((p) => p.entity === cfg.default) ? cfg.default : first;
-  }
-
-  for (const p of cfg.players) {
-    if (entity(p.entity).value?.s === 'playing') return p.entity;
-  }
-  for (const p of cfg.players) {
-    const s = entity(p.entity).value?.s;
-    if (s === 'paused' || s === 'buffering') return p.entity;
-  }
-  return first;
-}
 
 function MissingPlayer({ id }: { id: string }) {
   return (

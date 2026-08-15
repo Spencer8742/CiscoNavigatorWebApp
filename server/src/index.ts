@@ -13,6 +13,7 @@ import { Hub } from '~/hub/index.ts';
 import { HaClient } from '~/ha/client.ts';
 import { HaStore, isEmptyPatch } from '~/ha/store.ts';
 import { ServiceGuard } from '~/ha/services.ts';
+import { PrefsStore } from '~/config/prefs.ts';
 import { ImmichClient } from '~/immich/client.ts';
 import { ImmichImages } from '~/immich/images.ts';
 import { Playlist } from '~/immich/playlist.ts';
@@ -96,6 +97,8 @@ async function main(): Promise<void> {
      The store is constructed before the client so it is ready to absorb the
      first snapshot, which arrives within milliseconds of authenticating. */
 
+  const prefs = new PrefsStore(env.configPath);
+
   const store = new HaStore(config.current);
 
   /** Pending "we have genuinely lost touch" timer. See onStateChange below. */
@@ -166,6 +169,9 @@ async function main(): Promise<void> {
     },
   });
 
+  // A preference set on one panel appears on every other one immediately.
+  prefs.onChange((next) => hub.broadcastPrefs(next));
+
   const services = new ServiceGuard(haClient, store);
 
   const hub = new Hub(server, {
@@ -180,6 +186,9 @@ async function main(): Promise<void> {
         entity: msg.entity,
         data: msg.data,
       }),
+
+    getPrefs: () => prefs.current,
+    onPref: (key, value) => prefs.set(key, value),
 
     onPhotos: async (count) => {
       const photos = await playlist.take(count);

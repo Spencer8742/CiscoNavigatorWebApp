@@ -107,6 +107,7 @@ export type ServerMessage =
       health: BackendHealth;
       /** Server time, so the panel's clock is right even if the device's isn't. */
       now: number;
+      prefs: PanelPrefs;
     }
   /** Incremental entity state. */
   | { t: 'patch'; patch: StatePatch }
@@ -114,6 +115,8 @@ export type ServerMessage =
   | { t: 'config'; config: DashboardConfig }
   /** Backend link health changed. */
   | { t: 'health'; health: BackendHealth }
+  /** A preference changed — on this panel or another one. */
+  | { t: 'prefs'; prefs: PanelPrefs }
   /** A batch of photos for the slideshow to preload. */
   | { t: 'photos'; photos: PhotoRef[] }
   /** A command the panel sent failed. `ref` matches the command's id. */
@@ -140,7 +143,43 @@ export type ClientMessage =
   /** Ask for the next N slideshow photos. */
   | { t: 'photos'; id: number; count: number }
   /** Heartbeat. Detects half-open sockets that TCP will not report. */
-  | { t: 'ping'; id: number };
+  | { t: 'ping'; id: number }
+  /**
+   * Change a panel preference.
+   *
+   * The backend validates the key and value against a fixed allow-list and
+   * persists them, then broadcasts the result to every panel. Preferences
+   * cannot live in the browser: RoomOS deletes web storage daily by default
+   * (docs/ROOMOS.md §3), so a setting chosen at the panel would silently
+   * revert overnight.
+   */
+  | { t: 'pref'; id: number; key: keyof PanelPrefs; value: string };
+
+/* ── Panel preferences ─────────────────────────────────────────────────── */
+
+/**
+ * Settings chosen at the panel rather than in `dashboard.yaml`.
+ *
+ * Deliberately tiny. Anything that needs typing belongs in the YAML, where a
+ * real keyboard exists — the RoomOS soft keyboard has no numeric, date or
+ * colour modes (docs/ROOMOS.md §6). These are things you pick by tapping.
+ */
+export interface PanelPrefs {
+  /**
+   * What fills the panel beside Favorites on the Home screen.
+   *
+   * `media` falls back to the photo when nothing is playing, so the space is
+   * never empty — which is the entire reason it exists.
+   */
+  homeSide: 'media' | 'photos';
+}
+
+export const DEFAULT_PREFS: PanelPrefs = { homeSide: 'media' };
+
+/** Allowed values per key, so a compromised panel cannot write arbitrary data. */
+export const PREF_VALUES: Record<keyof PanelPrefs, readonly string[]> = {
+  homeSide: ['media', 'photos'],
+};
 
 /** Application-level heartbeat interval. A Wi-Fi roam can leave a socket
  *  half-open for minutes before TCP notices; this catches it in seconds. */

@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'preact/hooks';
 import { config, ui } from '~/config/index.ts';
-import { health, linkStatus, socketState } from '~/state/ui.ts';
+import { health, linkStatus, prefs, socketState } from '~/state/ui.ts';
+import { Pressable } from '~/components/Pressable.tsx';
+import { setPref } from '~/net/socket.ts';
+import type { PanelPrefs } from '@shared/protocol.ts';
 import { entityCount } from '~/state/entities.ts';
 import { formatRelative } from '~/lib/format.ts';
 import { deviceInfo } from '~/lib/device.ts';
@@ -50,6 +53,25 @@ export function Settings() {
 
       <div class="screen-body scroll">
         <div class="section-head">
+          <h2 class="section-title">Home screen</h2>
+        </div>
+        <div class="rows">
+          <div class="rows-row">
+            <span class="rows-key">Side card</span>
+            <div class="segmented" role="group" aria-label="Home side card">
+              <SegItem value="media" label="Now Playing" />
+              <SegItem value="photos" label="Photos" />
+            </div>
+          </div>
+        </div>
+        <p class="settings-note">
+          What fills the space beside Favorites. <strong>Now Playing</strong> shows
+          the photo instead whenever nothing is playing, so the panel never has a
+          hole in it. Stored on the server, because RoomOS clears the browser's
+          storage nightly.
+        </p>
+
+        <div class="section-head">
           <h2 class="section-title">Connection</h2>
         </div>
         <div class="rows">
@@ -71,7 +93,7 @@ export function Settings() {
         <div class="rows">
           <Row k="Title" v={cfg.ui.title} />
           <Row k="Rooms" v={String(cfg.rooms.length)} />
-          <Row k="Favourites" v={String(cfg.home.favorites.length)} />
+          <Row k="Favorites" v={String(cfg.home.favorites.length)} />
           <Row k="Scenes" v={String(cfg.home.scenes.length)} />
           <Row k="Media players" v={String(cfg.media.players.length)} />
           <Row k="Live entities" v={String(entityCount())} />
@@ -123,6 +145,29 @@ export function Settings() {
         </p>
       </div>
     </div>
+  );
+}
+
+/**
+ * One option in the side-card picker.
+ *
+ * This screen is otherwise deliberately read-only — the RoomOS soft keyboard
+ * has no numeric, date or colour modes and Cisco's own guidance is that it
+ * "does not encourage a lot of text input" (docs/ROOMOS.md §6). A two-way
+ * choice made by tapping is the one kind of setting that belongs on the
+ * device rather than in the YAML.
+ */
+function SegItem({ value, label }: { value: PanelPrefs['homeSide']; label: string }) {
+  const active = prefs.value.homeSide === value;
+  return (
+    <Pressable
+      class={active ? 'seg-item is-active' : 'seg-item'}
+      onPress={() => setPref('homeSide', value)}
+      ariaPressed={active}
+      ariaLabel={label}
+    >
+      {label}
+    </Pressable>
   );
 }
 

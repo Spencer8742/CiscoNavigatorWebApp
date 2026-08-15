@@ -729,3 +729,35 @@
   color: var(--text-faint);
   opacity: 0.5;
 }
+
+/* ── Segmented control ────────────────────────────────────────────────────
+   The only editable control on the Settings screen. Two taps wide, no text
+   entry — the RoomOS soft keyboard is not somewhere to send anyone
+   (docs/ROOMOS.md §6). */
+
+.segmented {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+
+.seg-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.25rem;
+  padding: 0 var(--s-3);
+  border-radius: var(--r-sm);
+  font-size: 0.875rem;
+  font-weight: 550;
+  color: var(--text-dim);
+  background: transparent;
+  white-space: nowrap;
+}
+
+.seg-item.is-active {
+  color: var(--text);
+  background: var(--surface-3);
+}
