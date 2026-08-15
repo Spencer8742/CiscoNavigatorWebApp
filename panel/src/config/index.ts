@@ -40,6 +40,7 @@ const DEFAULTS: DashboardConfig = {
     transitionMs: 1200,
     sources: [],
     imagesOnly: true,
+    pairPortraits: true,
   },
   rooms: [],
   home: { favorites: [], scenes: [], status: [], alerts: [] },

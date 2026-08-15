@@ -28,7 +28,15 @@ import type { PhotoRef } from '@shared/protocol.ts';
  * the browser's own image cache can keep the decoded frame alive.
  */
 
-/** Current, next, next-but-one, plus a little slack for going backwards. */
+/**
+ * Three slides' worth: previous (still fading out), current, and next.
+ *
+ * Six is not slack — with portrait pairing a slide is up to two images, so
+ * this is exactly 3 × 2. The arithmetic only works because `preloadAhead`
+ * predicts the next slide's actual pairing: fetch the wrong photos and the
+ * inserts evict a photo that is still on screen, clearing its `src`
+ * mid-crossfade.
+ */
 const CACHE_SIZE = 6;
 /** Refill the queue when fewer than this remain. */
 const LOW_WATER = 8;
@@ -37,6 +45,14 @@ const BATCH = 24;
 
 export const currentPhoto = signal<PhotoRef | null>(null);
 export const nextPhoto = signal<PhotoRef | null>(null);
+/**
+ * What the screensaver should draw right now: one photo, or two portraits
+ * side by side.
+ *
+ * `currentPhoto` remains the first of them, so everything else that reads it
+ * (captions, average-colour background) keeps working unchanged.
+ */
+export const currentSlide = signal<PhotoRef[]>([]);
 /** True once at least one image is decoded and ready to show. */
 export const photosReady = signal(false);
 /** Set when the backend has no photos to give — shown in the UI. */
@@ -101,10 +117,79 @@ async function fill(): Promise<void> {
   }
 }
 
-/** Preload the next one or two without blocking anything. */
+/**
+ * Preload exactly the next slide, without blocking anything.
+ *
+ * It has to predict the pairing rather than simply take the next two from the
+ * queue: a partner may come from several places further along, so "the next
+ * two" can be the wrong two. Getting it wrong is not just a missed
+ * optimisation — it fills the cache with images the next slide will not use,
+ * and evicting to make room for the ones it does use can clear the `src` of a
+ * photo still fading out on screen.
+ *
+ * Preloading precisely keeps occupancy at previous + current + next, which is
+ * what CACHE_SIZE is sized for.
+ */
 function preloadAhead(): void {
-  const upcoming = queue.slice(0, 2);
-  for (const ref of upcoming) void load(ref);
+  for (const ref of peekNextSlide()) void load(ref);
+}
+
+/**
+ * Whether a photo is tall enough to be worth pairing.
+ *
+ * Not simply `h > w`. A 4:3 held upright is 0.75 and pairs well; a 1:1 is
+ * borderline and looks like a mistake next to a tall one. The threshold sits
+ * between them. Unknown dimensions (Immich returning no EXIF) count as
+ * landscape, because guessing wrong here means a cropped or gappy collage.
+ */
+function isPortrait(ref: PhotoRef): boolean {
+  return ref.w > 0 && ref.h > 0 && ref.w / ref.h <= 0.85;
+}
+
+/** Whether pairing is on. Read at advance() time so config edits take effect. */
+let pairingEnabled = true;
+export function setPairing(on: boolean): void {
+  pairingEnabled = on;
+}
+
+/**
+ * How far past the next photo to look for a portrait to pair with.
+ *
+ * In a mixed library portraits are scattered, so the immediately following
+ * photo is usually landscape — strict adjacency would almost never pair
+ * anything. Bounded so a long landscape stretch costs nothing.
+ */
+const LOOKAHEAD = 6;
+
+/** Index in `queue` of a partner for `ref`, or -1. Pure: does not mutate. */
+function partnerIndexFor(ref: PhotoRef, from = 0): number {
+  if (!pairingEnabled || !isPortrait(ref)) return -1;
+
+  const limit = Math.min(from + LOOKAHEAD, queue.length);
+  for (let i = from; i < limit; i += 1) {
+    const candidate = queue[i];
+    if (candidate && isPortrait(candidate)) return i;
+  }
+  return -1;
+}
+
+/** Find a partner for a portrait photo, and take it out of the queue. */
+function takePartnerFor(ref: PhotoRef): PhotoRef | null {
+  const i = partnerIndexFor(ref);
+  if (i < 0) return null;
+  const [partner] = queue.splice(i, 1);
+  return partner ?? null;
+}
+
+/** What the next slide will be, without consuming anything. */
+function peekNextSlide(): PhotoRef[] {
+  const first = queue[0];
+  if (!first) return [];
+  // The partner search starts past the head, which advance() will have
+  // consumed by then.
+  const i = partnerIndexFor(first, 1);
+  const partner = i >= 0 ? queue[i] : undefined;
+  return partner ? [first, partner] : [first];
 }
 
 /**
@@ -130,11 +215,21 @@ export async function advance(): Promise<void> {
     const img = await load(ref);
     if (!img) continue;
 
+    // A portrait fills about a third of a 16:9 panel. Pair it with another
+    // portrait so the rest is photo instead of filler.
+    const partner = takePartnerFor(ref);
+    // Both halves must be decoded before the crossfade starts, or the
+    // collage assembles itself on screen one photo at a time. If the partner
+    // will not decode, fall back to showing this one alone — a single
+    // contained portrait is a worse layout, not a broken one.
+    const slide = partner && (await load(partner)) ? [ref, partner] : [ref];
+
     history.push(ref);
     if (history.length > CACHE_SIZE * 4) history.shift();
     index = history.length - 1;
 
     currentPhoto.value = ref;
+    currentSlide.value = slide;
     nextPhoto.value = queue[0] ?? null;
     photosReady.value = true;
     preloadAhead();
@@ -151,6 +246,9 @@ export async function previous(): Promise<void> {
   if (!img) return;
   index -= 1;
   currentPhoto.value = ref;
+  // History records the photos shown, not how they were laid out, so going
+  // back shows this one on its own rather than re-guessing a pairing.
+  currentSlide.value = [ref];
 }
 
 /** Grid photos for the Photos screen — separate from the slideshow queue. */
@@ -183,6 +281,7 @@ export function resetPlaylist(): void {
   index = -1;
   cache.clear();
   currentPhoto.value = null;
+  currentSlide.value = [];
   nextPhoto.value = null;
   photosReady.value = false;
   photosEmpty.value = false;

@@ -9,7 +9,16 @@ import {
   type TimeOpts,
 } from '~/lib/format.ts';
 import { thumbHashCss } from '~/lib/thumbhash.ts';
-import { advance, currentPhoto, photoUrl, photosEmpty, photosReady, releaseImages } from '~/media/photos.ts';
+import {
+  advance,
+  currentPhoto,
+  currentSlide,
+  photoUrl,
+  photosEmpty,
+  photosReady,
+  releaseImages,
+  setPairing,
+} from '~/media/photos.ts';
 import { nowPlaying, weather } from '~/state/selectors.ts';
 import { Icon } from '~/components/Icon.tsx';
 import type { PhotoRef } from '@shared/protocol.ts';
@@ -45,11 +54,12 @@ export function Screensaver() {
   const d = now.value;
 
   const photo = currentPhoto.value;
+  const slide = currentSlide.value;
   const ready = photosReady.value;
 
   /** Which of the two layers is currently on top. */
   const [front, setFront] = useState(0);
-  const layers = useRef<(PhotoRef | null)[]>([null, null]);
+  const layers = useRef<(PhotoRef[] | null)[]>([null, null]);
   /** Corner index for the overlay, changed per photo to spread wear. */
   const [corner, setCorner] = useState(0);
 
@@ -57,6 +67,8 @@ export function Screensaver() {
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+
+    setPairing(immich.pairPortraits);
 
     const step = async (): Promise<void> => {
       if (cancelled) return;
@@ -74,17 +86,17 @@ export function Screensaver() {
       // than a slideshow nobody is watching.
       releaseImages();
     };
-  }, [immich.intervalSeconds]);
+  }, [immich.intervalSeconds, immich.pairPortraits]);
 
-  // Swap layers whenever a new photo is ready.
+  // Swap layers whenever a new slide is ready.
   useEffect(() => {
-    if (!photo) return;
+    if (slide.length === 0) return;
     const back = front === 0 ? 1 : 0;
-    if (layers.current[front]?.id === photo.id) return;
-    layers.current[back] = photo;
+    if (layers.current[front]?.[0]?.id === slide[0]?.id) return;
+    layers.current[back] = slide;
     setFront(back);
     if (cfg.burnInProtection) setCorner((c) => (c + 1) % 4);
-  }, [photo?.id]);
+  }, [slide]);
 
   if (immich.enabled && photosEmpty.value) {
     return (
@@ -116,29 +128,40 @@ export function Screensaver() {
       style={{ background: thumbHashCss(photo?.th) }}
     >
       {[0, 1].map((i) => {
-        const ref = layers.current[i];
+        const refs = layers.current[i];
+        const paired = (refs?.length ?? 0) > 1;
         return (
-          <img
+          <div
             key={i}
             class="saver-layer"
             data-front={i === front && ready ? '' : undefined}
-            src={ref ? photoUrl(ref.id, 'full') : undefined}
-            alt=""
-            decoding="async"
-            style={{
-              transitionDuration: `${immich.transitionMs}ms`,
-              // Portrait photos on a landscape panel look wrong cropped, so
-              // they are contained; landscape fills.
-              objectFit: ref && ref.h > ref.w ? 'contain' : 'cover',
-            }}
-          />
+            data-paired={paired ? '' : undefined}
+            style={{ transitionDuration: `${immich.transitionMs}ms` }}
+          >
+            {(refs ?? []).map((ref) => (
+              <img
+                key={ref.id}
+                class="saver-photo"
+                src={photoUrl(ref.id, 'full')}
+                alt=""
+                decoding="async"
+                style={{
+                  // A paired portrait gets half the screen, which is close to
+                  // its own aspect ratio — so it can fill without losing
+                  // anything worth keeping. Alone, it must be contained or
+                  // the crop eats the subject.
+                  objectFit: paired || ref.w > ref.h ? 'cover' : 'contain',
+                }}
+              />
+            ))}
+          </div>
         );
       })}
 
       <div class="saver-overlays" data-corner={corner}>
         <SaverClock d={d} t={t} cfg={cfg} corner={corner} big />
 
-        {cfg.overlays.photoInfo && photo ? <PhotoCaption photo={photo} t={t} /> : null}
+        {cfg.overlays.photoInfo && photo ? <PhotoCaption photos={slide} t={t} /> : null}
       </div>
     </div>
   );
@@ -192,16 +215,33 @@ function SaverClock({
   );
 }
 
-function PhotoCaption({ photo, t }: { photo: PhotoRef; t: TimeOpts }) {
-  const place = [photo.city, photo.country].filter(Boolean).join(', ');
-  const when = photo.taken ? formatPhotoDate(photo.taken, t) : '';
-  if (!place && !when) return null;
+/**
+ * One caption for the whole slide.
+ *
+ * With two photos there are two dates and two places, and printing all four
+ * turns a quiet corner label into a paragraph. Duplicates collapse — a pair
+ * from the same afternoon in the same city reads as one line, which is the
+ * common case — and anything genuinely different is joined rather than
+ * dropped, because silently captioning one photo with the other's location
+ * would be worse than saying nothing.
+ */
+function PhotoCaption({ photos, t }: { photos: PhotoRef[]; t: TimeOpts }) {
+  const unique = (values: (string | undefined)[]): string[] => [
+    ...new Set(values.filter((v): v is string => Boolean(v))),
+  ];
+
+  const when = unique(photos.map((p) => (p.taken ? formatPhotoDate(p.taken, t) : undefined)));
+  const place = unique(
+    photos.map((p) => [p.city, p.country].filter(Boolean).join(', ') || undefined),
+  );
+
+  if (when.length === 0 && place.length === 0) return null;
 
   return (
     <div class="saver-caption">
-      {when ? <span class="tnum">{when}</span> : null}
-      {when && place ? <span class="saver-dot">·</span> : null}
-      {place ? <span class="truncate">{place}</span> : null}
+      {when.length ? <span class="tnum">{when.join(' · ')}</span> : null}
+      {when.length && place.length ? <span class="saver-dot">·</span> : null}
+      {place.length ? <span class="truncate">{place.join(' · ')}</span> : null}
     </div>
   );
 }
