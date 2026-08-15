@@ -36,14 +36,33 @@ export interface TimeOpts {
   hour12: boolean;
 }
 
-/** "14:32" or "2:32" — no seconds; a wall clock that ticks is noise. */
+/**
+ * "14:32" or "2:32" — no seconds; a wall clock that ticks is noise.
+ *
+ * **The meridiem is deliberately excluded**, even in 12-hour mode. Every
+ * caller renders it separately via `formatMeridiem`, in smaller type beside
+ * the digits, because "PM" at clock size looks like part of the time. Letting
+ * `Intl` include it here produced "2:32 PM PM" on both clocks.
+ *
+ * Nor can it simply be sliced off the end: some locales lead with it
+ * (`下午2:32`), so the day-period part is removed structurally.
+ */
 export function formatTime(d: Date, { locale, timezone, hour12 }: TimeOpts): string {
-  return dtf(locale, {
-    hour: '2-digit',
+  const parts = dtf(locale, {
+    // A 12-hour clock reading "02:32" looks like a 24-hour one that has gone
+    // wrong; a 24-hour clock reading "2:32" looks unpadded. Each gets the
+    // convention it is expected in.
+    hour: hour12 ? 'numeric' : '2-digit',
     minute: '2-digit',
     hour12,
     timeZone: timezone,
-  }).format(d);
+  }).formatToParts(d);
+
+  return parts
+    .filter((p) => p.type !== 'dayPeriod')
+    .map((p) => p.value)
+    .join('')
+    .trim();
 }
 
 /** "PM" — rendered small next to a 12h clock, omitted for 24h. */
