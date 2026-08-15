@@ -7,9 +7,10 @@ import { Media } from '~/screens/Media.tsx';
 import { Photos } from '~/screens/Photos.tsx';
 import { Settings } from '~/screens/Settings.tsx';
 import { ConnectionHelp } from '~/screens/ConnectionHelp.tsx';
+import { Screensaver } from '~/screens/Screensaver.tsx';
 import { EntitySheet } from '~/components/EntitySheet.tsx';
 import { ui } from '~/config/index.ts';
-import { connectionProblem, ready, route } from '~/state/ui.ts';
+import { connectionProblem, ready, route, screensaverActive } from '~/state/ui.ts';
 
 /**
  * The shell.
@@ -30,7 +31,19 @@ import { connectionProblem, ready, route } from '~/state/ui.ts';
 export function App() {
   return (
     <ErrorBoundary>
-      <div class="shell" data-nav={ui.value.navPosition}>
+      {/*
+        The screensaver replaces the shell entirely rather than overlaying it.
+        Mounting it means the dashboard's timers and subscriptions unmount,
+        which matters on a device that runs for weeks — and unmounting it
+        releases every decoded photo (see media/photos.ts) so the slideshow
+        never holds tens of megabytes while the dashboard is in use.
+
+        Waking is handled by the global activity listener in state/idle.ts, so
+        a touch anywhere on the photo brings the panel back.
+      */}
+      {screensaverActive.value && ready.value ? <Screensaver /> : null}
+
+      <div class="shell" data-nav={ui.value.navPosition} data-hidden={screensaverActive.value && ready.value ? '' : undefined}>
         <div class="shell-nav">
           <Nav />
         </div>

@@ -1,6 +1,6 @@
 import { computed } from '@preact/signals';
 import { entity } from '~/state/entities.ts';
-import { homeConfig, roomsById } from '~/config/index.ts';
+import { homeConfig, mediaConfig, roomsById } from '~/config/index.ts';
 import { activeRoom } from '~/state/ui.ts';
 import { countsAsOn, describe, type EntityDescriptor } from '~/domains/registry.ts';
 
@@ -116,4 +116,22 @@ export const roomActivity = computed<Map<string, number>>(() => {
     out.set(id, n);
   }
   return out;
+});
+
+/**
+ * A one-line summary of whatever is playing, for the screensaver overlay.
+ *
+ * Reads only the configured media players, so a house full of Chromecasts
+ * that are not on the dashboard cannot wake this computed.
+ */
+export const nowPlaying = computed<string | null>(() => {
+  for (const p of mediaConfig.value.players) {
+    const state = entity(p.entity).value;
+    if (state?.s !== 'playing') continue;
+    const title = typeof state.a['media_title'] === 'string' ? state.a['media_title'] : null;
+    if (!title) continue;
+    const artist = typeof state.a['media_artist'] === 'string' ? state.a['media_artist'] : null;
+    return artist ? `${title} — ${artist}` : title;
+  }
+  return null;
 });

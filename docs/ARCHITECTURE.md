@@ -47,7 +47,7 @@ it, and its storage is erased on a daily schedule.
 |---|---|
 | **React** | ~45 KB gz. VDOM reconciliation on every state change, on a CPU deprioritised behind a video pipeline. A 200-entity dashboard receiving 20 state updates/second would re-render trees constantly. Rejected — and it is worth being explicit that "we use React" was never a technical conclusion here. |
 | **Vanilla TS** | Genuinely tempting; zero runtime. Rejected because this app runs for *weeks* unattended. Hand-rolled subscribe/unsubscribe across ~40 components is where listener leaks come from, and per `ROOMOS.md` §2 a leak on this device is a crash, not a slowdown. A 6 KB library that makes teardown automatic is cheap insurance. |
-| **Svelte 5** | The closest call. Comparable output size, excellent fine-grained runes. Rejected on *escape hatches*: several things here are hot enough to want raw DOM (slideshow crossfade, drag sliders at 60 fps, the ThumbHash canvas). In Preact those are a `ref` and normal DOM calls. In Svelte they mean fighting the compiler. Also: one compiler-shaped idiom for the whole codebase vs. plain TSX that any tool understands. |
+| **Svelte 5** | The closest call. Comparable output size, excellent fine-grained runes. Rejected on *escape hatches*: several things here are hot enough to want raw DOM (slideshow crossfade, drag sliders at 60 fps, direct style writes during a drag). In Preact those are a `ref` and normal DOM calls. In Svelte they mean fighting the compiler. Also: one compiler-shaped idiom for the whole codebase vs. plain TSX that any tool understands. |
 | **Lit / Web Components** | Fine, but no ecosystem advantage here and a heavier authoring model for a single-app codebase. |
 | **Solid** | Excellent perf, but a smaller ecosystem than Preact for what is otherwise a wash on this workload. |
 
@@ -432,10 +432,20 @@ copy is not.
 - **N+1 and N+2 preloaded**, no more. Bounded LRU of **6 decoded images**
   (~36 MB at `preview` size) with explicit eviction: `img.src = ''` and drop
   the reference, so V8 and the image cache can both release it.
-- **ThumbHash placeholder.** Immich returns a `thumbhash` on every asset — a
-  ~25-byte hash that decodes to a blurred approximation in Canvas 2D. The next
-  photo's blur is on screen *instantly*, so even a slow fetch never shows an
-  empty frame.
+- **ThumbHash placeholder — average colour only.** Immich returns a
+  `thumbhash` on every asset: ~25 bytes encoding a tiny blurred version. We
+  decode only its **DC term**, the average colour, and paint that behind the
+  image. So a slow fetch shows a colour close to the incoming photo rather
+  than an empty frame.
+
+  A full decode would give a blurred thumbnail, which is prettier. It is also
+  ~80 lines of DCT maths whose failure mode is silent — get a coefficient
+  wrong and you render plausible-looking noise on a device nobody inspects for
+  weeks. With no reference vectors to check a full decoder against, the
+  average colour is the version that can be *verified*: it is six lines, and
+  a neutral-chroma hash must decode to grey, which the browser test asserts
+  (measured: `rgb(133, 129, 127)`, channel spread 6). Upgrading later is a
+  self-contained change to `panel/src/lib/thumbhash.ts`.
 - **Orientation.** `object-fit: contain` on a dark backdrop for portraits;
   `cover` for landscape when it matches the panel's aspect ratio within 15%.
   No letterbox bars on photos that don't need them.
