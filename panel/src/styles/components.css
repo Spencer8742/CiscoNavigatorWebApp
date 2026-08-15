@@ -1,0 +1,367 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Components
+   Flat selectors, Chromium 102 safe, transform/opacity animation only,
+   and no box-shadow anywhere (Cisco: "avoid drop shadows").
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Pressable ────────────────────────────────────────────────────────────
+   The press response is a compositor-only scale. It is applied by an
+   attribute written directly in the pointerdown handler, so it lands in the
+   very next frame without waiting for a render. */
+
+.pressable {
+  position: relative;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+  transition: transform var(--t-instant) var(--ease),
+    background-color var(--t-fast) var(--ease);
+  will-change: transform;
+}
+
+.pressable[data-pressed] {
+  transform: scale(0.965);
+}
+
+.pressable:disabled {
+  opacity: 0.38;
+}
+
+/* Small controls need a bigger relative squash to read as pressed at all. */
+.pressable.p-sm[data-pressed] {
+  transform: scale(0.9);
+}
+/* Large cards need less, or the movement looks slack. */
+.pressable.p-lg[data-pressed] {
+  transform: scale(0.985);
+}
+
+/* ── Navigation ───────────────────────────────────────────────────────────*/
+
+.nav {
+  display: flex;
+  background: var(--surface-1);
+  border-right: 1px solid var(--border-subtle);
+  height: 100%;
+  width: 100%;
+}
+
+.nav[data-pos='left'] {
+  flex-direction: column;
+  align-items: center;
+  padding: var(--s-4) var(--s-2);
+  gap: var(--s-2);
+}
+
+.nav[data-pos='bottom'] {
+  flex-direction: row;
+  align-items: stretch;
+  justify-content: space-around;
+  border-right: none;
+  border-top: 1px solid var(--border-subtle);
+  padding: 0 var(--s-2);
+}
+
+.nav-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  border-radius: var(--r-md);
+  color: var(--text-faint);
+  background: transparent;
+  flex: 0 0 auto;
+}
+
+.nav[data-pos='left'] .nav-item {
+  width: 100%;
+  height: var(--touch-lg);
+}
+
+.nav[data-pos='bottom'] .nav-item {
+  flex: 1 1 0;
+  height: 100%;
+  max-width: 8rem;
+}
+
+.nav-item-label {
+  font-size: 0.6875rem;
+  font-weight: 560;
+  letter-spacing: 0.02em;
+  opacity: 0.9;
+}
+
+.nav-item.is-active {
+  color: var(--text);
+  background: var(--surface-3);
+}
+
+/* Accent marker on the active item. Scales on the axis that matters for the
+   rail orientation — transform only, so it never triggers layout. */
+.nav-item-marker {
+  position: absolute;
+  background: var(--accent);
+  border-radius: var(--r-full);
+  transition: transform var(--t-base) var(--ease), opacity var(--t-fast) var(--ease);
+  opacity: 0;
+}
+
+.nav[data-pos='left'] .nav-item-marker {
+  left: 0;
+  top: 25%;
+  height: 50%;
+  width: 3px;
+  transform: scaleY(0);
+}
+
+.nav[data-pos='bottom'] .nav-item-marker {
+  top: 0;
+  left: 25%;
+  width: 50%;
+  height: 3px;
+  transform: scaleX(0);
+}
+
+.nav[data-pos='left'] .nav-item.is-active .nav-item-marker {
+  opacity: 1;
+  transform: scaleY(1);
+}
+
+.nav[data-pos='bottom'] .nav-item.is-active .nav-item-marker {
+  opacity: 1;
+  transform: scaleX(1);
+}
+
+/* Connection dot lives at the far end of the rail. Deliberately small and
+   quiet: it is diagnostic information, not a headline. */
+.nav-status {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: var(--touch);
+  color: var(--text-faint);
+}
+
+.nav[data-pos='bottom'] .nav-status {
+  margin-top: 0;
+  width: var(--touch);
+  height: 100%;
+}
+
+.status-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: var(--r-full);
+  background: var(--text-faint);
+  transition: background-color var(--t-base) var(--ease);
+}
+
+.status-dot[data-state='connected'] {
+  background: var(--ok);
+}
+.status-dot[data-state='connecting'] {
+  background: var(--warn);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+.status-dot[data-state='disconnected'] {
+  background: var(--danger);
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* ── Card ─────────────────────────────────────────────────────────────────
+   Depth from layered surfaces + a hairline border, never from a shadow. */
+
+.card {
+  background: var(--surface-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+  padding: var(--s-4);
+  min-width: 0;
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin-bottom: var(--s-3);
+}
+
+.card-title {
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+.card-hint {
+  font-size: 0.8125rem;
+  color: var(--text-faint);
+}
+
+/* ── Section heading ──────────────────────────────────────────────────────*/
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-3);
+  margin: var(--s-5) 0 var(--s-3);
+}
+
+.section-head:first-child {
+  margin-top: 0;
+}
+
+.section-title {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 640;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+/* ── Empty / placeholder states ───────────────────────────────────────────
+   A configured-but-empty screen must explain itself. On a kiosk panel a blank
+   pane is indistinguishable from a crash. */
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-3);
+  height: 100%;
+  min-height: 12rem;
+  padding: var(--s-6);
+  text-align: center;
+  color: var(--text-faint);
+}
+
+.empty-icon {
+  color: var(--text-faint);
+  opacity: 0.5;
+}
+
+.empty-title {
+  font-size: 1.0625rem;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.empty-body {
+  font-size: 0.9375rem;
+  max-width: 26rem;
+  line-height: 1.5;
+}
+
+.empty-body code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.875em;
+  background: var(--surface-2);
+  border-radius: var(--r-sm);
+  padding: 0.1em 0.4em;
+}
+
+/* ── Toast ────────────────────────────────────────────────────────────────
+   One slot, bottom-centre, never blocking. */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: var(--s-5);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  max-width: min(32rem, 80vw);
+  padding: var(--s-3) var(--s-5);
+  border-radius: var(--r-full);
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 0.9375rem;
+  /* translate3d, not left/margin — compositor only. */
+  transform: translate3d(-50%, 0, 0);
+  animation: toast-in var(--t-base) var(--ease-out-back) both;
+}
+
+.toast[data-kind='error'] {
+  border-color: rgba(248, 113, 113, 0.4);
+  color: var(--danger);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate3d(-50%, 1rem, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+/* ── Settings rows ────────────────────────────────────────────────────────*/
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+
+.rows-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-4);
+  min-height: var(--touch);
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.rows-row:last-child {
+  border-bottom: none;
+}
+
+.rows-key {
+  color: var(--text-dim);
+  font-size: 0.9375rem;
+}
+
+.rows-val {
+  color: var(--text);
+  font-size: 0.9375rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rows-val[data-tone='ok'] {
+  color: var(--ok);
+}
+.rows-val[data-tone='warn'] {
+  color: var(--warn);
+}
+.rows-val[data-tone='danger'] {
+  color: var(--danger);
+}

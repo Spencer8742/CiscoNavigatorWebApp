@@ -1,0 +1,13 @@
+node_modules
+**/node_modules
+**/dist
+.git
+.github
+docs
+*.log
+.env
+.env.*
+!.env.example
+config/dashboard.yaml
+.DS_Store
+*.tsbuildinfo

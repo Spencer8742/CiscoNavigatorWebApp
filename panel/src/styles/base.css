@@ -1,0 +1,260 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Base + shell layout
+   Chromium 102 safe. Flat selectors, no nesting, no :has().
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden; /* the app never scrolls; panes scroll internally */
+  background: var(--bg);
+  color: var(--text);
+  overscroll-behavior: none;
+}
+
+body {
+  /* Only the RoomOS system sans-serif is guaranteed on device
+     (docs/ROOMOS.md §9). This stack costs zero bytes on first paint.
+     To self-host a font instead, add an @font-face here and put the family
+     first — everything else already inherits. */
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue',
+    Arial, sans-serif;
+  font-size: 1rem;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeSpeed;
+
+  /* A wall panel has no text to select and no context menu worth showing.
+     Suppressing both removes the "long-press selects a paragraph" artefact
+     that instantly makes a touch UI feel like a web page. Re-enabled per
+     element for the few places that need it. */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+
+  /* Removes the grey flash Chromium paints on tap. We draw our own press
+     feedback, synchronously, in the same frame as pointerdown. */
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Kills the ~300ms click delay and double-tap zoom without breaking scroll.
+   Applied broadly here — NOT `touch-action: none`, which would break panning.
+   Cisco warns specifically against blanket preventDefault (docs/ROOMOS.md §6);
+   this is the CSS equivalent done safely. */
+button,
+[role='button'],
+.tappable {
+  touch-action: manipulation;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  margin: 0;
+  padding: 0;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+  /* Never let a decode block the main thread; the compositor gets it late
+     rather than the UI stalling. */
+  -webkit-user-drag: none;
+}
+
+/* Scrollable panes ---------------------------------------------------------
+   Momentum scrolling, no scrollbar chrome (there is no mouse), and a
+   contained overscroll so a list at its end never scrolls the shell. */
+.scroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* ── App shell ────────────────────────────────────────────────────────────
+   Grid, so the nav rail/bar is a layout concern and screens never need to
+   know it exists. */
+.shell {
+  display: grid;
+  height: 100%;
+  width: 100%;
+  background: var(--bg);
+}
+
+.shell[data-nav='left'] {
+  grid-template-columns: var(--rail-w) 1fr;
+  grid-template-areas: 'nav main';
+}
+
+.shell[data-nav='bottom'] {
+  grid-template-rows: 1fr var(--bar-h);
+  grid-template-areas: 'main' 'nav';
+}
+
+.shell-nav {
+  grid-area: nav;
+  min-width: 0;
+  min-height: 0;
+}
+
+.shell-main {
+  grid-area: main;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── Screen transitions ───────────────────────────────────────────────────
+   Screens are absolutely positioned siblings that cross-fade with a small
+   vertical offset. transform + opacity only — no layout, no repaint. */
+.screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  will-change: transform, opacity;
+}
+
+.screen-enter {
+  animation: screen-in var(--t-base) var(--ease) both;
+}
+
+@keyframes screen-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 0.75rem, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+/* ── Screen furniture ─────────────────────────────────────────────────────*/
+.screen-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-4);
+  padding: var(--s-5) var(--s-6) var(--s-4);
+}
+
+.screen-title {
+  margin: 0;
+  font-size: 1.75rem;
+  font-weight: 620;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.screen-sub {
+  font-size: 0.9375rem;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.screen-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0 var(--s-6) var(--s-6);
+}
+
+/* ── Utilities ────────────────────────────────────────────────────────────*/
+.row {
+  display: flex;
+  align-items: center;
+}
+.col {
+  display: flex;
+  flex-direction: column;
+}
+.grow {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.gap-2 {
+  gap: var(--s-2);
+}
+.gap-3 {
+  gap: var(--s-3);
+}
+.gap-4 {
+  gap: var(--s-4);
+}
+
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.tnum {
+  font-variant-numeric: tabular-nums;
+  /* Stops a ticking clock or a changing temperature from reflowing its
+     neighbours every second. */
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ── Boot / fatal states ──────────────────────────────────────────────────*/
+#boot {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.fatal {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-4);
+  padding: var(--s-8);
+  text-align: center;
+  background: var(--bg);
+}
+
+.fatal h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.fatal p {
+  margin: 0;
+  max-width: 32rem;
+  color: var(--text-dim);
+  font-size: 1rem;
+}
