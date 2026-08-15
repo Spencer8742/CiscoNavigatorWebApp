@@ -16,14 +16,20 @@ rooms:
     name: Living Room
     icon: sofa
     entities:
+      # Bare id — the panel should fall back to HA's friendly_name.
       - light.living_room
-      - cover.blinds
+      # Object form — this name must win over HA's friendly_name.
+      - entity: cover.blinds
+        name: Window Blinds
       - climate.thermostat
+      # Duplicate of an earlier entry; must be dropped, not rendered twice.
+      - light.living_room
 
 home:
   favorites:
     - light.living_room
-    - lock.front_door
+    - entity: lock.front_door
+      name: Front Door Lock
   scenes:
     - scene.movie_night
   status:

@@ -194,6 +194,34 @@ async function main(): Promise<void> {
     await files.serve(req, res, path);
   }
 
+  /*
+   * A listen failure is unrecoverable, and must be FATAL.
+   *
+   * The process-level uncaughtException handler further down deliberately
+   * keeps the backend alive through unexpected errors — one bad request must
+   * never take every panel in the house down. But it would also swallow
+   * EADDRINUSE, leaving a process that is running, healthy-looking to
+   * `docker ps`, and bound to nothing. Docker's restart policy would never
+   * fire because nothing crashed.
+   *
+   * Exiting instead means the container restarts, the healthcheck reports it,
+   * and the log says which port. A port clash is a realistic first-run
+   * problem on a NAS already running a dozen containers.
+   */
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      log.error(
+        `Port ${env.port} is already in use on ${env.host}. ` +
+          'Another container or service has it — change PORT, or stop the other one.',
+      );
+    } else if (err.code === 'EACCES') {
+      log.error(`Not permitted to bind ${env.host}:${env.port}.`);
+    } else {
+      log.error('HTTP server error:', err);
+    }
+    process.exit(1);
+  });
+
   server.on('clientError', (err, socket) => {
     // A malformed request must never take the process down.
     log.debug('Client error:', err.message);

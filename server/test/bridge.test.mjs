@@ -707,3 +707,55 @@ describe('authentication', () => {
     assert.ok(!('config' in body));
   });
 });
+
+describe('entity naming', () => {
+  test('accepts both bare ids and { entity, name } objects', async () => {
+    const panel = new TestPanel();
+    await panel.connect();
+
+    const room = panel.config.rooms[0];
+
+    // Both forms normalise to the same shape, so nothing downstream branches.
+    assert.deepEqual(
+      room.entities.map((e) => e.entity),
+      ['light.living_room', 'cover.blinds', 'climate.thermostat'],
+      'duplicate entries must be dropped',
+    );
+
+    assert.equal(room.entities[0].name, undefined, 'bare id carries no name override');
+    assert.equal(room.entities[1].name, 'Window Blinds', 'object form carries its name');
+
+    const favs = panel.config.home.favorites;
+    assert.equal(favs[0].entity, 'light.living_room');
+    assert.equal(favs[0].name, undefined);
+    assert.equal(favs[1].entity, 'lock.front_door');
+    assert.equal(favs[1].name, 'Front Door Lock');
+
+    panel.close();
+  });
+
+  test('a named entity is still subject to the service allow-list', async () => {
+    const panel = new TestPanel();
+    await panel.connect();
+    await waitFor(() => panel.states.has('cover.blinds'), 'entity states');
+
+    // Naming an entity must not change what it is permitted to do — the
+    // allow-list keys off entity ids, never display names.
+    const before = ha.serviceCalls.length;
+    panel.send({
+      t: 'call',
+      id: 90,
+      domain: 'cover',
+      service: 'open_cover',
+      entity: 'cover.blinds',
+    });
+
+    const call = await waitFor(
+      () => ha.serviceCalls.slice(before).find((c) => c.domain === 'cover'),
+      'named entity to still be controllable',
+    );
+    assert.deepEqual(call.target, { entity_id: 'cover.blinds' });
+
+    panel.close();
+  });
+});

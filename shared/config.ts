@@ -55,15 +55,37 @@ export interface ImmichConfig {
   maxAgeYears?: number;
 }
 
+/**
+ * A reference to one Home Assistant entity, with an optional display name.
+ *
+ * In YAML this may be written either way:
+ *
+ *   entities:
+ *     - light.kitchen_ceiling                    # use HA's friendly_name
+ *     - entity: light.kitchen_under_cabinet      # override it
+ *       name: Under Cabinet
+ *
+ * The override exists because Home Assistant's friendly names are generated
+ * for a list, not for a tile: "Living Room Ceiling Light Bulb 3" is accurate
+ * and useless on a 13rem card. The backend normalises both forms to this
+ * shape, so the panel never has to care which was written.
+ */
+export interface EntityRef {
+  entity: string;
+  /** Overrides HA's friendly_name when present. */
+  name?: string;
+}
+
 export interface RoomConfig {
   id: string;
   name: string;
   icon: string;
-  entities: string[];
+  entities: EntityRef[];
 }
 
 export interface StatusItem {
   entity: string;
+  /** Overrides HA's friendly_name. `name:` is accepted as an alias. */
   label?: string;
 }
 
@@ -75,8 +97,8 @@ export interface AlertRule {
 }
 
 export interface HomeConfig {
-  favorites: string[];
-  scenes: string[];
+  favorites: EntityRef[];
+  scenes: EntityRef[];
   status: StatusItem[];
   weather?: string;
   alerts: AlertRule[];
@@ -118,9 +140,9 @@ export function allReferencedEntities(cfg: DashboardConfig): Set<string> {
     if (typeof id === 'string' && id.includes('.')) out.add(id);
   };
 
-  for (const room of cfg.rooms) room.entities.forEach(add);
-  cfg.home.favorites.forEach(add);
-  cfg.home.scenes.forEach(add);
+  for (const room of cfg.rooms) room.entities.forEach((e) => add(e.entity));
+  cfg.home.favorites.forEach((e) => add(e.entity));
+  cfg.home.scenes.forEach((e) => add(e.entity));
   cfg.home.status.forEach((s) => add(s.entity));
   cfg.home.alerts.forEach((a) => add(a.entity));
   add(cfg.home.weather);
