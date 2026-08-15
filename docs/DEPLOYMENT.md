@@ -63,6 +63,24 @@ admin — the panel only ever reads.
 **Album IDs** come from the Immich album URL:
 `https://immich.your.lan/albums/6f1c0b2e-…` → the UUID is the `id`.
 
+**Immich version.** Developed against API 3.1.0 (Immich 1.133+). Older servers
+work too: 1.133 renamed the archive filter from `isArchived` to `visibility`,
+and since Immich rejects unknown properties outright rather than ignoring
+them, the wrong one fails the whole query. The client detects that from the
+400 and retries with the older field, so both eras work — but if you are on
+1.132 or earlier, upgrading is the tidier fix.
+
+To check a key and URL from the machine running the container, before
+involving the panel at all:
+
+```bash
+# Should print a JSON array of assets. 401 = key problem;
+# 400 naming a property = version mismatch; connection refused = URL problem.
+curl -s -X POST "$IMMICH_URL/api/search/random" \
+  -H "x-api-key: $IMMICH_API_KEY" -H 'content-type: application/json' \
+  -d '{"size":1,"withExif":true,"visibility":"timeline"}'
+```
+
 ### Updating
 
 ```bash
@@ -475,7 +493,11 @@ worth taking literally:
 | Dot green but no entities | Entities not in `dashboard.yaml` | Only configured entities are sent — that is the allow-list working |
 | Panel re-downloads everything daily | `RoomCleanup` still on | `xConfiguration RoomCleanup AutoRun ContentType WebData: Off` |
 | Config edit does nothing | YAML failed to parse | `docker compose logs` — the last good config is still running, on purpose |
-| Photos never load | Immich key lacks scopes | Needs `asset.read` **and** `album.read` |
+| Photos never load | Several possible causes | The Photos screen now names the actual one — it shows Immich's own error, not a guess. Start there |
+| Photos: "API key rejected" | Key wrong, revoked, or too narrow | Needs `asset.read`, plus `album.read` for album sources |
+| Photos: "cannot reach …" | `IMMICH_URL` wrong or unroutable from the container | Must be reachable *from inside the container*: not `localhost`, and no trailing `/api` |
+| Photos: "No photos returned" | Immich answered, nothing matched | With `imagesOnly: true` a video-only library matches nothing. Archived and hidden assets are excluded by design |
+| Photos worked, then stopped after an Immich upgrade | Immich changed a filter field | Logged as a 400 naming the property. The client already falls back for the 1.133 `isArchived`→`visibility` rename |
 | Web view crashes / reloads itself | Memory ceiling hit | Remote DevTools → Memory → heap snapshot. See `docs/ROOMOS.md` §2 |
 | Layout wrong / cut off | Unexpected viewport | Settings screen shows the measured viewport. Everything is fluid, so report the number |
 | Unraid: no `dashboard.yaml` appears | appdata folder not writable | See [File permissions](#file-permissions) |

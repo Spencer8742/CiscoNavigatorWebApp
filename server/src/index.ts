@@ -57,14 +57,30 @@ async function main(): Promise<void> {
 
   /** Liveness for the health report, refreshed on a slow timer. */
   let immichReachable = false;
+  let lastImmichError: string | null = null;
+
+  /**
+   * Publish the current Immich status if it has changed.
+   *
+   * Called after every Immich interaction, not just the slow poll — a
+   * slideshow refill that fails at 03:00 should light up the panel then,
+   * rather than up to a minute later when the timer next fires.
+   */
+  const noteImmichStatus = (ok: boolean): void => {
+    const err = immich.lastError?.message ?? null;
+    // Re-publish when the *reason* changes too, not only the up/down bit:
+    // going from a bad API key to a bad album id keeps health "disconnected"
+    // while completely changing what the user has to go and fix.
+    if (ok === immichReachable && err === lastImmichError) return;
+    immichReachable = ok;
+    lastImmichError = err;
+    log.info(`Immich link: ${ok ? 'connected' : `disconnected — ${err ?? 'unknown'}`}`);
+    hub.broadcastHealth(getHealth());
+  };
+
   if (env.immich.enabled) {
     const pingImmich = async (): Promise<void> => {
-      const ok = await immich.ping();
-      if (ok !== immichReachable) {
-        immichReachable = ok;
-        log.info(`Immich link: ${ok ? 'connected' : 'disconnected'}`);
-        hub.broadcastHealth(getHealth());
-      }
+      noteImmichStatus(await immich.ping());
     };
     void pingImmich();
     // Slow on purpose: Immich is used on demand, so this only feeds the
@@ -88,6 +104,7 @@ async function main(): Promise<void> {
   const getHealth = (): BackendHealth => ({
     ha: env.ha.enabled ? haClient.state : 'disconnected',
     immich: env.immich.enabled ? (immichReachable ? 'connected' : 'disconnected') : 'disconnected',
+    immichError: env.immich.enabled ? (immich.lastError?.message ?? null) : null,
     haLastMessage: haClient.lastMessageAt ? new Date(haClient.lastMessageAt).toISOString() : null,
     uptime: Math.floor((Date.now() - STARTED_AT) / 1000),
     version: VERSION,
@@ -164,7 +181,13 @@ async function main(): Promise<void> {
         data: msg.data,
       }),
 
-    onPhotos: async (count) => ({ t: 'photos', photos: await playlist.take(count) }),
+    onPhotos: async (count) => {
+      const photos = await playlist.take(count);
+      // The refill that just ran is the most authoritative signal we have
+      // about Immich, and it is the one the user is actually waiting on.
+      if (env.immich.enabled) noteImmichStatus(immich.lastError === null);
+      return { t: 'photos', photos };
+    },
   });
 
   // A config edit changes which entities are visible. The store already holds

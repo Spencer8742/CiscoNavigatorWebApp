@@ -6,7 +6,7 @@ import { Pressable } from '~/components/Pressable.tsx';
 import { fetchGrid, photoUrl } from '~/media/photos.ts';
 import { thumbHashCss } from '~/lib/thumbhash.ts';
 import { formatPhotoDate } from '~/lib/format.ts';
-import { screensaverActive, markActivity } from '~/state/ui.ts';
+import { screensaverActive, markActivity, immichError } from '~/state/ui.ts';
 import type { PhotoRef } from '@shared/protocol.ts';
 
 /**
@@ -79,11 +79,22 @@ export function Photos() {
             <span class="spinner" />
           </div>
         ) : photos.length === 0 ? (
-          <Empty icon="photos" title="No photos returned">
-            Immich returned nothing for the configured sources. Check{' '}
-            <code>immich.sources</code> in <code>dashboard.yaml</code>, and that the
-            API key has <code>asset.read</code> and <code>album.read</code>.
-          </Empty>
+          immichError.value ? (
+            // The backend knows exactly what went wrong. Saying "check your
+            // config" when the server could say "API key rejected" or
+            // "cannot reach http://…" is a wasted opportunity — nobody is
+            // going to read container logs to interpret a wall panel.
+            <Empty icon="alert" title="Immich could not be queried">
+              {immichError.value}
+            </Empty>
+          ) : (
+            <Empty icon="photos" title="No photos returned">
+              Immich answered, but no photos matched. Check{' '}
+              <code>immich.sources</code> in <code>dashboard.yaml</code> —
+              with <code>imagesOnly: true</code> a library of only videos
+              matches nothing.
+            </Empty>
+          )
         ) : (
           <div class="photo-grid">
             {photos.map((photo) => (

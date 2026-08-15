@@ -42,10 +42,42 @@ interface ImmichAsset {
 
 const REQUEST_TIMEOUT_MS = 15_000;
 
+/**
+ * The result of a request that failed, in a form the panel can render.
+ *
+ * A slideshow that shows nothing is indistinguishable from a slideshow that
+ * cannot reach its photos, so "no photos" is never a sufficient thing to
+ * report. Whatever Immich actually said gets carried all the way to the
+ * screen — see `panel/src/screens/Photos.tsx`.
+ */
+export interface ImmichFailure {
+  /** Machine-readable, so the panel can give specific advice. */
+  code: 'auth' | 'not-found' | 'bad-request' | 'server' | 'network';
+  /** Human-readable, already including Immich's own message where it gave one. */
+  message: string;
+}
+
+/** Immich's error envelope: { statusCode, message, error }. */
+interface ImmichError {
+  message?: string | string[];
+  error?: string;
+}
+
 export class ImmichClient {
   readonly #env: Env['immich'];
   #reachable = false;
-  #lastError: string | null = null;
+  #lastError: ImmichFailure | null = null;
+
+  /**
+   * Whether this server is old enough to want `isArchived` instead of
+   * `visibility`. Discovered from a 400, then remembered.
+   *
+   * Immich renamed the field in 1.133.0: ≤ 1.132 has `isArchived`/`withArchived`,
+   * ≥ 1.133 has `visibility`. Its request validation rejects unknown
+   * properties outright, so sending the wrong one does not degrade to an
+   * unfiltered search — it fails the whole query with a 400.
+   */
+  #useLegacyArchiveField = false;
 
   constructor(env: Env['immich']) {
     this.#env = env;
@@ -59,7 +91,7 @@ export class ImmichClient {
     return this.#reachable;
   }
 
-  get lastError(): string | null {
+  get lastError(): ImmichFailure | null {
     return this.#lastError;
   }
 
@@ -85,15 +117,12 @@ export class ImmichClient {
 
       if (!res.ok) {
         this.#reachable = res.status < 500;
-        this.#lastError = `HTTP ${res.status} from ${path}`;
-        // 401 is worth shouting about: it means the API key is wrong or its
-        // scopes are too narrow, and it will never fix itself.
-        if (res.status === 401 || res.status === 403) {
-          log.error(
-            `Immich rejected the API key (HTTP ${res.status}). It needs the ` +
-              'asset.read and album.read permissions.',
-          );
-        }
+        this.#lastError = await describeFailure(res, path);
+        // Every one of these used to be silent below `error` level, which
+        // made a misconfigured Immich look exactly like an empty library.
+        log[res.status === 401 || res.status === 403 ? 'error' : 'warn'](
+          `Immich: ${this.#lastError.message}`,
+        );
         return null;
       }
 
@@ -101,18 +130,40 @@ export class ImmichClient {
       this.#lastError = null;
       return (await res.json()) as T;
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       this.#reachable = false;
-      this.#lastError = err instanceof Error ? err.message : String(err);
-      log.debug(`Request to ${path} failed:`, err);
+      this.#lastError = {
+        code: 'network',
+        message: `cannot reach ${this.#env.url} — ${message}`,
+      };
+      // Was log.debug, i.e. invisible at the default level. A wrong
+      // IMMICH_URL is the single most likely thing to be wrong on first
+      // setup, and it produced no output at all.
+      log.warn(`Immich: ${this.#lastError.message}`);
       return null;
     } finally {
       clearTimeout(timer);
     }
   }
 
-  /** Cheap liveness check for the health report. */
+  /**
+   * Liveness *and* credential check.
+   *
+   * `/api/server/ping` is deliberately unauthenticated in Immich, so it
+   * proves only that something Immich-shaped is answering — a wrong or
+   * unprivileged API key pings perfectly happily. Health said "connected"
+   * while every actual query was being rejected. This asks for one asset
+   * instead, which exercises the key and the permission the slideshow needs.
+   */
   async ping(): Promise<boolean> {
-    const res = await this.#request<{ res?: string }>('/api/server/ping');
+    // Deliberately the barest possible query: one asset, no filters. It is
+    // checking the key and the permission, so it must not fail for any other
+    // reason — in particular it carries no archive field, and so works on
+    // either side of the 1.133 rename.
+    const res = await this.#request<{ assets?: { items?: ImmichAsset[] } }>('/api/search/metadata', {
+      method: 'POST',
+      body: JSON.stringify({ size: 1 }),
+    });
     return res !== null;
   }
 
@@ -123,60 +174,88 @@ export class ImmichClient {
    * and shuffle server-side, which is what makes "random" actually random
    * across a large library rather than random within the first page.
    */
+  /**
+   * One `/search/random` query, retried once against the pre-1.133 field name
+   * if this server turns out to be older.
+   *
+   * The retry is driven by what Immich actually says — a 400 naming
+   * `visibility` — rather than by a version number, so it needs no version
+   * probe and cannot misfire on a server that accepts the field.
+   */
+  async #search(body: Record<string, unknown>): Promise<ImmichAsset[] | null> {
+    const withArchiveFilter = (legacy: boolean): Record<string, unknown> => ({
+      ...body,
+      // Archived and hidden photos are excluded deliberately: they were put
+      // there to stay off screens.
+      ...(legacy ? { isArchived: false } : { visibility: 'timeline' }),
+    });
+
+    const first = await this.#request<ImmichAsset[]>('/api/search/random', {
+      method: 'POST',
+      body: JSON.stringify(withArchiveFilter(this.#useLegacyArchiveField)),
+    });
+    if (first !== null) return first;
+
+    const err = this.#lastError;
+    if (this.#useLegacyArchiveField || err?.code !== 'bad-request') return null;
+    if (!/visibility/i.test(err.message)) return null;
+
+    log.warn(
+      'This Immich predates 1.133, which renamed `isArchived` to `visibility`. ' +
+        'Retrying with the older field — upgrading Immich is the tidier fix.',
+    );
+    this.#useLegacyArchiveField = true;
+
+    return this.#request<ImmichAsset[]>('/api/search/random', {
+      method: 'POST',
+      body: JSON.stringify(withArchiveFilter(true)),
+    });
+  }
+
   async fetchSource(source: ImmichSource, count: number, opts: SourceOptions): Promise<PhotoRef[]> {
     const size = Math.max(1, Math.min(1000, count));
 
     const base: Record<string, unknown> = {
       size,
       withExif: true,
-      // Archived and hidden photos are excluded deliberately: they were put
-      // there to stay off screens.
-      visibility: 'timeline',
       ...(opts.imagesOnly ? { type: 'IMAGE' } : {}),
       ...(opts.takenAfter ? { takenAfter: opts.takenAfter } : {}),
     };
 
     switch (source.type) {
       case 'random': {
-        const assets = await this.#request<ImmichAsset[]>('/api/search/random', {
-          method: 'POST',
-          body: JSON.stringify(base),
-        });
-        return toPhotoRefs(assets ?? []);
+        return toPhotoRefs((await this.#search(base)) ?? []);
       }
 
       case 'favorites': {
-        const assets = await this.#request<ImmichAsset[]>('/api/search/random', {
-          method: 'POST',
-          body: JSON.stringify({ ...base, isFavorite: true }),
-        });
-        return toPhotoRefs(assets ?? []);
+        return toPhotoRefs((await this.#search({ ...base, isFavorite: true })) ?? []);
       }
 
       case 'album': {
         // albumIds is a RandomSearchDto filter, so this stays one request.
-        const assets = await this.#request<ImmichAsset[]>('/api/search/random', {
-          method: 'POST',
-          body: JSON.stringify({ ...base, albumIds: [source.id] }),
-        });
-        if (assets === null) {
-          log.warn(`Album ${source.id} returned nothing — is the ID correct?`);
+        const assets = await this.#search({ ...base, albumIds: [source.id] });
+        if (assets !== null && assets.length === 0) {
+          log.warn(
+            `Album ${source.id} matched no photos. The album id comes from its ` +
+              'URL, and the API key must have album.read as well as asset.read.',
+          );
         }
         return toPhotoRefs(assets ?? []);
       }
 
       case 'recent': {
+        // Metadata search, not random: "recent" means newest-first, which a
+        // random sample cannot express. Same archive-field split as above.
         const since = new Date(Date.now() - source.days * 86_400_000).toISOString();
+        const body = {
+          ...base,
+          takenAfter: since,
+          order: 'desc',
+          ...(this.#useLegacyArchiveField ? { isArchived: false } : { visibility: 'timeline' }),
+        };
         const result = await this.#request<{ assets?: { items?: ImmichAsset[] } }>(
           '/api/search/metadata',
-          {
-            method: 'POST',
-            body: JSON.stringify({
-              ...base,
-              takenAfter: since,
-              order: 'desc',
-            }),
-          },
+          { method: 'POST', body: JSON.stringify(body) },
         );
         return toPhotoRefs(result?.assets?.items ?? []);
       }
@@ -185,6 +264,49 @@ export class ImmichClient {
         return [];
     }
   }
+}
+
+/**
+ * Turn a failed response into something worth reading.
+ *
+ * Immich returns `{ statusCode, message, error }`, and its message is
+ * genuinely useful — a rejected property is named explicitly. Discarding it
+ * and printing the status code alone, which is what this used to do, threw
+ * away the answer and kept the symptom.
+ */
+async function describeFailure(res: Response, path: string): Promise<ImmichFailure> {
+  let detail = '';
+  try {
+    const body = (await res.json()) as ImmichError;
+    const raw = Array.isArray(body.message) ? body.message.join('; ') : body.message;
+    if (raw) detail = raw;
+  } catch {
+    // Not JSON — a reverse proxy's HTML error page, most likely. The status
+    // code still tells us something, so carry on with it.
+  }
+
+  const suffix = detail ? ` — ${detail}` : '';
+
+  if (res.status === 401 || res.status === 403) {
+    return {
+      code: 'auth',
+      message:
+        `API key rejected (HTTP ${res.status})${suffix}. It needs the ` +
+        'asset.read permission, plus album.read for album sources.',
+    };
+  }
+  if (res.status === 404) {
+    return {
+      code: 'not-found',
+      message:
+        `${path} not found (HTTP 404)${suffix}. IMMICH_URL should be the ` +
+        "server's base address, without a trailing /api.",
+    };
+  }
+  if (res.status === 400) {
+    return { code: 'bad-request', message: `${path} rejected the query (HTTP 400)${suffix}` };
+  }
+  return { code: 'server', message: `${path} returned HTTP ${res.status}${suffix}` };
 }
 
 export interface SourceOptions {

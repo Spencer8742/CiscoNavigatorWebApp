@@ -6,7 +6,7 @@ import { writeFileSync } from 'node:fs';
 import { fileURLToPath, URL } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { connect as tcpConnect } from 'node:net';
+import { connect as tcpConnect, createServer as netCreateServer } from 'node:net';
 import { MockImmich } from './mock-immich.mjs';
 
 /**
@@ -59,6 +59,24 @@ function rawGet(path) {
   });
 }
 
+/**
+ * Ask the OS for a free port.
+ *
+ * Fixed port numbers meant one crashed test run left a listener behind and
+ * poisoned every later run with EADDRINUSE — a failure that looks like a
+ * product bug and isn't.
+ */
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const probe = netCreateServer();
+    probe.on('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const { port } = probe.address();
+      probe.close(() => resolve(port));
+    });
+  });
+}
+
 async function waitFor(check, description, timeoutMs = 8000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -71,14 +89,15 @@ async function waitFor(check, description, timeoutMs = 8000) {
 
 /** Minimal panel client that can request photo batches. */
 class PhotoPanel {
-  constructor() {
+  constructor(port = PANEL_PORT) {
+    this.port = port;
     this.photos = [];
     this.config = null;
     this.health = null;
   }
 
   async connect() {
-    this.ws = new WebSocket(`ws://127.0.0.1:${PANEL_PORT}/ws?t=${TOKEN}`);
+    this.ws = new WebSocket(`ws://127.0.0.1:${this.port}/ws?t=${TOKEN}`);
     this.ws.on('message', (data) => {
       const msg = JSON.parse(data.toString());
       if (msg.t === 'hello') {
@@ -346,5 +365,151 @@ describe('resilience', () => {
       'health carries an Immich link state',
     );
     panel.close();
+  });
+});
+
+describe('diagnosability', () => {
+  /*
+   * The bug these exist for: a working config returned zero photos, the panel
+   * said "check your sources", and the backend logged nothing at all. Every
+   * Immich failure except 401/403 was invisible at the default log level, so
+   * the one place that knew what had happened threw it away.
+   *
+   * Each of these gets its own backend and its own Immich. They are about
+   * what happens on a *fresh* start against a misconfigured server, and a
+   * shared backend would answer them from a playlist filled earlier — which
+   * is exactly the buffering that hid the problem in the first place.
+   */
+
+  /**
+   * Everything started by `isolated()`, torn down unconditionally.
+   *
+   * Without this a *failing* test skips its own cleanup, leaving a spawned
+   * backend holding the event loop open — so the run hangs instead of
+   * reporting the failure, which is the worst possible way to learn about it.
+   */
+  const started = [];
+  after(async () => {
+    for (const t of started.splice(0)) await t.stop();
+  });
+
+  /** Start an isolated backend + Immich pair. Returns both, plus a stop(). */
+  async function isolated(configure = () => {}) {
+    const [immichPort, panelPort] = [await freePort(), await freePort()];
+
+    const server = new MockImmich(immichPort);
+    server.seed(60);
+    configure(server);
+    await server.start();
+
+    const child = spawn(process.execPath, [SERVER], {
+      env: {
+        ...process.env,
+        PORT: String(panelPort),
+        HOST: '127.0.0.1',
+        PANEL_TOKEN: TOKEN,
+        CONFIG_PATH: CONFIG,
+        HA_URL: '',
+        HA_TOKEN: '',
+        IMMICH_URL: `http://127.0.0.1:${immichPort}`,
+        IMMICH_API_KEY: 'mock-immich-key',
+        LOG_LEVEL: 'error',
+      },
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    child.stderr.on('data', (d) => process.stderr.write(`[isolated] ${d}`));
+
+    await waitFor(async () => {
+      try {
+        return (await fetch(`http://127.0.0.1:${panelPort}/api/health`)).ok;
+      } catch {
+        return false;
+      }
+    }, 'isolated backend to listen');
+
+    const panel = new PhotoPanel(panelPort);
+    await panel.connect();
+
+    let stopped = false;
+    const t = {
+      immich: server,
+      panel,
+      async stop() {
+        if (stopped) return;
+        stopped = true;
+        panel.close();
+        child.kill('SIGKILL');
+        await server.stop();
+      },
+    };
+    started.push(t);
+    return t;
+  }
+
+  test('an empty result is distinguishable from a failed query', async () => {
+    const t = await isolated((s) => {
+      s.failWith = 500;
+    });
+
+    const batch = await t.panel.request(5);
+    assert.equal(batch.length, 0, 'precondition: a failing Immich yields no photos');
+
+    // The panel must be able to tell the user WHY. Without this it shows an
+    // empty grid that looks exactly like an empty library.
+    await waitFor(() => t.panel.health.immichError !== null, 'an error reason to reach the panel');
+    assert.match(t.panel.health.immichError, /500/, 'the reason names the actual status');
+
+    await t.stop();
+  });
+
+  test('a rejected API key is reported as such, not as an empty library', async () => {
+    // Real Immich leaves /server/ping unauthenticated, so a bad key pings
+    // perfectly happily. Health must not be fooled by that.
+    const t = await isolated((s) => {
+      s.expectedKey = 'a-different-key';
+    });
+
+    // Crucially, WITHOUT asking for photos first. The startup health check is
+    // the thing under test: it used to call /server/ping, which needs no
+    // credentials at all, so a wrong key reported a healthy Immich until
+    // something actually tried to use it.
+    await waitFor(
+      () => t.panel.health.immich === 'disconnected',
+      'health to reflect that the key is refused',
+    );
+    await waitFor(() => t.panel.health.immichError !== null, 'an auth failure to reach the panel');
+    assert.match(
+      t.panel.health.immichError,
+      /API key|401/i,
+      `expected an auth reason, got: ${t.panel.health.immichError}`,
+    );
+
+    await t.stop();
+  });
+
+  test('works against Immich older than 1.133, which had no `visibility`', async () => {
+    // 1.133 renamed isArchived -> visibility. Immich rejects unknown
+    // properties outright, so on an older server every query 400s and the
+    // slideshow is empty forever — with no error anywhere near it.
+    const t = await isolated((s) => {
+      s.legacyArchiveField = true;
+    });
+
+    const batch = await t.panel.request(10);
+    assert.ok(batch.length > 0, 'photos must still arrive from a pre-1.133 server');
+
+    const random = t.immich.searches
+      .filter((s) => s.path === '/api/search/random')
+      .map((s) => s.dto);
+    assert.ok(
+      random.some((d) => 'visibility' in d),
+      'it should try the modern field first',
+    );
+    assert.ok(
+      random.some((d) => d.isArchived === false),
+      'and fall back to the legacy one on rejection',
+    );
+
+    await t.stop();
   });
 });
