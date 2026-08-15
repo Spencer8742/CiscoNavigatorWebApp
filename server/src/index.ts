@@ -9,7 +9,10 @@ import { StaticFiles } from '~/http/static.ts';
 import { applySecurityHeaders } from '~/http/headers.ts';
 import { PanelAuth } from '~/http/auth.ts';
 import { Hub } from '~/hub/index.ts';
-import type { BackendHealth, EntityState } from '@shared/protocol.ts';
+import { HaClient } from '~/ha/client.ts';
+import { HaStore, isEmptyPatch } from '~/ha/store.ts';
+import { ServiceGuard } from '~/ha/services.ts';
+import type { BackendHealth } from '@shared/protocol.ts';
 
 const log = logger('server');
 
@@ -19,10 +22,10 @@ const STARTED_AT = Date.now();
 /**
  * Backend entry point.
  *
- * Phase 1 wires: environment, config (with hot reload), static serving, the
- * panel WebSocket hub, and health reporting. The Home Assistant client
- * (phase 2) and the Immich client (phase 6) plug into the `HubDeps` hooks
- * below without changing anything here.
+ * Wires: environment, config (with hot reload), static serving, the panel
+ * WebSocket hub, the Home Assistant bridge, and health reporting. The Immich
+ * client (phase 6) plugs into the remaining `HubDeps` hook without changing
+ * anything else here.
  */
 
 async function main(): Promise<void> {
@@ -44,19 +47,19 @@ async function main(): Promise<void> {
   log.info(`Serving panel from ${panelRoot}`);
   const files = new StaticFiles(panelRoot);
 
-  /*
-   * Live state. Phase 2 replaces these with the HA store's real
-   * implementations; the Hub only ever sees the getters, so nothing in the
-   * hub or the panel changes when it does.
-   */
-  let states: Record<string, EntityState> = {};
-  const getStates = (): Record<string, EntityState> => states;
-  void states;
+  /* ── Home Assistant bridge ───────────────────────────────────────────────
+     The store is constructed before the client so it is ready to absorb the
+     first snapshot, which arrives within milliseconds of authenticating. */
+
+  const store = new HaStore(config.current);
+
+  /** Pending "we have genuinely lost touch" timer. See onStateChange below. */
+  let unavailableTimer: ReturnType<typeof setTimeout> | undefined;
 
   const getHealth = (): BackendHealth => ({
-    ha: env.ha.enabled ? 'connecting' : 'disconnected',
+    ha: env.ha.enabled ? haClient.state : 'disconnected',
     immich: env.immich.enabled ? 'connecting' : 'disconnected',
-    haLastMessage: null,
+    haLastMessage: haClient.lastMessageAt ? new Date(haClient.lastMessageAt).toISOString() : null,
     uptime: Math.floor((Date.now() - STARTED_AT) / 1000),
     version: VERSION,
   });
@@ -65,7 +68,83 @@ async function main(): Promise<void> {
     void handleRequest(req, res);
   });
 
-  const hub = new Hub(server, { auth, config, getStates, getHealth });
+  const haClient = new HaClient(env.ha, {
+    onEntityEvent(event) {
+      const patch = store.apply(event);
+      if (!isEmptyPatch(patch)) hub.broadcastPatch(patch);
+    },
+
+    onResubscribe() {
+      // The whole world is about to be re-sent. Tell the store so it diffs
+      // rather than repaints — see ha/store.ts.
+      store.beginResync();
+    },
+
+    onStateChange(state) {
+      log.info(`Home Assistant link: ${state}`);
+
+      /*
+       * Losing the link does NOT immediately grey out the dashboard.
+       *
+       * Home Assistant restarting for an update is a ten-to-thirty second
+       * event that happens regularly. Marking every entity unavailable the
+       * instant the socket drops would make each of those a visible,
+       * full-screen flicker: everything greys out, then everything repaints.
+       * It also defeats the resync diff in ha/store.ts entirely — if we mark
+       * everything unavailable on the way down, then every entity genuinely
+       * differs on the way back up and the "diff" is a full repaint.
+       *
+       * So: keep showing last-known state, and let the connection indicator
+       * carry the honest signal that we are not currently in touch. Only
+       * after the grace period — when this has stopped being a blip and
+       * started being an outage — do we admit we no longer know, because at
+       * that point continuing to claim a light is on would be a lie the user
+       * might act on.
+       */
+      if (state === 'connected') {
+        clearTimeout(unavailableTimer);
+        unavailableTimer = undefined;
+      } else if (unavailableTimer === undefined) {
+        unavailableTimer = setTimeout(() => {
+          unavailableTimer = undefined;
+          log.warn(
+            `Home Assistant unreachable for ${env.ha.unavailableGraceMs}ms — ` +
+              'marking entities unavailable',
+          );
+          const patch = store.markUnavailable();
+          if (!isEmptyPatch(patch)) hub.broadcastPatch(patch);
+        }, env.ha.unavailableGraceMs);
+      }
+
+      hub.broadcastHealth(getHealth());
+    },
+  });
+
+  const services = new ServiceGuard(haClient, store);
+
+  const hub = new Hub(server, {
+    auth,
+    config,
+    getStates: () => store.snapshot(),
+    getHealth,
+    onCall: (msg) =>
+      services.call({
+        domain: msg.domain,
+        service: msg.service,
+        entity: msg.entity,
+        data: msg.data,
+      }),
+  });
+
+  // A config edit changes which entities are visible. The store already holds
+  // every entity Home Assistant knows about, so newly referenced ones can be
+  // pushed immediately rather than waiting for them to change state.
+  config.onChange((cfg) => {
+    const patch = store.setConfig(cfg);
+    if (!isEmptyPatch(patch)) hub.broadcastPatch(patch);
+  });
+
+  haClient.start();
 
   async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     applySecurityHeaders(res);
@@ -142,6 +221,7 @@ async function main(): Promise<void> {
     shuttingDown = true;
     log.info(`${signal} received — shutting down`);
 
+    haClient.stop();
     hub.close();
     config.close();
     server.close(() => process.exit(0));

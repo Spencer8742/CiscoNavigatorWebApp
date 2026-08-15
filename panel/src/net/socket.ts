@@ -1,4 +1,4 @@
-import { Backoff } from '~/lib/backoff.ts';
+import { Backoff } from '@shared/backoff.ts';
 import { socketUrl } from '~/net/auth.ts';
 import { applyPatch, applySnapshot } from '~/state/entities.ts';
 import { setConfig } from '~/config/index.ts';

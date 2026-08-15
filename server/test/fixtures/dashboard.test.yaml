@@ -1,0 +1,40 @@
+# Fixture for server/test/bridge.test.mjs.
+#
+# Deliberately references FEWER entities than the mock Home Assistant serves,
+# so the tests can prove that unreferenced entities are filtered out of
+# everything the panel sees and are refused by the service guard.
+
+version: 1
+
+ui:
+  title: Test Panel
+  timezone: UTC
+  locale: en-GB
+
+rooms:
+  - id: living_room
+    name: Living Room
+    icon: sofa
+    entities:
+      - light.living_room
+      - cover.blinds
+      - climate.thermostat
+
+home:
+  favorites:
+    - light.living_room
+    - lock.front_door
+  scenes:
+    - scene.movie_night
+  status:
+    - entity: sensor.temperature
+      label: Indoor
+  alerts:
+    - entity: lock.front_door
+      when: unlocked
+      label: Front door unlocked
+
+media:
+  players:
+    - entity: media_player.speaker
+      name: Speaker
