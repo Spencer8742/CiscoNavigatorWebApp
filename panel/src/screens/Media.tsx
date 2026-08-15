@@ -33,11 +33,23 @@ export function Media() {
   const [grouping, setGrouping] = useState(false);
 
   // Reset the manual choice if the configured players change under us.
-  useEffect(() => {
-    if (chosen && !cfg.players.some((p) => p.entity === chosen)) setChosen(null);
-  }, [cfg.players, chosen]);
-
   const all = speakers.value;
+  // Key by id rather than the array, which is a fresh object every time a
+  // speaker's volume or state changes.
+  const known = all.map((s) => s.id).join(',');
+
+  /*
+   * Drop a manual choice only when that speaker genuinely goes away.
+   *
+   * This used to check `cfg.players`, which was correct until speakers were
+   * discovered rather than configured: picking a discovered one then set
+   * `chosen` and this effect immediately cleared it again, snapping the
+   * screen back to the default player. From the front that looks like a tap
+   * that flashes and does nothing.
+   */
+  useEffect(() => {
+    if (chosen && !all.some((s) => s.id === chosen)) setChosen(null);
+  }, [known, chosen]);
 
   if (all.length === 0) {
     return (
