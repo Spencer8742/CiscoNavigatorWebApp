@@ -1,8 +1,13 @@
 import { computed } from '@preact/signals';
-import { entity } from '~/state/entities.ts';
+import { entity, maPlayerIds } from '~/state/entities.ts';
 import { homeConfig, mediaConfig, roomsById } from '~/config/index.ts';
 import { activeRoom } from '~/state/ui.ts';
-import { countsAsOn, describe, type EntityDescriptor } from '~/domains/registry.ts';
+import { countsAsOn, describe, friendlyName, type EntityDescriptor } from '~/domains/registry.ts';
+import {
+  canGroup,
+  groupMembers,
+  MA_PLAYER_TYPE_ATTR,
+} from '@shared/protocol.ts';
 
 /**
  * Derived views over the entity store.
@@ -172,3 +177,89 @@ export const nowPlaying = computed<string | null>(() => {
   }
   return null;
 });
+
+/* ── Music Assistant speakers ─────────────────────────────────────────────
+   Music Assistant is the source of truth. Everything below reads its own
+   attributes off the entities Home Assistant already streams us — there is no
+   second connection, no grouping state of our own, and a group made from any
+   other dashboard shows up here without the panel asking for anything. */
+
+export interface SpeakerInfo {
+  id: string;
+  name: string;
+  /** MA's own player type: 'player' | 'stereo_pair' | 'group'. */
+  kind: string;
+  /** A permanent Music Assistant group rather than an ad-hoc join. */
+  isGroup: boolean;
+  state: string;
+  available: boolean;
+  /** 0..1, or null when the player has no volume control. */
+  volume: number | null;
+  muted: boolean;
+  canGroup: boolean;
+  /** Everyone playing in sync with this player, itself included. */
+  members: string[];
+}
+
+/**
+ * Every speaker the panel can reach: configured players plus, when discovery
+ * is on, everything Music Assistant exposes.
+ *
+ * Configured entries come first and in the order they were written, because
+ * someone who bothered to list them meant that order. Discovered speakers
+ * follow, alphabetically by name.
+ */
+export const speakers = computed<SpeakerInfo[]>(() => {
+  const cfg = mediaConfig.value;
+  const describeOne = (id: string, nameOverride?: string): SpeakerInfo | null => {
+    const s = entity(id).value;
+    if (!s) return null;
+    const type = s.a[MA_PLAYER_TYPE_ATTR];
+    return {
+      id,
+      name: nameOverride ?? friendlyName(s, id),
+      kind: typeof type === 'string' ? type : 'player',
+      isGroup: type === 'group',
+      state: s.s,
+      available: s.s !== 'unavailable' && s.s !== 'unknown',
+      volume: typeof s.a['volume_level'] === 'number' ? s.a['volume_level'] : null,
+      muted: s.a['is_volume_muted'] === true,
+      canGroup: canGroup(s),
+      members: groupMembers(s),
+    };
+  };
+
+  const out: SpeakerInfo[] = [];
+  const seen = new Set<string>();
+
+  for (const p of cfg.players) {
+    const info = describeOne(p.entity, p.name);
+    if (info) {
+      out.push(info);
+      seen.add(p.entity);
+    }
+  }
+
+  if (cfg.discoverMusicAssistant) {
+    const found: SpeakerInfo[] = [];
+    for (const id of maPlayerIds.value) {
+      if (seen.has(id)) continue;
+      const info = describeOne(id);
+      if (info) found.push(info);
+    }
+    found.sort((a, b) => a.name.localeCompare(b.name));
+    out.push(...found);
+  }
+
+  return out;
+});
+
+/** Speakers that are ad-hoc joinable, i.e. not permanent MA groups. */
+export const joinableSpeakers = computed<SpeakerInfo[]>(() =>
+  speakers.value.filter((s) => !s.isGroup && s.canGroup),
+);
+
+/** Permanent Music Assistant groups, offered as one-tap shortcuts. */
+export const speakerGroups = computed<SpeakerInfo[]>(() =>
+  speakers.value.filter((s) => s.isGroup),
+);

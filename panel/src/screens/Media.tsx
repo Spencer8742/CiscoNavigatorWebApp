@@ -7,7 +7,9 @@ import { Pressable } from '~/components/Pressable.tsx';
 import { Slider } from '~/components/Slider.tsx';
 import { OptionRow } from '~/components/Sheet.tsx';
 import { attrNumber, attrString, friendlyName } from '~/domains/registry.ts';
-import { defaultPlayerId } from '~/state/selectors.ts';
+import { defaultPlayerId, speakers } from '~/state/selectors.ts';
+import { GroupSheet } from '~/components/GroupSheet.tsx';
+import { canGroup, groupMembers } from '@shared/protocol.ts';
 import { getToken } from '~/net/auth.ts';
 import * as act from '~/state/actions.ts';
 import type { EntityState } from '@shared/protocol.ts';
@@ -28,22 +30,27 @@ import type { EntityState } from '@shared/protocol.ts';
 export function Media() {
   const cfg = mediaConfig.value;
   const [chosen, setChosen] = useState<string | null>(null);
+  const [grouping, setGrouping] = useState(false);
 
   // Reset the manual choice if the configured players change under us.
   useEffect(() => {
     if (chosen && !cfg.players.some((p) => p.entity === chosen)) setChosen(null);
   }, [cfg.players, chosen]);
 
-  if (cfg.players.length === 0) {
+  const all = speakers.value;
+
+  if (all.length === 0) {
     return (
       <div class="screen screen-enter">
         <div class="screen-head">
           <h1 class="screen-title">Media</h1>
         </div>
         <div class="screen-body">
-          <Empty icon="media" title="No media players configured">
-            Add a <code>media:</code> section to <code>config/dashboard.yaml</code>{' '}
-            listing your <code>media_player</code> entities.
+          <Empty icon="media" title="No media players found">
+            Music Assistant players are discovered automatically. If you are not
+            running it, add a <code>media:</code> section to{' '}
+            <code>config/dashboard.yaml</code> listing your{' '}
+            <code>media_player</code> entities.
           </Empty>
         </div>
       </div>
@@ -52,36 +59,57 @@ export function Media() {
 
   const activeId = chosen ?? defaultPlayerId.value;
   const state = entity(activeId).value;
+  // Group membership comes from Music Assistant, so this reflects a group
+  // made anywhere — this panel, a Home Assistant dashboard, or the MA app.
+  const members = groupMembers(state);
+  const grouped = members.length > 1;
 
   return (
     <div class="screen screen-enter">
-      {cfg.players.length > 1 ? (
+      {all.length > 1 ? (
         <div class="player-switcher">
-          {cfg.players.map((p) => {
-            const s = entity(p.entity).value;
-            const playing = s?.s === 'playing';
-            return (
-              <Pressable
-                key={p.entity}
-                class={p.entity === activeId ? 'player-chip is-active' : 'player-chip'}
-                onPress={() => setChosen(p.entity)}
-                ariaPressed={p.entity === activeId}
-                ariaLabel={p.name ?? friendlyName(s, p.entity)}
-              >
-                <Icon name="speaker" size="1.1rem" weight={1.8} />
-                <span class="truncate">{p.name ?? friendlyName(s, p.entity)}</span>
-                {/* A dot on players that are playing, so you can tell what is
-                    making noise elsewhere in the house without switching. */}
-                {playing ? <span class="player-dot" aria-label="playing" /> : null}
-              </Pressable>
-            );
-          })}
+          {all.map((p) => (
+            <Pressable
+              key={p.id}
+              class={p.id === activeId ? 'player-chip is-active' : 'player-chip'}
+              onPress={() => setChosen(p.id)}
+              ariaPressed={p.id === activeId}
+              ariaLabel={p.name}
+              disabled={!p.available}
+            >
+              <Icon name="speaker" size="1.1rem" weight={1.8} />
+              <span class="truncate">{p.name}</span>
+              {/* A dot on players that are playing, so you can tell what is
+                  making noise elsewhere in the house without switching. */}
+              {p.state === 'playing' ? <span class="player-dot" aria-label="playing" /> : null}
+            </Pressable>
+          ))}
         </div>
+      ) : null}
+
+      {/* Where the sound is coming from, and the way into changing it. One
+          control does both jobs, because "which rooms?" and "add a room" are
+          the same thought. */}
+      {canGroup(state) ? (
+        <Pressable class="group-bar" onPress={() => setGrouping(true)} ariaLabel="Group players">
+          <Icon name="speaker" size="1.1rem" weight={1.8} />
+          <span class="group-bar-label">Playing on</span>
+          <span class="group-bar-rooms truncate">{describeGroup(members, activeId)}</span>
+          <Icon name="next" size="1rem" weight={2} />
+        </Pressable>
       ) : null}
 
       <div class="screen-body scroll">
         {state ? <NowPlaying id={activeId} state={state} /> : <MissingPlayer id={activeId} />}
       </div>
+
+      {grouping ? (
+        <GroupSheet
+          leader={activeId}
+          onSelect={(id) => setChosen(id)}
+          onClose={() => setGrouping(false)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -270,4 +298,16 @@ function hasFeature(state: EntityState, mask: number): boolean {
   const features = attrNumber(state, 'supported_features');
   if (features === undefined) return false;
   return (features & mask) !== 0;
+}
+
+/**
+ * "Living Room + Kitchen", or "3 rooms" once that gets too long to read at a
+ * glance from across the room.
+ */
+function describeGroup(members: string[], activeId: string): string {
+  const ids = members.length > 0 ? members : [activeId];
+  const names = ids.map((id) => friendlyName(entity(id).value, id));
+  if (names.length === 1) return names[0] ?? '';
+  if (names.length <= 2) return names.join(' + ');
+  return `${names.length} rooms`;
 }

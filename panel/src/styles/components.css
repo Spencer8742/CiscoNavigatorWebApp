@@ -761,3 +761,147 @@
   color: var(--text);
   background: var(--surface-3);
 }
+
+/* ── Speaker grouping ─────────────────────────────────────────────────────
+   Rows, not checkboxes. This is a wall panel: a tick box is a target you can
+   miss, so the whole row is pressable and the tick is feedback rather than
+   the thing you aim at. */
+
+.group-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin: 0 var(--s-6) var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  min-height: var(--touch);
+  border-radius: var(--r-lg);
+  background: var(--surface-1);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-dim);
+  text-align: left;
+}
+
+.group-bar-label {
+  font-size: 0.75rem;
+  font-weight: 560;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  flex: 0 0 auto;
+}
+
+.group-bar-rooms {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.group-sheet {
+  max-width: 34rem;
+}
+
+.group-section {
+  padding: var(--s-4) 0 var(--s-2);
+  font-size: 0.75rem;
+  font-weight: 560;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.speaker-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  width: 100%;
+  /* Comfortably past the 44px minimum: these get tapped while walking past. */
+  min-height: 4.25rem;
+  padding: var(--s-3) var(--s-4);
+  margin-bottom: var(--s-2);
+  border-radius: var(--r-lg);
+  background: var(--surface-1);
+  border: 1px solid var(--border-subtle);
+  text-align: left;
+}
+
+.speaker-row.is-selected {
+  border-color: var(--accent-dim);
+  background: var(--accent-soft);
+}
+
+.speaker-row[data-disabled] {
+  opacity: 0.45;
+}
+
+.speaker-icon {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: var(--r-md);
+  background: var(--surface-3);
+  color: var(--text-faint);
+  transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+
+.speaker-icon[data-on] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.speaker-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.speaker-name {
+  font-size: 1.0625rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.speaker-sub {
+  margin-top: 0.1rem;
+  font-size: 0.8125rem;
+  color: var(--text-faint);
+}
+
+.speaker-check {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  border-radius: var(--r-full);
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.member-volume {
+  padding: var(--s-2) var(--s-1) var(--s-3);
+}
+
+.member-volume-name {
+  margin-bottom: var(--s-2);
+  font-size: 0.9375rem;
+  font-weight: 550;
+  color: var(--text-dim);
+}
+
+/* The group slider leads the individual ones, so it reads as the parent
+   control rather than another member. */
+.member-volume.is-group {
+  padding-bottom: var(--s-4);
+  margin-bottom: var(--s-2);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.member-volume.is-group .member-volume-name {
+  color: var(--text);
+  font-weight: 620;
+}

@@ -133,6 +133,23 @@ export interface MediaConfig {
   /** 'active' picks whatever is playing, else the first entry. */
   default: string;
   volumeStep: number;
+  /**
+   * Surface every Music Assistant speaker on the Media screen, without
+   * listing it here.
+   *
+   * Music Assistant already knows what your speakers are, what they can do
+   * and how they are grouped; making you retype that list into YAML would be
+   * a second source of truth that goes stale the moment you add a speaker.
+   *
+   * `players` above still matters when set — it fixes the order and lets you
+   * override names. Discovered speakers are added to it, never instead of it.
+   *
+   * Scope of what this grants: entities in the `media_player` domain carrying
+   * Music Assistant's own `mass_player_type` attribute, and only the media
+   * services already on the guard's allow-list. It does not widen access to
+   * any other domain.
+   */
+  discoverMusicAssistant: boolean;
 }
 
 export interface DashboardConfig {

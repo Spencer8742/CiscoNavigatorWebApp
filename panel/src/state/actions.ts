@@ -334,3 +334,29 @@ export function setMediaPower(entityId: string, on: boolean): void {
   optimistic(entityId, on ? 'on' : 'off');
   send('media_player', on ? 'turn_on' : 'turn_off', entityId);
 }
+
+/* ── Speaker grouping ─────────────────────────────────────────────────────
+   Both of these are standard Home Assistant services. Music Assistant
+   implements them, so the app never talks to Music Assistant directly and
+   holds no grouping state of its own — the truth stays in one place. */
+
+/**
+ * Add speakers to the group led by `leader`.
+ *
+ * `media_player.join` is absolute, not incremental: it sets the membership to
+ * exactly what you pass. So adding one speaker means sending the whole list
+ * again, which is also what makes removing one a `join` with the shorter list
+ * rather than an `unjoin` of that member.
+ */
+export function joinPlayers(leader: string, members: string[]): void {
+  send('media_player', 'join', leader, {
+    // The leader is implied by the target, and Music Assistant rejects a list
+    // that names it as its own child.
+    group_members: members.filter((id) => id !== leader),
+  });
+}
+
+/** Take one speaker out of whatever group it is in. */
+export function unjoinPlayer(entityId: string): void {
+  send('media_player', 'unjoin', entityId);
+}

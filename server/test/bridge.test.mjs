@@ -53,6 +53,7 @@ class TestPanel {
     this.states = new Map();
     this.config = null;
     this.health = null;
+    this.errors = [];
   }
 
   async connect() {
@@ -72,6 +73,8 @@ class TestPanel {
         this.health = msg.health;
       } else if (msg.t === 'config') {
         this.config = msg.config;
+      } else if (msg.t === 'error') {
+        this.errors.push(msg);
       }
     });
 
@@ -450,6 +453,70 @@ describe('service calls', () => {
     assert.deepEqual(call.target, { entity_id: 'light.living_room' });
     assert.equal(call.service_data.brightness_pct, 60);
 
+    panel.close();
+  });
+
+  test('refuses a join that names a player the panel may not touch', async () => {
+    /*
+     * `group_members` is a list of ENTITY IDS, so it re-targets the call at
+     * every speaker it names. Without checking each one, allowing the key
+     * would hand a compromised panel any media player in the house — the
+     * exact hole the service-data allow-list exists to close.
+     */
+    const panel = new TestPanel();
+    await panel.connect();
+
+    const before = ha.serviceCalls.length;
+    panel.send({
+      t: 'call',
+      id: 77,
+      domain: 'media_player',
+      service: 'join',
+      entity: 'media_player.speaker',
+      data: { group_members: ['media_player.not_on_the_dashboard'] },
+    });
+
+    const error = await waitFor(
+      () => panel.errors.find((e) => e.ref === 77),
+      'a refusal for the unknown player',
+    );
+    assert.match(error.message, /not permitted/i);
+    assert.equal(
+      ha.serviceCalls.slice(before).filter((c) => c.service === 'join').length,
+      0,
+      'nothing reached Home Assistant',
+    );
+
+    panel.close();
+  });
+
+  test('refuses a join whose group_members is not a list of ids', async () => {
+    const panel = new TestPanel();
+    await panel.connect();
+    const before = ha.serviceCalls.length;
+
+    for (const [i, bad] of [
+      'media_player.speaker',
+      [{ entity_id: 'media_player.speaker' }],
+      [42],
+      ['light.kitchen'],
+    ].entries()) {
+      panel.send({
+        t: 'call',
+        id: 800 + i,
+        domain: 'media_player',
+        service: 'join',
+        entity: 'media_player.speaker',
+        data: { group_members: bad },
+      });
+      await waitFor(() => panel.errors.find((e) => e.ref === 800 + i), `refusal for ${i}`);
+    }
+
+    assert.equal(
+      ha.serviceCalls.slice(before).filter((c) => c.service === 'join').length,
+      0,
+      'none of them reached Home Assistant',
+    );
     panel.close();
   });
 
