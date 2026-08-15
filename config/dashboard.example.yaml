@@ -246,7 +246,16 @@ home:
 
 # ─── Media players ─────────────────────────────────────────────────────────
 media:
-  # Order here is the order shown in the Media screen's player switcher.
+  # Music Assistant speakers are discovered automatically — you do not need to
+  # list them. Music Assistant already knows what your speakers are, what they
+  # can do and how they are grouped; retyping that here would be a second
+  # source of truth that goes stale the moment you add a speaker.
+  #
+  # Set to false to show only the players listed below.
+  discoverMusicAssistant: true
+
+  # Optional even with discovery on. Listing a player fixes its position in
+  # the switcher and lets you rename it; discovered speakers are appended.
   players:
     - entity: media_player.living_room_speaker
       name: Living Room

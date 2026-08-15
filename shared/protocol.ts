@@ -186,3 +186,50 @@ export const PREF_VALUES: Record<keyof PanelPrefs, readonly string[]> = {
 export const HEARTBEAT_MS = 25_000;
 /** Miss this many heartbeats and we tear the socket down and reconnect. */
 export const HEARTBEAT_TIMEOUT_MS = 12_000;
+
+/* ── Music Assistant ───────────────────────────────────────────────────── */
+
+/**
+ * The attribute Music Assistant's Home Assistant integration puts on every
+ * media_player entity it creates, and which nothing else sets.
+ *
+ * It is how this app tells an MA speaker from any other media player without
+ * knowing anything about config entries or the entity registry. Values come
+ * from MA's `PlayerType`: `player`, `stereo_pair`, `group`, and a few kinds
+ * that are not speakers.
+ */
+export const MA_PLAYER_TYPE_ATTR = 'mass_player_type';
+
+/**
+ * MA player types that are not speakers you would send music to.
+ *
+ * `protocol` players are wrapped by a Universal Player and explicitly "hidden
+ * from the UI" in MA's own documentation; the rest are visualisers rather
+ * than outputs.
+ */
+const MA_NON_SPEAKER_TYPES = new Set(['protocol', 'display', 'visualizer', 'light']);
+
+/** Home Assistant's `MediaPlayerEntityFeature.GROUPING` bit. */
+export const MEDIA_FEATURE_GROUPING = 524_288;
+/** `MediaPlayerEntityFeature.VOLUME_SET`. */
+export const MEDIA_FEATURE_VOLUME_SET = 4;
+
+/** Whether this entity is a Music Assistant speaker. */
+export function isMusicAssistantPlayer(entityId: string, state: EntityState): boolean {
+  if (!entityId.startsWith('media_player.')) return false;
+  const type = state.a[MA_PLAYER_TYPE_ATTR];
+  return typeof type === 'string' && !MA_NON_SPEAKER_TYPES.has(type);
+}
+
+/** Whether this player can be joined to others. */
+export function canGroup(state: EntityState | null | undefined): boolean {
+  const features = state?.a['supported_features'];
+  return typeof features === 'number' && (features & MEDIA_FEATURE_GROUPING) !== 0;
+}
+
+/** Entity ids currently playing in sync with this one, including itself. */
+export function groupMembers(state: EntityState | null | undefined): string[] {
+  const raw = state?.a['group_members'];
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((v): v is string => typeof v === 'string');
+}

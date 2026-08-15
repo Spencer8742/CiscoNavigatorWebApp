@@ -95,6 +95,22 @@ export class MockHomeAssistant {
 
       case 'call_service':
         this.serviceCalls.push(msg);
+        // Behave like Music Assistant for grouping, so a test exercises the
+        // whole round trip — tap, service call, state change, UI update —
+        // rather than only asserting that a call went out.
+        if (msg.domain === 'media_player' && (msg.service === 'join' || msg.service === 'unjoin')) {
+          this.#applyGrouping(msg);
+        }
+        // Volume too, so a test can assert on the resulting STATE rather than
+        // on the fact that a call went out — the two are not the same claim.
+        if (msg.domain === 'media_player' && msg.service === 'volume_set') {
+          const target = msg.target?.entity_id;
+          const id = Array.isArray(target) ? target[0] : target;
+          const level = msg.service_data?.volume_level;
+          if (id && this.states.has(id) && typeof level === 'number') {
+            this.change(id, { attributes: { volume_level: level } });
+          }
+        }
         ws.send(JSON.stringify({ id: msg.id, type: 'result', success: true, result: {} }));
         break;
 
@@ -108,6 +124,56 @@ export class MockHomeAssistant {
     const out = { s: state.s, a: state.a, c: '01ABCDEF', lc: state.lc };
     if (state.lu !== state.lc) out.lu = state.lu;
     return out;
+  }
+
+  /**
+   * Seed a Music Assistant speaker.
+   *
+   * The attributes that matter are the ones MA's own integration sets:
+   * `mass_player_type` (which nothing else sets, and is how the app
+   * recognises an MA player), `group_members`, and the GROUPING bit in
+   * `supported_features`.
+   */
+  seedMaPlayer(id, name, { type = 'player', volume = 0.4, state = 'idle', grouping = true } = {}) {
+    // GROUPING (524288) | VOLUME_SET (4) | VOLUME_MUTE (8) | PLAY | PAUSE
+    const features = (grouping ? 524288 : 0) | 4 | 8 | 16384 | 1;
+    this.seed(id, state, {
+      friendly_name: name,
+      mass_player_type: type,
+      group_members: [],
+      volume_level: volume,
+      is_volume_muted: false,
+      supported_features: features,
+    });
+  }
+
+  /**
+   * Apply a join/unjoin the way Music Assistant does.
+   *
+   * The important detail: EVERY member reports the same `group_members` list,
+   * leader included — that is what lets the panel derive the whole group from
+   * whichever player it happens to be showing.
+   */
+  #applyGrouping(msg) {
+    const target = msg.target?.entity_id;
+    const leader = Array.isArray(target) ? target[0] : target;
+    if (!leader) return;
+
+    if (msg.service === 'unjoin') {
+      const members = [...(this.states.get(leader)?.a.group_members ?? [])];
+      const remaining = members.filter((id) => id !== leader);
+      this.change(leader, { attributes: { group_members: [] } });
+      // One left behind is not a group.
+      const next = remaining.length > 1 ? remaining : [];
+      for (const id of remaining) this.change(id, { attributes: { group_members: next } });
+      return;
+    }
+
+    const added = msg.service_data?.group_members ?? [];
+    const members = [leader, ...added.filter((id) => id !== leader)];
+    for (const id of members) {
+      if (this.states.has(id)) this.change(id, { attributes: { group_members: members } });
+    }
   }
 
   /** Seed an entity before any client subscribes. */

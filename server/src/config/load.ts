@@ -66,7 +66,7 @@ export const FALLBACK_CONFIG: DashboardConfig = {
   },
   rooms: [],
   home: { favorites: [], scenes: [], status: [], alerts: [] },
-  media: { players: [], default: 'active', volumeStep: 0.05 },
+  media: { players: [], default: 'active', volumeStep: 0.05, discoverMusicAssistant: true },
 };
 
 /* ── Coercion helpers ──────────────────────────────────────────────────────
@@ -247,6 +247,11 @@ function validate(raw: unknown): DashboardConfig {
       players: playerList(mediaRaw['players']),
       default: str(mediaRaw['default'], 'active', 'media.default'),
       volumeStep: num(mediaRaw['volumeStep'], 0.05, 'media.volumeStep', 0.01, 0.5),
+      discoverMusicAssistant: bool(
+        mediaRaw['discoverMusicAssistant'],
+        true,
+        'media.discoverMusicAssistant',
+      ),
     },
   };
 }

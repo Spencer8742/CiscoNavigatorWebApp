@@ -86,6 +86,11 @@ const ALLOWED: Record<string, ReadonlySet<string>> = {
     'repeat_set',
     'turn_on',
     'turn_off',
+    // Grouping. Music Assistant implements the standard Home Assistant
+    // services, so this is all the app needs to join and separate speakers —
+    // no second connection to Music Assistant, no grouping state of our own.
+    'join',
+    'unjoin',
   ]),
   input_boolean: new Set(['turn_on', 'turn_off', 'toggle']),
   input_number: new Set(['set_value', 'increment', 'decrement']),
@@ -138,6 +143,9 @@ const ALLOWED_DATA: Record<string, ReadonlySet<string>> = {
     'sound_mode',
     'shuffle',
     'repeat',
+    // `media_player.join` takes the speakers to add. Every id in it is
+    // checked against the same allow-list as the target — see below.
+    'group_members',
   ]),
   input_number: new Set(['value']),
   input_select: new Set(['option']),
@@ -196,6 +204,25 @@ export class ServiceGuard {
     }
 
     const data = this.#filterData(domain, call.data);
+
+    // (3) `group_members` is a list of ENTITY IDS, so it re-targets the call
+    // at every speaker it names. Each one goes through the same check as the
+    // target — otherwise allowing this key would hand a compromised panel any
+    // media player in the house, which is precisely the hole ALLOWED_DATA
+    // exists to close.
+    const members = data?.['group_members'];
+    if (members !== undefined) {
+      if (!Array.isArray(members) || members.some((m) => typeof m !== 'string')) {
+        log.warn(`Refused ${domain}.${service}: group_members must be a list of entity ids`);
+        return 'Not permitted';
+      }
+      for (const member of members as string[]) {
+        if (!member.startsWith('media_player.') || !this.#store.isAllowed(member)) {
+          log.warn(`Refused ${domain}.${service}: "${member}" is not a permitted player`);
+          return 'Not permitted';
+        }
+      }
+    }
 
     try {
       await this.#client.callService(domain, service, entity, data);

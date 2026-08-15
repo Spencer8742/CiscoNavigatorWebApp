@@ -3,6 +3,7 @@ import { toMillis, type HaEntityEvent } from '~/ha/protocol.ts';
 import type { EntityDiff, EntityState, StatePatch } from '@shared/protocol.ts';
 import type { DashboardConfig } from '@shared/config.ts';
 import { allReferencedEntities } from '@shared/config.ts';
+import { isMusicAssistantPlayer } from '@shared/protocol.ts';
 
 const log = logger('ha-store');
 
@@ -43,8 +44,31 @@ export class HaStore {
   /** Entities seen during the current resync, to detect what disappeared. */
   #resyncSeen = new Set<string>();
 
+  /** Entities named in dashboard.yaml. Discovery adds to this, never replaces. */
+  #configured = new Set<string>();
+  /** Whether to also surface Music Assistant players nobody listed. */
+  #discoverMa = false;
+
   constructor(config: DashboardConfig) {
     this.setConfig(config);
+  }
+
+  /**
+   * Whether an entity should be visible to panels.
+   *
+   * Two ways in. Listed in `dashboard.yaml`, or — when discovery is on — a
+   * Music Assistant player.
+   *
+   * `mass_player_type` is the discriminator because Music Assistant's own
+   * integration sets it on every entity it creates and nothing else does, so
+   * it identifies MA players without the panel needing to know anything about
+   * the config entry, the integration, or the entity registry. See
+   * `extra_state_attributes` in homeassistant/components/music_assistant.
+   */
+  #visible(id: string, state: EntityState | undefined): boolean {
+    if (this.#configured.has(id)) return true;
+    if (!this.#discoverMa || !state) return false;
+    return isMusicAssistantPlayer(id, state);
   }
 
   /** Entities visible to panels, in panel format. */
@@ -81,7 +105,16 @@ export class HaStore {
    * in `dashboard.yaml` does not disturb the rest of the screen.
    */
   setConfig(config: DashboardConfig): StatePatch {
-    const next = allReferencedEntities(config);
+    this.#configured = allReferencedEntities(config);
+    this.#discoverMa = config.media.discoverMusicAssistant;
+
+    const next = new Set(this.#configured);
+    if (this.#discoverMa) {
+      for (const [id, state] of this.#states) {
+        if (isMusicAssistantPlayer(id, state)) next.add(id);
+      }
+    }
+
     const patch: StatePatch = {};
 
     for (const id of next) {
@@ -137,7 +170,14 @@ export class HaStore {
         const prev = this.#states.get(id);
         this.#states.set(id, next);
 
-        if (!this.#allowed.has(id)) continue;
+        if (!this.#allowed.has(id)) {
+          // A Music Assistant player we have not seen before: it becomes
+          // visible the moment its attributes arrive, with no config edit and
+          // no restart.
+          if (!this.#visible(id, next)) continue;
+          this.#allowed.add(id);
+          log.info(`Discovered Music Assistant player: ${id}`);
+        }
 
         // During a resync, only report entities that genuinely differ. This
         // is what turns an HA restart from a full repaint into a no-op.
@@ -203,7 +243,14 @@ export class HaStore {
 
         this.#states.set(id, next);
 
-        if (!this.#allowed.has(id)) continue;
+        if (!this.#allowed.has(id)) {
+          // A Music Assistant player we have not seen before: it becomes
+          // visible the moment its attributes arrive, with no config edit and
+          // no restart.
+          if (!this.#visible(id, next)) continue;
+          this.#allowed.add(id);
+          log.info(`Discovered Music Assistant player: ${id}`);
+        }
 
         // Forward the diff, not the whole state. A light dimming sends ~90
         // bytes instead of ~1.2 KB — which is the whole reason for using
