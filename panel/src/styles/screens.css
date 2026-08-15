@@ -380,3 +380,100 @@
   background: var(--accent-soft);
   color: var(--accent);
 }
+
+/* ── Connection help ──────────────────────────────────────────────────────
+   Replaces the boot spinner once we know why the panel cannot connect.
+   Sized to be readable from a couple of metres away, because the person
+   reading it is standing in front of a wall panel, not sitting at a desk. */
+
+.help {
+  align-items: center;
+  justify-content: center;
+  padding: var(--s-6);
+}
+
+.help-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: var(--s-3);
+  max-width: 44rem;
+}
+
+.help-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 4.5rem;
+  height: 4.5rem;
+  margin-bottom: var(--s-2);
+  border-radius: var(--r-lg);
+  background: var(--surface-2);
+  color: var(--text-faint);
+}
+
+/* An auth problem is a configuration mistake, not a fault — amber, not red.
+   Anything else means something is actually broken. */
+.help-icon[data-kind='unauthorized'] {
+  background: rgba(251, 191, 36, 0.12);
+  color: var(--warn);
+}
+
+.help-icon[data-kind='unreachable'],
+.help-icon[data-kind='websocket-blocked'] {
+  background: rgba(248, 113, 113, 0.12);
+  color: var(--danger);
+}
+
+.help-title {
+  margin: 0;
+  font-size: 1.625rem;
+  font-weight: 620;
+  letter-spacing: -0.02em;
+}
+
+.help-detail {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+/* The one thing to do about it. Monospace and boxed because it usually
+   contains a URL someone has to read off the screen and type. */
+.help-fix {
+  margin-top: var(--s-3);
+  padding: var(--s-4) var(--s-5);
+  width: 100%;
+  border-radius: var(--r-md);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  color: var(--text);
+  /* The fix text embeds newlines to separate prose from the URL. */
+  white-space: pre-wrap;
+  word-break: break-word;
+  /* Selectable: on a desktop browser during setup you want to copy this. */
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.help-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin-top: var(--s-4);
+  font-size: 0.875rem;
+  color: var(--text-faint);
+}
+
+.help-meta {
+  margin-top: var(--s-2);
+  font-size: 0.75rem;
+  color: var(--text-faint);
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}

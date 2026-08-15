@@ -54,16 +54,23 @@ backend is not optional: **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)**.
 
 ### Unraid
 
-*Docker* → **Add Container** → paste this into the **Template** field:
+Install the template from Unraid's *Terminal* (the Template field on Add
+Container is a dropdown of installed templates — there is no URL box):
 
-```
-https://raw.githubusercontent.com/Spencer8742/CiscoNavigatorWebApp/main/unraid/navigator-panel.xml
+```bash
+mkdir -p /boot/config/plugins/dockerMan/templates-user
+wget -O /boot/config/plugins/dockerMan/templates-user/my-navigator-panel.xml \
+  https://raw.githubusercontent.com/Spencer8742/CiscoNavigatorWebApp/main/unraid/navigator-panel.xml
 ```
 
-Fill in your panel token and Home Assistant URL + token, hit Apply. A
-documented `dashboard.yaml` is written to
+Then *Docker* → **Add Container** → pick **navigator-panel** from the Template
+dropdown. Fill in your panel token and Home Assistant URL + token, hit Apply.
+A documented `dashboard.yaml` is written to
 `/mnt/user/appdata/navigator-panel/` on first start — edit it to list your
 entities and the panel updates within a second, no restart.
+
+No terminal? [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md#1a-unraid) lists the
+fields to enter by hand.
 
 Pushes to `main` publish a new image automatically, so updating is **Force
 Update** in the Docker tab (or the *Auto Update Applications* plugin).
