@@ -66,7 +66,8 @@ export const FALLBACK_CONFIG: DashboardConfig = {
   },
   rooms: [],
   home: { favorites: [], scenes: [], status: [], alerts: [] },
-  media: { players: [], default: 'active', volumeStep: 0.05, discoverMusicAssistant: true },
+  media: { players: [], default: 'active', volumeStep: 0.05, discoverMusicAssistant: true,
+    sections: ['Speakers', 'TVs'] },
 };
 
 /* ── Coercion helpers ──────────────────────────────────────────────────────
@@ -163,6 +164,31 @@ function entityRefList(v: unknown, path: string): EntityRef[] {
   return out;
 }
 
+/**
+ * Section headings for the player list. Duplicates and blanks are dropped;
+ * an empty list falls back to the defaults so the picker always has somewhere
+ * to put a speaker.
+ */
+function sectionList(v: unknown): string[] {
+  const fallback = ['Speakers', 'TVs'];
+  if (v === undefined || v === null) return fallback;
+  if (!Array.isArray(v)) {
+    warn('media.sections', 'list of names', v);
+    return fallback;
+  }
+
+  const out: string[] = [];
+  for (const item of v) {
+    if (typeof item !== 'string' || !item.trim()) continue;
+    const name = item.trim();
+    // Reserved: the panel uses it for speakers you have chosen not to see.
+    if (name.toLowerCase() === 'hidden') continue;
+    if (!out.includes(name)) out.push(name);
+  }
+  // Cap: these are headings on a wall panel, not a taxonomy.
+  return out.length ? out.slice(0, 12) : fallback;
+}
+
 function warn(path: string, expected: string, got: unknown): void {
   log.warn(`${path}: expected ${expected}, got ${JSON.stringify(got)} — using default`);
 }
@@ -252,6 +278,7 @@ function validate(raw: unknown): DashboardConfig {
         true,
         'media.discoverMusicAssistant',
       ),
+      sections: sectionList(mediaRaw['sections']),
     },
   };
 }

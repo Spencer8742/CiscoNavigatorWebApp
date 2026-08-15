@@ -599,6 +599,52 @@ describe('panel preferences', () => {
     await second.stop();
   });
 
+  test('a player layout is bounded and section-checked', async () => {
+    /*
+     * This ends up on disk and a client writes it, so everything about it is
+     * bounded: ids must look like media players, headings must be ones the
+     * config declares, and a speaker cannot appear twice.
+     */
+    const cfgPath = join(tmpdir(), 'navigator-layout.yaml');
+    writeFileSync(
+      cfgPath,
+      `
+version: 1
+ui: { title: Layout, timezone: UTC }
+immich: { enabled: true, sources: [{ type: random }] }
+media:
+  sections: [Downstairs, Outside]
+  players: []
+`,
+    );
+    rmSync(join(tmpdir(), 'panel-prefs.json'), { force: true });
+    const t = await isolated(() => {}, cfgPath);
+
+    t.panel.send({
+      t: 'layout',
+      id: 90,
+      layout: {
+        sections: {
+          Downstairs: ['media_player.a', 'media_player.a', 'light.kitchen', 42],
+          Nonexistent: ['media_player.b'],
+        },
+        hidden: ['media_player.c', 'not_an_entity'],
+      },
+    });
+
+    await waitFor(
+      () => t.panel.prefs.players.sections['Downstairs']?.length === 1,
+      'the layout to be applied',
+    );
+
+    const saved = t.panel.prefs.players;
+    assert.deepEqual(saved.sections['Downstairs'], ['media_player.a'], 'deduped, and non-players dropped');
+    assert.ok(!('Nonexistent' in saved.sections), 'a heading the config does not declare is dropped');
+    assert.deepEqual(saved.hidden, ['media_player.c'], 'hidden is filtered the same way');
+
+    await t.stop();
+  });
+
   test('refuses anything not on the allow-list', async () => {
     rmSync(PREFS_FILE, { force: true });
     const t = await isolated();
@@ -618,9 +664,12 @@ describe('panel preferences', () => {
 
     assert.equal(t.panel.prefs.homeSide, 'media', 'nothing invalid was applied');
     assert.ok(t.panel.errors.length > 0, 'and the panel was told why');
-    assert.equal(
-      Object.keys(t.panel.prefs).length,
-      1,
+    // Name the keys rather than counting them: a count silently goes stale
+    // the moment a legitimate preference is added, which is exactly what
+    // happened when the player layout arrived.
+    assert.deepEqual(
+      Object.keys(t.panel.prefs).sort(),
+      ['homeSide', 'players'],
       'no extra keys were introduced by a hostile payload',
     );
     await t.stop();

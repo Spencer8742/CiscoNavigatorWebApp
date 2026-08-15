@@ -153,7 +153,16 @@ export type ClientMessage =
    * (docs/ROOMOS.md §3), so a setting chosen at the panel would silently
    * revert overnight.
    */
-  | { t: 'pref'; id: number; key: keyof PanelPrefs; value: string };
+  | { t: 'pref'; id: number; key: 'homeSide'; value: string }
+  /**
+   * Rearrange the player list.
+   *
+   * Carries the COMPLETE layout rather than a move instruction. It is
+   * idempotent, it needs no server-side merge, and two panels rearranging at
+   * once cannot interleave into a state neither of them asked for — the last
+   * one simply wins, which is the right outcome for a display preference.
+   */
+  | { t: 'layout'; id: number; layout: PlayerLayout };
 
 /* ── Panel preferences ─────────────────────────────────────────────────── */
 
@@ -172,12 +181,45 @@ export interface PanelPrefs {
    * never empty — which is the entire reason it exists.
    */
   homeSide: 'media' | 'photos';
+  /** How the player list is arranged. See `PlayerLayout`. */
+  players: PlayerLayout;
 }
 
-export const DEFAULT_PREFS: PanelPrefs = { homeSide: 'media' };
+/**
+ * Which speakers sit under which heading, and in what order.
+ *
+ * Section NAMES come from `media.sections` in dashboard.yaml, because naming
+ * needs a keyboard. Which speaker goes where is decided by tapping, so it
+ * lives here — a machine-owned file the panel may rewrite, never the user's
+ * hand-written YAML.
+ *
+ * Sparse on purpose: a speaker that appears in neither map falls into the
+ * first section automatically. Discovering a new speaker therefore needs no
+ * write at all, and an empty layout is a perfectly good starting state.
+ */
+export interface PlayerLayout {
+  /** section name → entity ids, in display order. */
+  sections: Record<string, string[]>;
+  /** Speakers deliberately kept off the list — laptops, servers, phones. */
+  hidden: string[];
+}
 
-/** Allowed values per key, so a compromised panel cannot write arbitrary data. */
-export const PREF_VALUES: Record<keyof PanelPrefs, readonly string[]> = {
+export const DEFAULT_PREFS: PanelPrefs = {
+  homeSide: 'media',
+  players: { sections: {}, hidden: [] },
+};
+
+/** Caps, so a compromised panel cannot write unbounded data to disk. */
+export const LAYOUT_LIMITS = { sections: 12, playersPerSection: 100, hidden: 200 } as const;
+
+/**
+ * Allowed values for the simple string preferences.
+ *
+ * `players` is not here: it is structured rather than an enum, and is
+ * validated separately by the prefs store against the sections the config
+ * actually declares.
+ */
+export const PREF_VALUES: Record<string, readonly string[]> = {
   homeSide: ['media', 'photos'],
 };
 
