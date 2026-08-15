@@ -24,10 +24,10 @@ services:
       - '8099:8099'
 
     volumes:
-      # Read-only: the backend never writes your config, and mounting it ro
-      # means a bug cannot corrupt it. Hot reload still works — the file
-      # watcher sees the host's changes through the mount.
-      - ./config:/config:ro
+      # Writable, because the entrypoint seeds a default dashboard.yaml here on
+      # first run if the directory is empty. After that the backend only ever
+      # reads it — hot reload works through the mount.
+      - ./config:/config
 
     # The panel is a long-lived process holding a WebSocket to Home Assistant
     # and a few bounded caches. It should sit well under this; the limit is
