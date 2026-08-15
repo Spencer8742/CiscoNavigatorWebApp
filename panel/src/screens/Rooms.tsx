@@ -3,7 +3,7 @@ import { Icon } from '~/components/Icon.tsx';
 import { Pressable } from '~/components/Pressable.tsx';
 import { Empty } from '~/components/Empty.tsx';
 import { EntityTile } from '~/components/EntityTile.tsx';
-import { activeRoom, markActivity, openEntity } from '~/state/ui.ts';
+import { activeRoom, markActivity } from '~/state/ui.ts';
 import { activeRoomEntities, activeRoomName, roomActivity } from '~/state/selectors.ts';
 
 /**
@@ -109,15 +109,7 @@ function RoomDetail() {
         ) : (
           <div class="tile-grid">
             {items.map((item) => (
-              <EntityTile
-                key={item.id}
-                item={item}
-                size="lg"
-                onPress={() => {
-                  openEntity.value = item.id;
-                  markActivity();
-                }}
-              />
+              <EntityTile key={item.id} item={item} size="lg" />
             ))}
           </div>
         )}

@@ -8,6 +8,7 @@ import { ConfigStore } from '~/config/load.ts';
 import { StaticFiles } from '~/http/static.ts';
 import { applySecurityHeaders } from '~/http/headers.ts';
 import { PanelAuth } from '~/http/auth.ts';
+import { ArtworkProxy } from '~/http/artwork.ts';
 import { Hub } from '~/hub/index.ts';
 import { HaClient } from '~/ha/client.ts';
 import { HaStore, isEmptyPatch } from '~/ha/store.ts';
@@ -42,6 +43,7 @@ async function main(): Promise<void> {
   config.watch();
 
   const auth = new PanelAuth(env.panelToken);
+  const artwork = new ArtworkProxy(env.ha);
 
   const panelRoot = resolvePanelRoot();
   log.info(`Serving panel from ${panelRoot}`);
@@ -181,6 +183,31 @@ async function main(): Promise<void> {
     if (path === '/api/config') {
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       res.end(JSON.stringify(config.current));
+      return;
+    }
+
+    /*
+     * Home Assistant media artwork.
+     *
+     * Authenticated like any other API route — note that this is reached via
+     * an <img src>, and browsers do not attach Authorization headers to those,
+     * so the panel appends ?t=<token>. PanelAuth accepts both forms.
+     */
+    if (path === '/img/ha') {
+      if (!auth.check(req)) {
+        res.writeHead(401, { 'content-type': 'text/plain' });
+        res.end('unauthorized');
+        return;
+      }
+      const q = rawUrl.indexOf('?');
+      const params = new URLSearchParams(q === -1 ? '' : rawUrl.slice(q + 1));
+      const p = params.get('p');
+      if (!p) {
+        res.writeHead(400, { 'content-type': 'text/plain' });
+        res.end('missing p');
+        return;
+      }
+      await artwork.serve(req, res, p);
       return;
     }
 

@@ -477,3 +477,167 @@
   opacity: 0.7;
   font-variant-numeric: tabular-nums;
 }
+
+/* ── Now Playing ──────────────────────────────────────────────────────────
+   Artwork-led and two-column when there is room, stacking on narrow panels.
+   No media query: auto-fit does the work, so it adapts to whatever viewport
+   RoomOS gives us. */
+
+.player-switcher {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  padding: var(--s-5) var(--s-6) var(--s-3);
+}
+
+.player-chip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: var(--touch-min);
+  padding: 0 var(--s-4);
+  border-radius: var(--r-full);
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  color: var(--text-dim);
+  font-size: 0.9375rem;
+  font-weight: 540;
+  max-width: 14rem;
+}
+
+.player-chip.is-active {
+  background: var(--surface-4);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+/* Marks a player that is making noise somewhere else in the house. */
+.player-dot {
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: var(--r-full);
+  background: var(--ok);
+  flex: 0 0 auto;
+}
+
+.now-playing {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+  gap: var(--s-6);
+  align-items: start;
+  padding-bottom: var(--s-6);
+}
+
+.np-art {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  max-height: 60vh;
+  border-radius: var(--r-xl);
+  overflow: hidden;
+  background: var(--surface-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+}
+
+.np-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* Fade in on decode rather than popping — artwork arrives mid-track and a
+     hard swap reads as a glitch. */
+  animation: art-in var(--t-base) var(--ease) both;
+}
+
+@keyframes art-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.np-info {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.np-title {
+  font-size: 1.75rem;
+  font-weight: 620;
+  letter-spacing: -0.025em;
+  line-height: 1.15;
+}
+
+.np-artist {
+  font-size: 1.125rem;
+  color: var(--text-dim);
+}
+
+.np-album {
+  font-size: 0.9375rem;
+  color: var(--text-faint);
+}
+
+.np-transport {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin-top: var(--s-4);
+}
+
+.np-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 3.5rem;
+  height: 3.5rem;
+  border-radius: var(--r-full);
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+/* Play is the one control anyone reaches for without looking. */
+.np-play {
+  width: 4.75rem;
+  height: 4.75rem;
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.np-button.is-on {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.np-volume {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-top: var(--s-5);
+}
+
+.np-volume .slider { flex: 1 1 auto; min-width: 0; }
+
+.np-mute,
+.np-step {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  height: 3rem;
+  border-radius: var(--r-full);
+  background: var(--surface-2);
+  color: var(--text-dim);
+}
+
+.np-mute[aria-pressed='true'] {
+  background: rgba(248, 113, 113, 0.14);
+  color: var(--danger);
+}
+
+.np-sources { margin-top: var(--s-5); }
