@@ -58,7 +58,7 @@ export function Home() {
         ) : null}
       </div>
 
-      <div class="screen-body scroll">
+      <div class="screen-body home-body scroll">
         {!configured ? (
           <Empty icon="settings" title="No dashboard configured yet">
             Copy <code>config/dashboard.example.yaml</code> to{' '}
