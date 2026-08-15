@@ -13,6 +13,9 @@ import { Hub } from '~/hub/index.ts';
 import { HaClient } from '~/ha/client.ts';
 import { HaStore, isEmptyPatch } from '~/ha/store.ts';
 import { ServiceGuard } from '~/ha/services.ts';
+import { ImmichClient } from '~/immich/client.ts';
+import { ImmichImages } from '~/immich/images.ts';
+import { Playlist } from '~/immich/playlist.ts';
 import type { BackendHealth } from '@shared/protocol.ts';
 
 const log = logger('server');
@@ -45,6 +48,30 @@ async function main(): Promise<void> {
   const auth = new PanelAuth(env.panelToken);
   const artwork = new ArtworkProxy(env.ha);
 
+  /* ── Immich ──────────────────────────────────────────────────────────────
+     The playlist holds the slideshow position server-side, so RoomOS wiping
+     the panel's storage overnight does not restart the slideshow. */
+  const immich = new ImmichClient(env.immich);
+  const immichImages = new ImmichImages(env.immich);
+  const playlist = new Playlist(immich, config.current);
+
+  /** Liveness for the health report, refreshed on a slow timer. */
+  let immichReachable = false;
+  if (env.immich.enabled) {
+    const pingImmich = async (): Promise<void> => {
+      const ok = await immich.ping();
+      if (ok !== immichReachable) {
+        immichReachable = ok;
+        log.info(`Immich link: ${ok ? 'connected' : 'disconnected'}`);
+        hub.broadcastHealth(getHealth());
+      }
+    };
+    void pingImmich();
+    // Slow on purpose: Immich is used on demand, so this only feeds the
+    // Settings screen. A tight poll would be pure noise.
+    setInterval(() => void pingImmich(), 60_000).unref();
+  }
+
   const panelRoot = resolvePanelRoot();
   log.info(`Serving panel from ${panelRoot}`);
   const files = new StaticFiles(panelRoot);
@@ -60,7 +87,7 @@ async function main(): Promise<void> {
 
   const getHealth = (): BackendHealth => ({
     ha: env.ha.enabled ? haClient.state : 'disconnected',
-    immich: env.immich.enabled ? 'connecting' : 'disconnected',
+    immich: env.immich.enabled ? (immichReachable ? 'connected' : 'disconnected') : 'disconnected',
     haLastMessage: haClient.lastMessageAt ? new Date(haClient.lastMessageAt).toISOString() : null,
     uptime: Math.floor((Date.now() - STARTED_AT) / 1000),
     version: VERSION,
@@ -136,6 +163,8 @@ async function main(): Promise<void> {
         entity: msg.entity,
         data: msg.data,
       }),
+
+    onPhotos: async (count) => ({ t: 'photos', photos: await playlist.take(count) }),
   });
 
   // A config edit changes which entities are visible. The store already holds
@@ -144,6 +173,7 @@ async function main(): Promise<void> {
   config.onChange((cfg) => {
     const patch = store.setConfig(cfg);
     if (!isEmptyPatch(patch)) hub.broadcastPatch(patch);
+    playlist.setConfig(cfg);
   });
 
   haClient.start();
@@ -211,10 +241,24 @@ async function main(): Promise<void> {
       return;
     }
 
-    // Immich image proxy lands here in phase 6.
+    /*
+     * Immich images. `/img/<asset-uuid>?s=grid|full`.
+     *
+     * The panel cannot name an Immich size here — see immich/images.ts. `s`
+     * maps onto `thumbnail` and `preview` only, so there is no request the
+     * panel can make that pulls a full-resolution original onto a device
+     * that gets killed for using too much memory.
+     */
     if (path.startsWith('/img/')) {
-      res.writeHead(503, { 'content-type': 'text/plain' });
-      res.end('Photo support is not enabled yet');
+      if (!auth.check(req)) {
+        res.writeHead(401, { 'content-type': 'text/plain' });
+        res.end('unauthorized');
+        return;
+      }
+      const assetId = path.slice('/img/'.length);
+      const q = rawUrl.indexOf('?');
+      const params = new URLSearchParams(q === -1 ? '' : rawUrl.slice(q + 1));
+      await immichImages.serve(req, res, assetId, params.get('s'));
       return;
     }
 

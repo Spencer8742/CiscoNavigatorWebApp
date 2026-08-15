@@ -641,3 +641,239 @@
 }
 
 .np-sources { margin-top: var(--s-5); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Photos and screensaver
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.photos-play {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-left: auto;
+  min-height: var(--touch-min);
+  padding: 0 var(--s-4);
+  border-radius: var(--r-full);
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-dim);
+  font-size: 0.9375rem;
+  font-weight: 540;
+}
+
+.photos-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 12rem;
+}
+
+.spinner {
+  width: 2rem;
+  height: 2rem;
+  border: 2px solid var(--border);
+  border-top-color: var(--text-dim);
+  border-radius: var(--r-full);
+  animation: boot-spin 0.9s linear infinite;
+}
+
+.photo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: var(--s-2);
+  padding-bottom: var(--s-6);
+}
+
+.photo-tile {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+
+.photo-tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* Fade in over the average-colour placeholder rather than popping. */
+  animation: art-in var(--t-base) var(--ease) both;
+}
+
+/* ── Full-screen viewer ───────────────────────────────────────────────────*/
+
+.viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: scrim-in var(--t-fast) var(--ease) both;
+}
+
+.viewer img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.viewer-caption,
+.saver-caption {
+  position: absolute;
+  bottom: var(--s-5);
+  left: 50%;
+  transform: translate3d(-50%, 0, 0);
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  max-width: 80%;
+  padding: var(--s-2) var(--s-4);
+  border-radius: var(--r-full);
+  /* Photos are unpredictable, so captions need their own ground rather than
+     relying on the image behind them being dark. */
+  background: rgba(6, 7, 10, 0.62);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 0.875rem;
+}
+
+.saver-dot { opacity: 0.5; }
+
+.viewer-close {
+  position: absolute;
+  top: var(--s-5);
+  right: var(--s-5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  height: 3rem;
+  border-radius: var(--r-full);
+  background: rgba(6, 7, 10, 0.62);
+  color: #fff;
+}
+
+/* ── Screensaver ──────────────────────────────────────────────────────────
+   Fills the screen over everything, including the nav rail. */
+
+.saver {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+/* The shell stays mounted underneath in the DOM only when the screensaver is
+   absent; when present it is removed entirely (see app.tsx). This guard is
+   belt-and-braces for the frame in between. */
+.shell[data-hidden] { visibility: hidden; }
+
+.saver-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  /* opacity ONLY — the entire crossfade is a compositor operation.
+     Duration comes from immich.transitionMs as an inline style. */
+  transition-property: opacity;
+  transition-timing-function: ease-in-out;
+  will-change: opacity;
+}
+
+.saver-layer[data-front] { opacity: 1; }
+
+.saver-overlays {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* ── Overlay placement and burn-in drift ──────────────────────────────────
+   Four corners, cycled on every photo change, plus a slow continuous drift.
+   An IPS panel is far more forgiving than OLED, but a clock in the same
+   pixels for months is still worth avoiding. Both are transforms. */
+
+.saver-info {
+  position: absolute;
+  padding: var(--s-6) var(--s-7);
+  color: #fff;
+  /* A soft dark gradient behind the text rather than a box: readable over a
+     bright sky without putting a slab on top of the photo. */
+  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.55);
+  animation: saver-drift 90s ease-in-out infinite alternate;
+}
+
+.saver-info[data-corner='0'] { top: 0; left: 0; }
+.saver-info[data-corner='1'] { top: 0; right: 0; text-align: right; }
+.saver-info[data-corner='2'] { bottom: 0; right: 0; text-align: right; }
+.saver-info[data-corner='3'] { bottom: 0; left: 0; }
+
+@keyframes saver-drift {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(1.5rem, 1rem, 0); }
+}
+
+.saver-time {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  font-size: 3rem;
+  font-weight: 300;
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+
+.saver-info-big .saver-time { font-size: 5.5rem; }
+
+.saver-meridiem {
+  font-size: 1.5rem;
+  font-weight: 500;
+  opacity: 0.8;
+}
+
+.saver-date {
+  margin-top: var(--s-2);
+  font-size: 1.125rem;
+  opacity: 0.85;
+}
+
+.saver-info-big .saver-date { font-size: 1.5rem; }
+
+.saver-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  margin-top: var(--s-3);
+}
+
+.saver-info[data-corner='1'] .saver-row,
+.saver-info[data-corner='2'] .saver-row { justify-content: flex-end; }
+
+.saver-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  max-width: 22rem;
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-full);
+  background: rgba(6, 7, 10, 0.45);
+  font-size: 0.9375rem;
+  text-shadow: none;
+}
+
+.saver-clock-only,
+.saver-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.saver-message {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-3);
+  color: var(--text-faint);
+  font-size: 1rem;
+}

@@ -150,9 +150,9 @@ fully documented reference.
 | 3 | Real-time entity state | ✅ |
 | 4 | Entity controls (light, climate, cover, …) | ✅ |
 | 5 | Media player / Now Playing | ✅ |
-| 6 | Immich gallery | ⬜ |
-| 7 | Photo slideshow | ⬜ |
-| 8 | Idle and screensaver | ⬜ |
+| 6 | Immich gallery | ✅ |
+| 7 | Photo slideshow | ✅ |
+| 8 | Idle and screensaver | ✅ |
 | 9 | Failure hardening | ⬜ |
 | 10 | Performance pass on-device | ⬜ |
 | 11 | Deployment polish | 🟡 CI, GHCR images and Unraid template done |
@@ -165,8 +165,8 @@ Enforced, not aspirational.
 
 | Metric | Budget | Now |
 |---|---|---|
-| Shell JS (gzip) | < 50 KB | **25.7 KB** |
-| CSS (gzip) | < 12 KB | **4.9 KB** |
+| Shell JS (gzip) | < 50 KB | **27.9 KB** |
+| CSS (gzip) | < 12 KB | **5.4 KB** |
 | HA state change → DOM update | — | **5–34 ms** |
 | Cold load → interactive | < 1.5 s | — |
 | Touch → visual feedback | < 100 ms | one frame |
@@ -186,7 +186,8 @@ panel/      frontend (Preact + signals, Vite, target chrome102)
               registry.tsx = how it looks · controls.tsx = how it works
 server/     backend  (Node 22, deps: ws + yaml)
   ha/         WebSocket client · state store · service allow-list
-  test/       integration tests + mock Home Assistant
+  immich/     REST client · playlist · image proxy (originals unreachable)
+  test/       integration tests + mock Home Assistant and Immich
 ```
 
 ## Licence
