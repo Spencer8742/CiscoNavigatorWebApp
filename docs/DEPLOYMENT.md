@@ -116,21 +116,24 @@ openssl rand -hex 32
 
 Keep it; you need it twice (container config, and the Navigator's URL).
 
-**2. Add the container.** *Docker* tab → **Add Container**. In the **Template**
-dropdown, paste:
+**2. Install the template.** In Unraid's *Terminal*:
 
+```bash
+mkdir -p /boot/config/plugins/dockerMan/templates-user
+wget -O /boot/config/plugins/dockerMan/templates-user/my-navigator-panel.xml \
+  https://raw.githubusercontent.com/Spencer8742/CiscoNavigatorWebApp/main/unraid/navigator-panel.xml
 ```
-https://raw.githubusercontent.com/Spencer8742/CiscoNavigatorWebApp/main/unraid/navigator-panel.xml
-```
 
-That fills in the image, port, appdata path and every environment variable
-with descriptions.
+> **The Template field on Add Container is a dropdown of already-installed
+> templates, not a URL box.** There is no "paste a template URL" input in
+> current Unraid — the file has to be on the flash drive first. This step is
+> what puts it there.
 
-*Alternative:* copy `unraid/navigator-panel.xml` into
-`/boot/config/plugins/dockerMan/templates-user/` and it appears in the
-template list directly.
+**3. Add the container.** *Docker* tab → **Add Container** → choose
+**navigator-panel** from the **Template** dropdown. Image, port, appdata path
+and every environment variable are filled in with descriptions.
 
-**3. Fill in four fields:**
+**4. Fill in four fields:**
 
 | Field | Value |
 |---|---|
@@ -139,10 +142,41 @@ template list directly.
 | Home Assistant Token | a long-lived access token — see [Getting the credentials](#getting-the-credentials) |
 | Immich URL / API Key | optional; leave blank to disable photos |
 
-**4. Apply.** On first start the container writes a fully documented
+<details>
+<summary><strong>No terminal access? Fill the form in by hand instead.</strong></summary>
+
+*Docker* → **Add Container**, leave the Template dropdown alone, and set:
+
+| Field | Value |
+|---|---|
+| Name | `navigator-panel` |
+| Repository | `ghcr.io/spencer8742/cisconavigatorwebapp:latest` |
+| Icon URL | `https://raw.githubusercontent.com/Spencer8742/CiscoNavigatorWebApp/main/panel/public/icon-192.png` |
+| WebUI | `http://[IP]:[PORT:8099]/` |
+| Extra Parameters | `--memory=256m` |
+| Network Type | Bridge (the default) |
+
+Then click **+ Add another Path, Port, Variable, Label or Device** once for
+each row:
+
+| Type | Name | Container path / key | Host path / value |
+|---|---|---|---|
+| Port | WebUI | `8099` | `8099`, TCP |
+| Path | Config | `/config` | `/mnt/user/appdata/navigator-panel`, Read/Write |
+| Variable | Panel Token | `PANEL_TOKEN` | your token from step 1 |
+| Variable | HA URL | `HA_URL` | `http://192.168.1.x:8123` |
+| Variable | HA Token | `HA_TOKEN` | your long-lived token |
+| Variable | PUID | `PUID` | `99` |
+| Variable | PGID | `PGID` | `100` |
+
+`IMMICH_URL` and `IMMICH_API_KEY` are optional.
+
+</details>
+
+**5. Apply.** On first start the container writes a fully documented
 `dashboard.yaml` into `/mnt/user/appdata/navigator-panel/`.
 
-**5. Edit that file** to list your entities. Unraid's file manager works, or:
+**6. Edit that file** to list your entities. Unraid's file manager works, or:
 
 ```bash
 nano /mnt/user/appdata/navigator-panel/dashboard.yaml
@@ -153,7 +187,7 @@ container restart.** If you make a YAML syntax error the container keeps
 running the last good config and logs the problem, so a typo can't take the
 panel down.
 
-**6. Point the Navigator at it** (Persistent Web App mode, see [§3](#3-provisioning-the-room-navigator)):
+**7. Point the Navigator at it** (Persistent Web App mode, see [§3](#3-provisioning-the-room-navigator)):
 
 ```
 http://YOUR-UNRAID-IP:8099/?t=YOUR_PANEL_TOKEN
@@ -435,6 +469,8 @@ worth taking literally:
 | Web view crashes / reloads itself | Memory ceiling hit | Remote DevTools → Memory → heap snapshot. See `docs/ROOMOS.md` §2 |
 | Layout wrong / cut off | Unexpected viewport | Settings screen shows the measured viewport. Everything is fluid, so report the number |
 | Unraid: no `dashboard.yaml` appears | appdata folder not writable | See [File permissions](#file-permissions) |
+| Unraid: nowhere to paste the template URL | The Template field is a dropdown, not a URL box | Copy the XML to `/boot/config/plugins/dockerMan/templates-user/` first — see [Install](#install) |
+| Unraid: template not in the dropdown after copying | Page was already open | Reload the Add Container page |
 | Unraid: container won't pull | Image path is case-sensitive | Must be lowercase: `ghcr.io/spencer8742/cisconavigatorwebapp` |
 | Unraid: HA unreachable from container | `localhost` points at the container | Use the Unraid host's LAN IP, or a shared Docker network + container name |
 
