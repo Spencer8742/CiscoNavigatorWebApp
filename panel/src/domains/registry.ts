@@ -315,10 +315,20 @@ const DEFAULT_ACTIVE = new Set(['on']);
  * disappearing, which is what makes a missing entity diagnosable while
  * standing in front of the panel.
  */
-export function describe(state: EntityState | null, entityId: string): EntityDescriptor {
+export function describe(
+  state: EntityState | null,
+  entityId: string,
+  /**
+   * Display name from `dashboard.yaml`, if one was given. It wins over Home
+   * Assistant's `friendly_name`, which is written for a list rather than a
+   * tile — "Living Room Ceiling Light Bulb 3" is accurate and unreadable at
+   * 13rem wide.
+   */
+  nameOverride?: string,
+): EntityDescriptor {
   const domain = domainOf(entityId);
   const spec = DOMAINS[domain] ?? FALLBACK;
-  const name = friendlyName(state, entityId);
+  const name = nameOverride ?? friendlyName(state, entityId);
 
   if (!state || state.s === 'unavailable' || state.s === 'unknown') {
     return {

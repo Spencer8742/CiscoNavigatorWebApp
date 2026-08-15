@@ -57,12 +57,18 @@ export const houseAlerts = computed<{ entity: string; label: string }[]>(() => {
 
 /** Favourite tiles on the Home screen. */
 export const favorites = computed<DescribedEntity[]>(() =>
-  homeConfig.value.favorites.map((id) => ({ ...describe(entity(id).value, id), id })),
+  homeConfig.value.favorites.map((ref) => ({
+    ...describe(entity(ref.entity).value, ref.entity, ref.name),
+    id: ref.entity,
+  })),
 );
 
 /** Scene and script buttons on the Home screen. */
 export const sceneButtons = computed<DescribedEntity[]>(() =>
-  homeConfig.value.scenes.map((id) => ({ ...describe(entity(id).value, id), id })),
+  homeConfig.value.scenes.map((ref) => ({
+    ...describe(entity(ref.entity).value, ref.entity, ref.name),
+    id: ref.entity,
+  })),
 );
 
 /** The weather entity, if one is configured. */
@@ -78,9 +84,9 @@ export const activeRoomEntities = computed<DescribedEntity[]>(() => {
   if (!id) return [];
   const room = roomsById.value.get(id);
   if (!room) return [];
-  return room.entities.map((entityId) => ({
-    ...describe(entity(entityId).value, entityId),
-    id: entityId,
+  return room.entities.map((ref) => ({
+    ...describe(entity(ref.entity).value, ref.entity, ref.name),
+    id: ref.entity,
   }));
 });
 
@@ -101,11 +107,11 @@ export const roomActivity = computed<Map<string, number>>(() => {
   const out = new Map<string, number>();
   for (const [id, room] of roomsById.value) {
     let n = 0;
-    for (const entityId of room.entities) {
-      if (!countsAsOn(entityId)) continue;
-      const state = entity(entityId).value;
+    for (const ref of room.entities) {
+      if (!countsAsOn(ref.entity)) continue;
+      const state = entity(ref.entity).value;
       if (!state) continue;
-      if (describe(state, entityId).active) n += 1;
+      if (describe(state, ref.entity).active) n += 1;
     }
     out.set(id, n);
   }

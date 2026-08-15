@@ -114,14 +114,24 @@ rooms:
     name: Living Room
     icon: sofa
     entities:
+      # Bare id: uses Home Assistant's friendly_name
       - light.living_room_ceiling
+      # Or override the name, for when HA's is too long for a tile
+      - entity: light.living_room_lamps_dimmer_switch_2
+        name: Lamps
       - climate.living_room
-      - media_player.living_room_speaker
 
 home:
-  favorites: [light.kitchen_ceiling, lock.front_door]
-  scenes:    [scene.movie_night, scene.all_off]
+  favorites:
+    - entity: light.kitchen_ceiling
+      name: Kitchen
+    - lock.front_door
+  scenes: [scene.movie_night, scene.all_off]
 ```
+
+Every entity list takes either form, mixed freely. Override the name when
+Home Assistant's is written for a list rather than a 13rem tile — "Living
+Room Ceiling Light Bulb 3" is accurate and unreadable.
 
 It is also a **security allow-list**: the backend refuses any service call
 targeting an entity this file does not name, so a tampered panel cannot reach

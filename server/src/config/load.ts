@@ -6,6 +6,7 @@ import { logger } from '~/lib/log.ts';
 import type {
   AlertRule,
   DashboardConfig,
+  EntityRef,
   ImmichSource,
   MediaPlayerConfig,
   RoomConfig,
@@ -101,21 +102,62 @@ function oneOf<T extends string>(v: unknown, allowed: readonly T[], fallback: T,
   return fallback;
 }
 
-/** Entity IDs only — anything without a dot is a typo, not an entity. */
-function entityList(v: unknown, path: string): string[] {
+/**
+ * A list of entities, each written either as a bare id or as an object with a
+ * display-name override:
+ *
+ *   - light.kitchen_ceiling
+ *   - entity: light.kitchen_under_cabinet
+ *     name: Under Cabinet
+ *
+ * Both normalise to `EntityRef`, so nothing downstream has to branch. The
+ * bare-string form is not legacy — it stays the right way to write it when
+ * Home Assistant's own name is already good.
+ */
+function entityRefList(v: unknown, path: string): EntityRef[] {
   if (v === undefined || v === null) return [];
   if (!Array.isArray(v)) {
     warn(path, 'list of entity ids', v);
     return [];
   }
-  const out: string[] = [];
+
+  const out: EntityRef[] = [];
+  const seen = new Set<string>();
+
   v.forEach((item, i) => {
-    if (typeof item !== 'string' || !item.includes('.')) {
-      warn(`${path}[${i}]`, 'entity id like "light.kitchen"', item);
+    const where = `${path}[${i}]`;
+
+    let id: string | undefined;
+    let name: string | undefined;
+
+    if (typeof item === 'string') {
+      id = item.trim();
+    } else if (item !== null && typeof item === 'object' && !Array.isArray(item)) {
+      const o = item as Raw;
+      const rawId = o['entity'];
+      if (typeof rawId === 'string') id = rawId.trim();
+      // `name` is the documented key; `label` is accepted because the status
+      // and alert sections already use it and mixing them up is inevitable.
+      const rawName = o['name'] ?? o['label'];
+      if (typeof rawName === 'string' && rawName.trim()) name = rawName.trim();
+    }
+
+    if (!id || !id.includes('.')) {
+      warn(where, 'entity id like "light.kitchen", or { entity: …, name: … }', item);
       return;
     }
-    out.push(item.trim());
+
+    // A duplicate is almost always a copy-paste slip. Keeping the first is
+    // less surprising than rendering the same tile twice.
+    if (seen.has(id)) {
+      log.warn(`${where}: "${id}" is listed more than once — keeping the first`);
+      return;
+    }
+    seen.add(id);
+
+    out.push(name ? { entity: id, name } : { entity: id });
   });
+
   return out;
 }
 
@@ -186,8 +228,8 @@ function validate(raw: unknown): DashboardConfig {
     rooms: roomList(root['rooms']),
 
     home: {
-      favorites: entityList(homeRaw['favorites'], 'home.favorites'),
-      scenes: entityList(homeRaw['scenes'], 'home.scenes'),
+      favorites: entityRefList(homeRaw['favorites'], 'home.favorites'),
+      scenes: entityRefList(homeRaw['scenes'], 'home.scenes'),
       status: statusList(homeRaw['status']),
       ...(typeof homeRaw['weather'] === 'string' && homeRaw['weather'].includes('.')
         ? { weather: homeRaw['weather'] }
@@ -228,7 +270,7 @@ function roomList(v: unknown): RoomConfig[] {
       id,
       name: str(r['name'], id, `rooms[${i}].name`),
       icon: str(r['icon'], 'rooms', `rooms[${i}].icon`),
-      entities: entityList(r['entities'], `rooms[${i}].entities`),
+      entities: entityRefList(r['entities'], `rooms[${i}].entities`),
     });
   });
 
@@ -247,7 +289,10 @@ function statusList(v: unknown): StatusItem[] {
     const s = obj(item);
     const entity = str(s['entity'], '', `home.status[${i}].entity`);
     if (!entity.includes('.')) return;
-    const label = typeof s['label'] === 'string' ? s['label'] : undefined;
+    // `label` is this section's documented key, but `name` is what every
+    // other section uses, so accept both rather than making people remember.
+    const rawLabel = s['label'] ?? s['name'];
+    const label = typeof rawLabel === 'string' && rawLabel.trim() ? rawLabel.trim() : undefined;
     out.push(label ? { entity, label } : { entity });
   });
   return out;
