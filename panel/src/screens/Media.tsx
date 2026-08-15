@@ -9,6 +9,7 @@ import { OptionRow } from '~/components/Sheet.tsx';
 import { attrNumber, attrString, friendlyName } from '~/domains/registry.ts';
 import { defaultPlayerId, speakers } from '~/state/selectors.ts';
 import { GroupSheet } from '~/components/GroupSheet.tsx';
+import { PlayerPicker } from '~/components/PlayerPicker.tsx';
 import { canGroup, groupMembers } from '@shared/protocol.ts';
 import { getToken } from '~/net/auth.ts';
 import * as act from '~/state/actions.ts';
@@ -31,6 +32,7 @@ export function Media() {
   const cfg = mediaConfig.value;
   const [chosen, setChosen] = useState<string | null>(null);
   const [grouping, setGrouping] = useState(false);
+  const [picking, setPicking] = useState(false);
 
   // Reset the manual choice if the configured players change under us.
   const all = speakers.value;
@@ -78,26 +80,22 @@ export function Media() {
 
   return (
     <div class="screen screen-enter">
-      {all.length > 1 ? (
-        <div class="player-switcher">
-          {all.map((p) => (
-            <Pressable
-              key={p.id}
-              class={p.id === activeId ? 'player-chip is-active' : 'player-chip'}
-              onPress={() => setChosen(p.id)}
-              ariaPressed={p.id === activeId}
-              ariaLabel={p.name}
-              disabled={!p.available}
-            >
-              <Icon name="speaker" size="1.1rem" weight={1.8} />
-              <span class="truncate">{p.name}</span>
-              {/* A dot on players that are playing, so you can tell what is
-                  making noise elsewhere in the house without switching. */}
-              {p.state === 'playing' ? <span class="player-dot" aria-label="playing" /> : null}
-            </Pressable>
-          ))}
-        </div>
-      ) : null}
+      {/* One control, not a row of chips. Twenty-seven speakers wrapped onto
+          three rows and pushed the actual media player off the screen — and
+          it got worse the more speakers you owned. */}
+      <div class="player-select-bar">
+        <Pressable
+          class="player-select"
+          onPress={() => setPicking(true)}
+          ariaLabel="Choose a player"
+        >
+          <Icon name="speaker" size="1.2rem" weight={1.8} />
+          <span class="player-select-name truncate">
+            {all.find((s) => s.id === activeId)?.name ?? friendlyName(state, activeId)}
+          </span>
+          <Icon name="chevronDown" size="1rem" weight={2.2} />
+        </Pressable>
+      </div>
 
       {/* Where the sound is coming from, and the way into changing it. One
           control does both jobs, because "which rooms?" and "add a room" are
@@ -114,6 +112,14 @@ export function Media() {
       <div class="screen-body scroll">
         {state ? <NowPlaying id={activeId} state={state} /> : <MissingPlayer id={activeId} />}
       </div>
+
+      {picking ? (
+        <PlayerPicker
+          activeId={activeId}
+          onSelect={(id) => setChosen(id)}
+          onClose={() => setPicking(false)}
+        />
+      ) : null}
 
       {grouping ? (
         <GroupSheet

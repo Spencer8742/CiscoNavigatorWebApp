@@ -905,3 +905,35 @@
   color: var(--text);
   font-weight: 620;
 }
+
+/* ── Player selector ──────────────────────────────────────────────────────
+   Replaces a wrapping row of chips. With twenty-odd speakers that row cost
+   three rows of screen and grew as you added more — the opposite of what a
+   picker should do. */
+
+.player-select-bar {
+  display: flex;
+  align-items: center;
+  padding: var(--s-4) var(--s-6) var(--s-2);
+}
+
+.player-select {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  max-width: 100%;
+  min-height: var(--touch);
+  padding: var(--s-2) var(--s-4);
+  border-radius: var(--r-full);
+  background: var(--surface-1);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-dim);
+}
+
+.player-select-name {
+  min-width: 0;
+  font-size: 1.25rem;
+  font-weight: 620;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
