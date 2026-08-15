@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+
+    <!--
+      Matches Cisco's own Room Navigator sample app
+      (cisco-ce/roomos-samples · navigator/navigator-webapp).
+      No fixed width: the layout is fluid so it is correct at 1280x800 and
+      1920x1080 alike. user-scalable=no kills pinch-zoom at the document
+      level, which is safe because there is no zoomable content and no text
+      input in normal operation.
+    -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#08090C" />
+
+    <!-- RoomOS looks for apple-touch-icon FIRST when building the web app
+         tile, then rel=icon. Must be between 60 and 1200 px or it is
+         silently ignored. See docs/ROOMOS.md §9. -->
+    <link rel="apple-touch-icon" href="/icon-192.png" />
+    <link rel="icon" href="/icon-192.png" type="image/png" />
+
+    <title>Home</title>
+
+    <!--
+      Critical shell styles, inlined. This paints the background and the
+      loading state in the first frame, before the CSS file arrives — so a
+      cold start never flashes white on a wall-mounted panel in a dark room.
+      Keep this block tiny; everything else lives in styles/.
+    -->
+    <style>
+      html {
+        background: #08090c;
+        color-scheme: dark;
+      }
+      html,
+      body,
+      #app {
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+      }
+      body {
+        background: #08090c;
+        color: #f2f4f8;
+        font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      #boot {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #boot span {
+        width: 2.5rem;
+        height: 2.5rem;
+        border: 2px solid rgba(255, 255, 255, 0.14);
+        border-top-color: rgba(255, 255, 255, 0.65);
+        border-radius: 50%;
+        animation: boot-spin 0.9s linear infinite;
+      }
+      @keyframes boot-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="boot"><span></span></div>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,61 @@
+services:
+  navigator-panel:
+    build:
+      context: .
+      args:
+        APP_VERSION: ${APP_VERSION:-dev}
+    image: navigator-panel:latest
+    container_name: navigator-panel
+    restart: unless-stopped
+
+    # Everything sensitive comes from .env, which is gitignored.
+    # Copy .env.example to .env and fill it in.
+    env_file:
+      - .env
+
+    environment:
+      PORT: 8099
+      HOST: 0.0.0.0
+      CONFIG_PATH: /config/dashboard.yaml
+
+    ports:
+      # Bind to the LAN, not the internet. If you want remote access, put it
+      # behind your existing VPN rather than forwarding this port.
+      - '8099:8099'
+
+    volumes:
+      # Read-only: the backend never writes your config, and mounting it ro
+      # means a bug cannot corrupt it. Hot reload still works — the file
+      # watcher sees the host's changes through the mount.
+      - ./config:/config:ro
+
+    # The panel is a long-lived process holding a WebSocket to Home Assistant
+    # and a few bounded caches. It should sit well under this; the limit is
+    # here so a leak shows up as a container restart in `docker ps` rather
+    # than as memory pressure on the host.
+    mem_limit: 256m
+
+    healthcheck:
+      test: ['CMD', 'wget', '--quiet', '--tries=1', '--spider', 'http://127.0.0.1:8099/api/health']
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+    logging:
+      # Unbounded container logs on a device that runs for months is its own
+      # kind of outage.
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+
+    # If Home Assistant and Immich are reachable by hostname on a Docker
+    # network, join it here instead of using IPs in .env:
+    #
+    # networks:
+    #   - homelab
+    #
+    # networks:
+    #   homelab:
+    #     external: true

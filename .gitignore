@@ -1,0 +1,18 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+
+# Secrets — never commit
+.env
+.env.local
+.env.*.local
+
+# Your live dashboard config may reference private entity names.
+# The example file IS tracked; your real one is not.
+config/dashboard.yaml
+
+# Runtime state written by the server
+data/
+.vite/
+*.tsbuildinfo

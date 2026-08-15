@@ -1,0 +1,138 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Screen layouts
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Home ─────────────────────────────────────────────────────────────────
+   The hero is the panel's resting face: what it shows for most of its life,
+   read from across a room. Big, quiet, high contrast, nothing moving. */
+
+.home-hero {
+  flex: 0 0 auto;
+  padding: var(--s-6) var(--s-6) var(--s-4);
+}
+
+.home-time {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-3);
+  font-size: 4.25rem;
+  font-weight: 300;
+  line-height: 1;
+  letter-spacing: -0.045em;
+  /* Tabular figures so the digits do not shuffle sideways every minute —
+     the single most noticeable cheap tell of a web page pretending to be a
+     clock. */
+  font-variant-numeric: tabular-nums;
+}
+
+.home-meridiem {
+  font-size: 1.375rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--text-dim);
+}
+
+.home-date {
+  margin-top: var(--s-2);
+  font-size: 1.125rem;
+  font-weight: 450;
+  color: var(--text-dim);
+}
+
+/* ── Rooms ────────────────────────────────────────────────────────────────
+   auto-fill + minmax rather than a fixed column count: the layout adapts to
+   whatever viewport RoomOS gives us without a media query, which matters
+   because that size is not something Cisco publishes for the Navigator. */
+
+.room-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: var(--s-3);
+  padding-bottom: var(--s-4);
+}
+
+.room-card {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-4);
+  min-height: var(--touch-lg);
+  background: var(--surface-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+  text-align: left;
+}
+
+.room-card-icon {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  height: 3rem;
+  border-radius: var(--r-md);
+  background: var(--surface-3);
+  color: var(--text-dim);
+}
+
+.room-card-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.room-card-name {
+  font-size: 1.0625rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.room-card-meta {
+  margin-top: 0.1rem;
+  font-size: 0.8125rem;
+  color: var(--text-faint);
+}
+
+.room-card-chev {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+
+/* ── Settings ─────────────────────────────────────────────────────────────*/
+
+.settings-ua {
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--text-dim);
+  /* The one place text selection is useful: copying the UA into a bug report
+     from a desktop browser during development. */
+  -webkit-user-select: text;
+  user-select: text;
+  word-break: break-all;
+  white-space: normal;
+}
+
+.settings-note {
+  margin: var(--s-5) 0 var(--s-6);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: var(--text-faint);
+}
+
+.settings-note code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--surface-2);
+  border-radius: var(--r-sm);
+  padding: 0.1em 0.4em;
+}
+
+/* ── Fatal error ──────────────────────────────────────────────────────────*/
+
+.fatal-detail {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8125rem;
+  color: var(--text-faint);
+  max-width: 40rem;
+  word-break: break-word;
+}

@@ -1,0 +1,140 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Design tokens
+   ───────────────────────────────────────────────────────────────────────────
+   Chromium 102 baseline. See docs/ROOMOS.md §1 for what that rules out.
+
+   NOT USED ANYWHERE, deliberately:
+     :has()  @container  color-mix()  oklch()/lab()  CSS nesting  @property
+     box-shadow  (Cisco: "avoid drop shadows")
+
+   Depth is built from LAYERED SURFACES and HAIRLINE BORDERS instead of
+   shadows. On an LCD viewed at arm's length this reads as more precise than
+   shadow-based depth anyway, and it costs the compositor nothing.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Scale ────────────────────────────────────────────────────────────────
+     Everything downstream is in rem, so this one line adapts the whole UI to
+     whatever viewport RoomOS actually gives us — which Cisco does not publish
+     for the Navigator (docs/ROOMOS.md §7).
+
+       1280 x 800  → min(16.0, 16.0) = 16px
+       1920 x 1080 → min(24.0, 21.6) → clamped to 21px
+       1024 x 600  → min(12.8, 12.0) → clamped to 14px
+
+     Larger screen ⇒ larger text, which is what you want when it is also
+     further away. */
+  font-size: clamp(14px, min(1.25vw, 2vh), 21px);
+
+  /* ── Surfaces ───────────────────────────────────────────────────────────── */
+  --bg: #08090c; /* page — near-black, not black: avoids smearing on LCD */
+  --surface-1: #101218; /* cards */
+  --surface-2: #171a22; /* raised: sheets, popovers, active nav */
+  --surface-3: #1f232d; /* controls inside cards */
+  --surface-4: #2a2f3b; /* pressed / hover */
+
+  /* Fill used for "this thing is on" without going full accent. */
+  --surface-active: #22283a;
+
+  /* ── Borders ─────────────────────────────────────────────────────────────
+     Hairlines carry the depth that shadows would. */
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.18);
+
+  /* ── Text ──────────────────────────────────────────────────────────────── */
+  --text: #f2f4f8;
+  --text-dim: #a4abbb;
+  --text-faint: #6b7285;
+
+  /* ── Accent ──────────────────────────────────────────────────────────────
+     --accent is overwritten at runtime from ui.accent in dashboard.yaml.
+     The -soft / -dim variants are pre-computed because Chromium 102 has no
+     color-mix() to derive them in CSS. */
+  --accent: #5b9dff;
+  --accent-soft: rgba(91, 157, 255, 0.16);
+  --accent-dim: rgba(91, 157, 255, 0.32);
+  --accent-text: #08090c;
+
+  /* ── Semantic ────────────────────────────────────────────────────────────
+     Chosen to stay distinguishable for the most common colour-vision
+     deficiencies: warn is amber not yellow-green, ok is teal-leaning. */
+  --ok: #34d399;
+  --warn: #fbbf24;
+  --danger: #f87171;
+  --info: #60a5fa;
+
+  /* Domain accents — used for the "on" glow of each entity class so a room
+     card is scannable without reading labels. */
+  --light-on: #ffd28a;
+  --light-on-soft: rgba(255, 210, 138, 0.15);
+  --climate-heat: #fb923c;
+  --climate-cool: #38bdf8;
+
+  /* ── Radii ───────────────────────────────────────────────────────────────
+     Generous and consistent: this is most of what makes a panel read as a
+     product rather than a web page. */
+  --r-sm: 0.5rem;
+  --r-md: 0.875rem;
+  --r-lg: 1.25rem;
+  --r-xl: 1.75rem;
+  --r-full: 999rem;
+
+  /* ── Spacing ─────────────────────────────────────────────────────────────
+     4px-based at the 16px root. */
+  --s-1: 0.25rem;
+  --s-2: 0.5rem;
+  --s-3: 0.75rem;
+  --s-4: 1rem;
+  --s-5: 1.5rem;
+  --s-6: 2rem;
+  --s-7: 2.75rem;
+  --s-8: 3.5rem;
+
+  /* ── Touch ───────────────────────────────────────────────────────────────
+     Nothing interactive is ever smaller than --touch-min. A fingertip is
+     ~9mm; at 16px root on a 10.1" panel, 3rem ≈ 48px ≈ 10mm. */
+  --touch-min: 3rem;
+  --touch: 4rem;
+  --touch-lg: 5.5rem;
+
+  /* ── Motion ──────────────────────────────────────────────────────────────
+     --motion is scaled at runtime from ui.motion in dashboard.yaml (set it
+     to 0 to disable animation entirely on a struggling device).
+
+     Only transform and opacity are ever transitioned. See docs/ROOMOS.md §2. */
+  --motion: 1;
+  --t-instant: calc(90ms * var(--motion));
+  --t-fast: calc(160ms * var(--motion));
+  --t-base: calc(240ms * var(--motion));
+  --t-slow: calc(400ms * var(--motion));
+
+  /* Standard easing: fast out, settle in. Feels mechanical and immediate,
+     which is right for a control surface. */
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  /* Overshoot for elements arriving on screen. Used sparingly. */
+  --ease-out-back: cubic-bezier(0.34, 1.3, 0.64, 1);
+
+  /* ── Layout ──────────────────────────────────────────────────────────────*/
+  --rail-w: 5.25rem;
+  --bar-h: 4.75rem;
+
+  /* ── Blur ────────────────────────────────────────────────────────────────
+     Off by default. `html[data-blur="on"]` swaps this to a real value when
+     ui.blur is enabled in dashboard.yaml. Kept as a token so no component
+     has to know whether blur is on. */
+  --blur: none;
+  --scrim: rgba(6, 7, 10, 0.82);
+}
+
+html[data-blur='on'] {
+  --blur: blur(20px) saturate(1.4);
+  --scrim: rgba(6, 7, 10, 0.55);
+}
+
+/* Respect the OS-level setting too, on top of our own ui.motion token. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion: 0.001;
+  }
+}
