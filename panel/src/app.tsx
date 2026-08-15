@@ -7,6 +7,7 @@ import { Media } from '~/screens/Media.tsx';
 import { Photos } from '~/screens/Photos.tsx';
 import { Settings } from '~/screens/Settings.tsx';
 import { ConnectionHelp } from '~/screens/ConnectionHelp.tsx';
+import { EntitySheet } from '~/components/EntitySheet.tsx';
 import { ui } from '~/config/index.ts';
 import { connectionProblem, ready, route } from '~/state/ui.ts';
 
@@ -37,6 +38,10 @@ export function App() {
           <Screen />
         </main>
       </div>
+      {/* One sheet for the whole app, driven by the `openEntity` signal.
+          Mounted here so any screen can open one by writing a value, and so
+          only one can ever be open. */}
+      <EntitySheet />
       <Toast />
     </ErrorBoundary>
   );

@@ -759,3 +759,53 @@ describe('entity naming', () => {
     panel.close();
   });
 });
+
+describe('artwork proxy', () => {
+  /**
+   * This route turns a caller-supplied string into an outbound request, which
+   * is the classic shape of a server-side request forgery hole. These assert
+   * the guard rejects every way of naming a host other than Home Assistant.
+   */
+  const reject = [
+    ['absolute http URL', 'http://evil.example/x.png'],
+    ['absolute https URL', 'https://evil.example/x.png'],
+    ['protocol-relative', '//evil.example/x.png'],
+    ['file scheme', 'file:///etc/passwd'],
+    ['non-/api path', '/local/secret.png'],
+    ['root path', '/'],
+    ['traversal', '/api/../../etc/passwd'],
+    ['encoded traversal', '%2Fapi%2F..%2F..%2Fetc%2Fpasswd'],
+    ['backslash host', '/\\evil.example/x.png'],
+    ['encoded absolute URL', 'http%3A%2F%2Fevil.example%2Fx.png'],
+    ['null byte', '/api/x%00.png'],
+  ];
+
+  for (const [label, path] of reject) {
+    test(`refuses ${label}`, async () => {
+      const res = await fetch(
+        `http://127.0.0.1:${PANEL_PORT}/img/ha?p=${encodeURIComponent(path)}&t=${TOKEN}`,
+      );
+      assert.equal(res.status, 400, `${label} should be refused`);
+    });
+  }
+
+  test('requires the panel token', async () => {
+    const res = await fetch(
+      `http://127.0.0.1:${PANEL_PORT}/img/ha?p=${encodeURIComponent('/api/image/x.png')}`,
+    );
+    assert.equal(res.status, 401);
+  });
+
+  test('accepts a well-formed HA path', async () => {
+    // The mock HA is a WebSocket server with no HTTP image route, so this
+    // gets past validation and fails upstream — 502, not 400. That is the
+    // distinction being asserted: the guard let it through.
+    const res = await fetch(
+      `http://127.0.0.1:${PANEL_PORT}/img/ha?p=${encodeURIComponent(
+        '/api/media_player_proxy/media_player.speaker?token=abc',
+      )}&t=${TOKEN}`,
+    );
+    assert.notEqual(res.status, 400, 'a legitimate HA path must not be rejected by the guard');
+    assert.ok(res.status === 502 || res.status === 404 || res.status === 415);
+  });
+});

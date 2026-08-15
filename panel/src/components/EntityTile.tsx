@@ -1,38 +1,65 @@
 import { Icon } from '~/components/Icon.tsx';
 import { Pressable } from '~/components/Pressable.tsx';
+import { openEntity, markActivity } from '~/state/ui.ts';
+import { canToggle, toggle, activate } from '~/state/actions.ts';
+import { domainOf } from '~/lib/format.ts';
 import type { DescribedEntity } from '~/state/selectors.ts';
 
 /**
  * The standard entity tile.
  *
- * Used for favourites and inside rooms. Two sizes, one component, because
- * consistency between the Home screen and a room is most of what makes the
- * panel feel like one product.
+ * ## Interaction model
  *
- * The `tone` attribute drives the colour of the icon well and the active
- * fill, entirely in CSS — so a light going on is a class change on one
- * element, not a re-render.
+ * **Tap does the obvious thing. Long-press opens the detail.**
+ *
+ *   light, switch, fan     tap toggles
+ *   scene, script, button  tap activates
+ *   everything else        tap opens the sheet
+ *
+ * A wall panel's most common interaction by an order of magnitude is "turn
+ * that light off". Making that a single tap, with the detail sheet a
+ * long-press away, matches what Apple Home and Control4 do and what people
+ * already expect.
+ *
+ * The risk with long-press is discoverability, so tiles that hide a sheet
+ * behind it show a small dot affordance. Domains with no sensible tap action
+ * open the sheet on tap instead, so nothing is ever unreachable by tapping.
  */
 
 export interface EntityTileProps {
   item: DescribedEntity;
   size?: 'md' | 'lg';
-  onPress?: () => void;
-  onLongPress?: () => void;
 }
 
-export function EntityTile({ item, size = 'md', onPress, onLongPress }: EntityTileProps) {
+export function EntityTile({ item, size = 'md' }: EntityTileProps) {
+  const domain = domainOf(item.id);
+  const isActivatable = ACTIVATABLE.has(domain);
+  const tapToggles = canToggle(item.id) && !item.unavailable;
+  const tapActivates = isActivatable && !item.unavailable;
+  // Everything else opens the sheet on tap, so no tile is a dead end.
+  const tapOpens = !tapToggles && !tapActivates;
+
+  const openSheet = () => {
+    openEntity.value = item.id;
+    markActivity();
+  };
+
+  const onPress = () => {
+    if (tapToggles) toggle(item.id);
+    else if (tapActivates) activate(item.id);
+    else openSheet();
+  };
+
   return (
     <Pressable
       as="div"
       class={`tile p-lg tile-${size}`}
       onPress={onPress}
-      onLongPress={onLongPress}
+      onLongPress={tapOpens ? undefined : openSheet}
       ariaLabel={`${item.name}, ${item.value}`}
       ariaPressed={item.active}
+      disabled={item.unavailable}
     >
-      {/* data-* rather than conditional classNames: the CSS reads better and
-          a state change touches one attribute. */}
       <div
         class="tile-icon"
         data-tone={item.tone}
@@ -48,6 +75,16 @@ export function EntityTile({ item, size = 'md', onPress, onLongPress }: EntityTi
           {item.value}
         </div>
       </div>
+
+      {/* Affordance for the sheet hidden behind a long-press. Deliberately
+          faint — it is a hint, not a button. */}
+      {!tapOpens && !item.unavailable ? (
+        <span class="tile-more" aria-hidden="true">
+          <Icon name="dots" size="1rem" weight={2} />
+        </span>
+      ) : null}
     </Pressable>
   );
 }
+
+const ACTIVATABLE = new Set(['scene', 'script', 'button', 'input_button']);

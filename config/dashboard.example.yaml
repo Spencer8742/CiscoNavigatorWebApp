@@ -249,3 +249,17 @@ media:
 
   # Volume step for the +/- buttons, as a fraction (0.05 = 5%).
   volumeStep: 0.05
+
+# ─── How the controls behave ───────────────────────────────────────────────
+#
+#  Tap a tile           does the obvious thing:
+#                         lights, switches, fans  → toggle
+#                         scenes, scripts         → activate
+#                         everything else         → open the detail sheet
+#  Long-press a tile    opens the detail sheet (brightness, colour, position,
+#                       setpoints, lock/unlock). Tiles with a sheet behind a
+#                       long-press show a small "..." hint.
+#
+#  Which controls appear is decided by what the entity reports, not by this
+#  file: a non-dimmable light shows no brightness slider, a blind with no
+#  position feedback shows only open/stop/close.

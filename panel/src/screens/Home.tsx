@@ -6,6 +6,8 @@ import { Icon } from '~/components/Icon.tsx';
 import { EntityTile } from '~/components/EntityTile.tsx';
 import { favorites, houseAlerts, sceneButtons, statusItems, weather } from '~/state/selectors.ts';
 import { openEntity, markActivity } from '~/state/ui.ts';
+import { Pressable } from '~/components/Pressable.tsx';
+import { activate } from '~/state/actions.ts';
 
 /**
  * Home — the panel's resting face.
@@ -97,15 +99,7 @@ export function Home() {
             </div>
             <div class="tile-grid">
               {favs.map((item) => (
-                <EntityTile
-                  key={item.id}
-                  item={item}
-                  size="lg"
-                  onPress={() => {
-                    openEntity.value = item.id;
-                    markActivity();
-                  }}
-                />
+                <EntityTile key={item.id} item={item} size="lg" />
               ))}
             </div>
           </>
@@ -118,15 +112,20 @@ export function Home() {
             </div>
             <div class="scene-row">
               {scenes.map((item) => (
-                <button
-                  type="button"
-                  class="pressable scene-chip"
+                <Pressable
                   key={item.id}
-                  aria-label={item.name}
+                  class="scene-chip"
+                  onPress={() => activate(item.id)}
+                  onLongPress={() => {
+                    openEntity.value = item.id;
+                    markActivity();
+                  }}
+                  ariaLabel={item.name}
+                  disabled={item.unavailable}
                 >
                   <Icon name={item.icon} size="1.25rem" weight={1.7} />
                   <span class="truncate">{item.name}</span>
-                </button>
+                </Pressable>
               ))}
             </div>
           </>

@@ -148,8 +148,8 @@ fully documented reference.
 | 1 | Shell: build system, backend, design system, navigation, diagnostics | ✅ |
 | 2 | Home Assistant connectivity | ✅ |
 | 3 | Real-time entity state | ✅ |
-| 4 | Entity controls (light, climate, cover, …) | ⬜ |
-| 5 | Media player / Now Playing | ⬜ |
+| 4 | Entity controls (light, climate, cover, …) | ✅ |
+| 5 | Media player / Now Playing | ✅ |
 | 6 | Immich gallery | ⬜ |
 | 7 | Photo slideshow | ⬜ |
 | 8 | Idle and screensaver | ⬜ |
@@ -165,8 +165,8 @@ Enforced, not aspirational.
 
 | Metric | Budget | Now |
 |---|---|---|
-| Shell JS (gzip) | < 50 KB | **19.5 KB** |
-| CSS (gzip) | < 12 KB | **3.5 KB** |
+| Shell JS (gzip) | < 50 KB | **25.7 KB** |
+| CSS (gzip) | < 12 KB | **4.9 KB** |
 | HA state change → DOM update | — | **5–34 ms** |
 | Cold load → interactive | < 1.5 s | — |
 | Touch → visual feedback | < 100 ms | one frame |
@@ -183,6 +183,7 @@ config/     dashboard.yaml — rooms, favourites, scenes, albums
 shared/     types and helpers used verbatim by both ends
 panel/      frontend (Preact + signals, Vite, target chrome102)
   domains/    ← add a Home Assistant domain here, nowhere else
+              registry.tsx = how it looks · controls.tsx = how it works
 server/     backend  (Node 22, deps: ws + yaml)
   ha/         WebSocket client · state store · service allow-list
   test/       integration tests + mock Home Assistant
