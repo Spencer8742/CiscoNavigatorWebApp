@@ -1,5 +1,6 @@
 import { signal, computed } from '@preact/signals';
 import type { BackendHealth, LinkState } from '@shared/protocol.ts';
+import type { ConnectionProblem } from '~/net/diagnose.ts';
 
 /**
  * UI-level state: which screen is showing, how healthy the link is, whether
@@ -63,6 +64,17 @@ export const linkStatus = computed<LinkState>(() => {
  * dashboard.
  */
 export const ready = signal(false);
+
+/**
+ * Why the panel cannot connect, once it has failed often enough that this is
+ * clearly not a transient blip.
+ *
+ * Set only while `ready` is false — i.e. we have never successfully
+ * connected, so there is nothing on screen but a spinner. Once the panel has
+ * data, a dropped connection is handled by the status dot and cached state
+ * instead; we do not replace a working dashboard with an error page.
+ */
+export const connectionProblem = signal<ConnectionProblem | null>(null);
 
 /* ── Idle ────────────────────────────────────────────────────────────────
    The panel is permanently mounted and permanently on. Idle handling is not a

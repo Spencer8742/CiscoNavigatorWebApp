@@ -193,6 +193,13 @@ panel down.
 http://YOUR-UNRAID-IP:8099/?t=YOUR_PANEL_TOKEN
 ```
 
+> **The `?t=` part is not optional.** Without it the panel cannot authenticate
+> and the server logs `Rejected unauthenticated WebSocket upgrade`. You only
+> need the full URL once per device — the panel caches the token and strips it
+> from the address bar. If you do forget it, the panel says so on screen and
+> shows you the address to use, so this is self-correcting rather than a
+> silent hang.
+
 ### Updating
 
 Push to `main` → GitHub Actions builds and publishes → Unraid's *Docker* tab
@@ -460,7 +467,10 @@ worth taking literally:
 | Symptom | Cause | Fix |
 |---|---|---|
 | Blank screen, no spinner | Panel build missing | `npm run build`, or rebuild the image |
-| Spinner forever | WebSocket blocked or rejected | Check reverse proxy `Upgrade` headers; check `PANEL_TOKEN` matches the `?t=` in the provisioned URL |
+| Spinner forever | Should not happen — after two failed attempts the panel diagnoses itself and puts the cause and the fix on screen | If it really does spin, the page itself failed to load: check the container is running |
+| "No panel token" on screen | The URL was opened without `?t=` | Open `http://host:8099/?t=YOUR_PANEL_TOKEN` once; the panel caches it |
+| "This panel token is not accepted" | `PANEL_TOKEN` was changed on the server | Re-open with the current token |
+| "Live connection blocked" | HTTP works, WebSocket does not | A reverse proxy is not forwarding `Upgrade`/`Connection` — see [§2](#2-tls) |
 | Connection dot amber, never green | Backend cannot reach Home Assistant | `docker compose logs`; check `HA_URL` and `HA_TOKEN` |
 | Dot green but no entities | Entities not in `dashboard.yaml` | Only configured entities are sent — that is the allow-list working |
 | Panel re-downloads everything daily | `RoomCleanup` still on | `xConfiguration RoomCleanup AutoRun ContentType WebData: Off` |

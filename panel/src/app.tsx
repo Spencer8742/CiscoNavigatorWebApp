@@ -6,8 +6,9 @@ import { Rooms } from '~/screens/Rooms.tsx';
 import { Media } from '~/screens/Media.tsx';
 import { Photos } from '~/screens/Photos.tsx';
 import { Settings } from '~/screens/Settings.tsx';
+import { ConnectionHelp } from '~/screens/ConnectionHelp.tsx';
 import { ui } from '~/config/index.ts';
-import { ready, route } from '~/state/ui.ts';
+import { connectionProblem, ready, route } from '~/state/ui.ts';
 
 /**
  * The shell.
@@ -42,10 +43,15 @@ export function App() {
 }
 
 function Screen() {
-  // Hold the boot spinner until the backend's `hello` has landed. Flashing an
-  // empty dashboard for a few hundred milliseconds and then filling it in
-  // looks broken; a brief spinner does not.
   if (!ready.value) {
+    // Once we know why we cannot connect, say so. A spinner that never
+    // resolves is indistinguishable from a crash, and this device has no
+    // address bar to investigate with.
+    if (connectionProblem.value) return <ConnectionHelp />;
+
+    // Hold the boot spinner until the backend's `hello` has landed. Flashing
+    // an empty dashboard for a few hundred milliseconds and then filling it
+    // in looks broken; a brief spinner does not.
     return (
       <div id="boot">
         <span />
