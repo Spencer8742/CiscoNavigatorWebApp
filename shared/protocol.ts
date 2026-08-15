@@ -64,6 +64,15 @@ export type LinkState = 'connected' | 'connecting' | 'disconnected';
 export interface BackendHealth {
   ha: LinkState;
   immich: LinkState;
+  /**
+   * Why Immich is unhappy, if it is — already human-readable, and including
+   * whatever Immich itself said. Null when the last request succeeded.
+   *
+   * This exists because an empty slideshow and an unreachable Immich look
+   * identical on screen, and the panel is on a wall where nobody will think
+   * to go and read the container logs.
+   */
+  immichError: string | null;
   /** ISO timestamp of the backend's last successful HA message. */
   haLastMessage: string | null;
   /** Backend uptime in seconds — useful for spotting container restarts. */

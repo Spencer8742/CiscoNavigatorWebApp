@@ -24,6 +24,18 @@ export class MockImmich {
   /** Set to reject with this status instead of serving. */
   failWith = 0;
 
+  /**
+   * Emulate Immich ≤ 1.132, which had `isArchived` rather than `visibility`.
+   *
+   * Immich validates request bodies with `forbidNonWhitelisted`, so an
+   * unknown property is a 400 for the whole query — not an ignored filter.
+   * That is why a perfectly good config can return zero photos.
+   */
+  legacyArchiveField = false;
+
+  /** The key this server accepts. Change it to simulate a wrong/revoked key. */
+  expectedKey = 'mock-immich-key';
+
   assets = [];
 
   constructor(port) {
@@ -64,16 +76,22 @@ export class MockImmich {
       return;
     }
 
-    // Immich authenticates with x-api-key, not a bearer token.
-    if (req.headers['x-api-key'] !== 'mock-immich-key') {
-      res.writeHead(401, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ error: 'unauthorized' }));
-      return;
-    }
-
+    // `/api/server/ping` is UNAUTHENTICATED in real Immich (its OpenAPI
+    // description gives it no security requirement), so it answers happily
+    // with a wrong API key. Anything that treats a successful ping as proof
+    // of working credentials is fooled — which is exactly what happened.
     if (url.pathname === '/api/server/ping') {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ res: 'pong' }));
+      return;
+    }
+
+    // Immich authenticates with x-api-key, not a bearer token.
+    if (req.headers['x-api-key'] !== this.expectedKey) {
+      res.writeHead(401, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({ statusCode: 401, message: 'Invalid API key', error: 'Unauthorized' }),
+      );
       return;
     }
 
@@ -98,7 +116,25 @@ export class MockImmich {
         }
         this.searches.push({ path: url.pathname, dto });
 
+        // Reject unknown properties the way Immich's ValidationPipe does.
+        const rejected = this.legacyArchiveField ? 'visibility' : 'isArchived';
+        if (rejected in dto) {
+          res.writeHead(400, { 'content-type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              statusCode: 400,
+              message: [`property ${rejected} should not exist`],
+              error: 'Bad Request',
+            }),
+          );
+          return;
+        }
+
         let pool = this.assets;
+        if (this.legacyArchiveField && dto.isArchived === false) {
+          pool = pool.filter((a) => !a.isArchived);
+        }
+        if (dto.visibility === 'timeline') pool = pool.filter((a) => !a.isArchived);
         if (dto.type === 'IMAGE') pool = pool.filter((a) => a.type === 'IMAGE');
         if (dto.isFavorite) pool = pool.filter((_, i) => i % 3 === 0);
         if (Array.isArray(dto.albumIds) && dto.albumIds.length) pool = pool.slice(0, 12);

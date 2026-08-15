@@ -59,6 +59,12 @@ export const linkStatus = computed<LinkState>(() => {
 });
 
 /**
+ * Why Immich is failing, if it is. Surfaced on the Photos screen so an empty
+ * grid explains itself instead of sending the user to the container logs.
+ */
+export const immichError = computed<string | null>(() => health.value?.immichError ?? null);
+
+/**
  * True once we have received a `hello` and have something real to draw.
  * Until then the boot spinner stays up rather than flashing an empty
  * dashboard.
