@@ -41,6 +41,7 @@ const DEFAULTS: DashboardConfig = {
     sources: [],
     imagesOnly: true,
     pairPortraits: true,
+    homeCardSeconds: 15,
   },
   rooms: [],
   home: { favorites: [], scenes: [], status: [], alerts: [] },

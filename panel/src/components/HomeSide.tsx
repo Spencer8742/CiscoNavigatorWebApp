@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { Icon } from '~/components/Icon.tsx';
 import { Pressable } from '~/components/Pressable.tsx';
 import { entity } from '~/state/entities.ts';
@@ -107,21 +107,100 @@ function NowPlayingCard() {
   );
 }
 
-/** A photo from the rotation. Tapping it starts the slideshow. */
+/**
+ * How many photos to pull per request.
+ *
+ * Not one at a time. Each request consumes from the backend's shared
+ * playlist, so asking every 15 seconds would churn it — and make the
+ * screensaver refill far more often than it needs to. A dozen at a time turns
+ * that into one request every few minutes.
+ */
+const PEEK_BATCH = 12;
+/** The floor for a non-zero interval. Below this it is a flicker, not a card. */
+const MIN_ROTATE_SECONDS = 5;
+
+/**
+ * A photo from the rotation, changed on a timer. Tapping it starts the
+ * slideshow.
+ *
+ * Two stacked layers crossfaded on opacity, the same approach as the
+ * screensaver and for the same reason: only `opacity` animates, so the
+ * transition is a compositor operation rather than a repaint
+ * (docs/ROOMOS.md §2). The incoming photo is revealed only after
+ * `img.decode()` resolves, so a fade never starts on a half-drawn frame.
+ */
 function PhotoCard() {
-  const [photo, setPhoto] = useState<PhotoRef | null>(null);
+  const cfg = immichConfig.value;
+  const rotateMs =
+    cfg.homeCardSeconds > 0 ? Math.max(MIN_ROTATE_SECONDS, cfg.homeCardSeconds) * 1000 : 0;
+
+  const [layers, setLayers] = useState<(PhotoRef | null)[]>([null, null]);
+  const [front, setFront] = useState(0);
+  // The timer callback needs the current front index without re-running the
+  // effect on every change, which would restart the rotation each time.
+  const frontRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
-    // One photo, not a batch: this is a peek, and the slideshow keeps its own
-    // queue. Asking for more would pull images nobody is going to look at.
-    void fetchGrid(1).then((batch) => {
-      if (!cancelled) setPhoto(batch[0] ?? null);
-    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let queue: PhotoRef[] = [];
+    /** Decoded bitmaps we are holding. Never more than the two on screen. */
+    const held: HTMLImageElement[] = [];
+
+    const drop = (img: HTMLImageElement | undefined): void => {
+      if (!img) return;
+      // Clearing src as well as dropping the reference — without it the
+      // browser's image cache can keep the decoded frame alive.
+      img.src = '';
+      img.removeAttribute('src');
+    };
+
+    const show = async (): Promise<void> => {
+      if (queue.length === 0) queue = await fetchGrid(PEEK_BATCH);
+      if (cancelled) return;
+
+      const ref = queue.shift();
+      if (!ref) return; // Immich has nothing; the next tick tries again.
+
+      const img = new Image();
+      img.decoding = 'async';
+      img.src = photoUrl(ref.id, 'grid');
+      try {
+        await img.decode();
+      } catch {
+        return; // One unreadable photo skips, it does not stop the rotation.
+      }
+      if (cancelled) {
+        drop(img);
+        return;
+      }
+
+      held.push(img);
+      while (held.length > 2) drop(held.shift());
+
+      const back = frontRef.current === 0 ? 1 : 0;
+      setLayers((prev) => (back === 0 ? [ref, prev[1] ?? null] : [prev[0] ?? null, ref]));
+      frontRef.current = back;
+      setFront(back);
+    };
+
+    const tick = async (): Promise<void> => {
+      await show();
+      if (cancelled || rotateMs === 0) return;
+      timer = setTimeout(() => void tick(), rotateMs);
+    };
+    void tick();
+
     return () => {
       cancelled = true;
+      clearTimeout(timer);
+      // Leaving Home hands the memory back. The dashboard and the slideshow
+      // both want it more than a card nobody is looking at.
+      while (held.length) drop(held.shift());
     };
-  }, []);
+  }, [rotateMs, cfg.sources, cfg.enabled]);
+
+  const current = layers[front] ?? null;
 
   return (
     <section class="side-card" aria-label="Photos">
@@ -137,13 +216,23 @@ function PhotoCard() {
           screensaverActive.value = true;
         }}
         ariaLabel="Start slideshow"
-        // The average colour holds the space before the image decodes, so the
-        // card never appears as an empty hole on a cold start.
-        style={{ background: thumbHashCss(photo?.th) }}
+        // The average colour holds the space before the first image decodes,
+        // so the card never appears as an empty hole on a cold start.
+        style={{ background: thumbHashCss(current?.th) }}
       >
-        {photo ? (
-          <img src={photoUrl(photo.id, 'grid')} alt="" decoding="async" loading="lazy" />
-        ) : null}
+        {[0, 1].map((i) => {
+          const ref = layers[i];
+          return ref ? (
+            <img
+              key={i}
+              class="peek-layer"
+              data-front={i === front ? '' : undefined}
+              src={photoUrl(ref.id, 'grid')}
+              alt=""
+              decoding="async"
+            />
+          ) : null;
+        })}
         <div class="photo-peek-label">
           <Icon name="play" size="1rem" />
           <span>Slideshow</span>
