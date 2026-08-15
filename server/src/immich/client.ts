@@ -34,10 +34,34 @@ interface ImmichAsset {
   exifInfo?: {
     exifImageWidth?: number | null;
     exifImageHeight?: number | null;
+    /** Raw EXIF orientation, as a string. See `displayDimensions`. */
+    orientation?: string | null;
     city?: string | null;
     country?: string | null;
     dateTimeOriginal?: string | null;
   } | null;
+}
+
+/**
+ * The dimensions the photo is actually *displayed* at.
+ *
+ * `exifImageWidth`/`exifImageHeight` are the dimensions as stored, before
+ * EXIF orientation is applied. A phone-shot portrait typically reports
+ * 4032×3024 with `orientation: "6"` — landscape numbers for a portrait
+ * picture. Immich bakes the rotation into the thumbnails it generates, so the
+ * image we receive is upright while its metadata still describes the sensor
+ * readout.
+ *
+ * Anything reasoning about shape therefore has to swap them, exactly as
+ * Immich's own web client does (`isFlipped` in web/src/lib/utils/asset-utils.ts,
+ * treating 5/6/90 and 7/8/-90 as sideways).
+ */
+function displayDimensions(exif: ImmichAsset['exifInfo']): { w: number; h: number } {
+  const w = exif?.exifImageWidth ?? 0;
+  const h = exif?.exifImageHeight ?? 0;
+  const orientation = Number(exif?.orientation);
+  const sideways = [5, 6, 90, 7, 8, -90].includes(orientation);
+  return sideways ? { w: h, h: w } : { w, h };
 }
 
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -330,8 +354,7 @@ function toPhotoRefs(assets: ImmichAsset[]): PhotoRef[] {
     if (!asset?.id) continue;
 
     const exif = asset.exifInfo ?? undefined;
-    const w = exif?.exifImageWidth ?? 0;
-    const h = exif?.exifImageHeight ?? 0;
+    const { w, h } = displayDimensions(exif);
 
     const ref: PhotoRef = { id: asset.id, w: w || 0, h: h || 0 };
 

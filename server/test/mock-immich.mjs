@@ -52,14 +52,20 @@ export class MockImmich {
   seed(count) {
     for (let i = 0; i < count; i += 1) {
       const portrait = i % 4 === 0;
+      // Every other portrait is a phone-style rotated shot: LANDSCAPE stored
+      // dimensions plus orientation 6. This is what most portrait photos in a
+      // real library actually look like, and reading the raw numbers as-is
+      // makes them all appear landscape.
+      const rotated = portrait && i % 8 === 0;
       this.assets.push({
         id: uuidFor(i),
         type: i % 11 === 0 ? 'VIDEO' : 'IMAGE',
         thumbhash: makeThumbhash(i),
         localDateTime: new Date(Date.UTC(2020 + (i % 5), i % 12, 1 + (i % 27))).toISOString(),
         exifInfo: {
-          exifImageWidth: portrait ? 3000 : 4000,
-          exifImageHeight: portrait ? 4000 : 3000,
+          exifImageWidth: portrait && !rotated ? 3000 : 4000,
+          exifImageHeight: portrait && !rotated ? 4000 : 3000,
+          ...(rotated ? { orientation: '6' } : {}),
           city: i % 3 === 0 ? 'Edinburgh' : null,
           country: i % 3 === 0 ? 'Scotland' : null,
           dateTimeOriginal: new Date(Date.UTC(2021, i % 12, 1 + (i % 27))).toISOString(),

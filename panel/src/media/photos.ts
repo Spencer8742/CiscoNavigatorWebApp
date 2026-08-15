@@ -84,7 +84,10 @@ export function photoUrl(id: string, size: 'grid' | 'full'): string {
  */
 async function load(ref: PhotoRef): Promise<HTMLImageElement | null> {
   const hit = cache.get(ref.id);
-  if (hit) return hit;
+  if (hit) {
+    backfillSize(ref, hit);
+    return hit;
+  }
 
   const img = new Image();
   img.decoding = 'async';
@@ -97,6 +100,7 @@ async function load(ref: PhotoRef): Promise<HTMLImageElement | null> {
     return null;
   }
 
+  backfillSize(ref, img);
   cache.set(ref.id, img);
   return img;
 }
@@ -137,13 +141,32 @@ function preloadAhead(): void {
 /**
  * Whether a photo is tall enough to be worth pairing.
  *
- * Not simply `h > w`. A 4:3 held upright is 0.75 and pairs well; a 1:1 is
- * borderline and looks like a mistake next to a tall one. The threshold sits
- * between them. Unknown dimensions (Immich returning no EXIF) count as
- * landscape, because guessing wrong here means a cropped or gappy collage.
+ * Anything at least as tall as it is wide qualifies, squares included. Each
+ * half of a 16:9 panel is about 0.8 wide-to-tall, so a square loses roughly a
+ * fifth of its width to the crop — worth it, because the alternative is a
+ * third of the screen showing nothing.
+ *
+ * Dimensions come from the backend already corrected for EXIF orientation;
+ * without that a phone-shot portrait reports landscape numbers and never
+ * pairs. See `displayDimensions` in server/src/immich/client.ts.
  */
 function isPortrait(ref: PhotoRef): boolean {
-  return ref.w > 0 && ref.h > 0 && ref.w / ref.h <= 0.85;
+  return ref.w > 0 && ref.h > 0 && ref.w / ref.h <= 1;
+}
+
+/**
+ * Fill in dimensions Immich did not supply, from the decoded image.
+ *
+ * Some assets genuinely have no EXIF size — screenshots and a few formats.
+ * Those would never pair, since shape is unknowable from metadata alone. The
+ * decoded bitmap knows, and it is authoritative: it is the rotated render
+ * that will actually be displayed.
+ */
+function backfillSize(ref: PhotoRef, img: HTMLImageElement): void {
+  if (ref.w > 0 && ref.h > 0) return;
+  if (!img.naturalWidth || !img.naturalHeight) return;
+  ref.w = img.naturalWidth;
+  ref.h = img.naturalHeight;
 }
 
 /** Whether pairing is on. Read at advance() time so config edits take effect. */

@@ -146,7 +146,10 @@ media: { players: [] }
   );
 
   immich = new MockImmich(IMMICH_PORT);
-  immich.seed(120);
+  // Comfortably more than every test in this file consumes. The playlist
+  // deliberately allows repeats once a library is exhausted, so a fixture
+  // that is merely "big enough" makes later tests fail for the wrong reason.
+  immich.seed(400);
   await immich.start();
 
   backend = spawn(process.execPath, [SERVER], {
@@ -216,6 +219,56 @@ describe('playlist', () => {
       assert.ok(!(key in photo), `${key} must not reach the panel`);
     }
     panel.close();
+  });
+
+  test('reports the dimensions a rotated photo is DISPLAYED at', async () => {
+    /*
+     * Immich stores `exifImageWidth`/`exifImageHeight` as the sensor read
+     * them, before EXIF orientation is applied, but bakes the rotation into
+     * the thumbnails it serves. So a phone-shot portrait arrives as an
+     * upright picture carrying landscape numbers.
+     *
+     * Passing those numbers through unchanged made every such photo look
+     * landscape to the panel, which is why portrait pairing appeared to do
+     * nothing on a real library. Immich's own web client swaps them
+     * (`isFlipped`); so must we.
+     */
+    const panel = new PhotoPanel();
+    await panel.connect();
+    const batch = await panel.request(40);
+    panel.close();
+
+    const rotated = immich.assets.filter((a) => a.exifInfo?.orientation === '6');
+    assert.ok(rotated.length > 0, 'precondition: the library contains rotated photos');
+
+    let checked = 0;
+    for (const asset of rotated) {
+      const photo = batch.find((p) => p.id === asset.id);
+      if (!photo) continue;
+      checked += 1;
+      assert.equal(photo.w, asset.exifInfo.exifImageHeight, 'width must come from stored height');
+      assert.equal(photo.h, asset.exifInfo.exifImageWidth, 'height must come from stored width');
+      assert.ok(photo.h > photo.w, 'a rotated phone photo is portrait once displayed');
+    }
+    assert.ok(checked > 0, 'the batch must contain at least one rotated photo to check');
+  });
+
+  test('leaves unrotated photos alone', async () => {
+    const panel = new PhotoPanel();
+    await panel.connect();
+    const batch = await panel.request(40);
+    panel.close();
+
+    const upright = immich.assets.filter((a) => !a.exifInfo?.orientation);
+    let checked = 0;
+    for (const asset of upright) {
+      const photo = batch.find((p) => p.id === asset.id);
+      if (!photo) continue;
+      checked += 1;
+      assert.equal(photo.w, asset.exifInfo.exifImageWidth);
+      assert.equal(photo.h, asset.exifInfo.exifImageHeight);
+    }
+    assert.ok(checked > 0, 'the batch must contain at least one upright photo to check');
   });
 
   test('does not repeat photos within a batch', async () => {
