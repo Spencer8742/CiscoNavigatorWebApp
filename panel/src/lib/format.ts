@@ -91,6 +91,21 @@ export function formatNumber(value: number, locale: string, decimals = 0): strin
   }).format(value);
 }
 
+/**
+ * Up to `maxDecimals`, with trailing zeros dropped.
+ *
+ * This is the right default for readouts: 20.4 stays "20.4" but a thermostat
+ * target of 22 reads "22", not "22.0". Doing it through Intl rather than
+ * string-trimming keeps it correct in locales where the decimal separator is
+ * a comma.
+ */
+export function formatDecimal(value: number, locale: string, maxDecimals = 1): string {
+  return nf(locale, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: maxDecimals,
+  }).format(value);
+}
+
 /** Seconds → "3:07" / "1:02:07". Used for media position. */
 export function formatDuration(totalSeconds: number): string {
   const s = Math.max(0, Math.floor(totalSeconds));

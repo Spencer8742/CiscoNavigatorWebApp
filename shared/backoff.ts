@@ -1,6 +1,9 @@
 /**
  * Exponential backoff with full jitter.
  *
+ * Used by both ends: the panel reconnecting to the backend, and the backend
+ * reconnecting to Home Assistant.
+ *
  * Jitter is not cosmetic here. After a power cut the Navigator, the backend,
  * Home Assistant and Immich all come back within a few seconds of each other.
  * Without jitter every client retries in lockstep, hammering a service that is

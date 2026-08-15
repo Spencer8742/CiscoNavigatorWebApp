@@ -18,7 +18,8 @@
     "build": "npm run build --workspace panel && npm run build --workspace server",
     "start": "npm run start --workspace server",
     "typecheck": "npm run typecheck --workspace panel && npm run typecheck --workspace server",
-    "clean": "rm -rf panel/dist server/dist node_modules/.vite"
+    "clean": "rm -rf panel/dist server/dist node_modules/.vite",
+    "test": "npm run build --workspace server && node --test 'server/test/*.test.mjs'"
   },
   "devDependencies": {
     "typescript": "^5.7.2"

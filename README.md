@@ -67,7 +67,13 @@ Persistent Web App mode. Step by step, including TLS and on-device DevTools:
 ```bash
 npm install
 npm run dev     # panel :5173, backend :8099
+npm test        # integration tests against a mock Home Assistant
 ```
+
+The test suite runs a real backend process against a mock Home Assistant that
+speaks the actual protocol — compressed `a`/`c`/`r` diffs, `+`/`-` nesting,
+float-second timestamps, coalesced multi-message frames — so the parts that
+are easy to get quietly wrong are checked rather than assumed.
 
 Vite proxies `/api`, `/img` and `/ws` to the backend, so the panel is
 same-origin in development exactly as it is on the device — CORS cannot work
@@ -106,8 +112,8 @@ fully documented reference.
 |---|---|---|
 | 0 | Constraints research and architecture | ✅ |
 | 1 | Shell: build system, backend, design system, navigation, diagnostics | ✅ |
-| 2 | Home Assistant connectivity | ⬜ |
-| 3 | Real-time entity state | ⬜ |
+| 2 | Home Assistant connectivity | ✅ |
+| 3 | Real-time entity state | ✅ |
 | 4 | Entity controls (light, climate, cover, …) | ⬜ |
 | 5 | Media player / Now Playing | ⬜ |
 | 6 | Immich gallery | ⬜ |
@@ -125,8 +131,9 @@ Enforced, not aspirational.
 
 | Metric | Budget | Now |
 |---|---|---|
-| Shell JS (gzip) | < 50 KB | **17.2 KB** |
-| CSS (gzip) | < 12 KB | **3.0 KB** |
+| Shell JS (gzip) | < 50 KB | **19.5 KB** |
+| CSS (gzip) | < 12 KB | **3.5 KB** |
+| HA state change → DOM update | — | **5–34 ms** |
 | Cold load → interactive | < 1.5 s | — |
 | Touch → visual feedback | < 100 ms | one frame |
 | Steady-state heap | < 60 MB, flat over 24 h | — |
@@ -137,9 +144,12 @@ Enforced, not aspirational.
 ```
 docs/       ROOMOS.md · ARCHITECTURE.md · DEPLOYMENT.md
 config/     dashboard.yaml — rooms, favourites, scenes, albums
-shared/     types used verbatim by both ends
+shared/     types and helpers used verbatim by both ends
 panel/      frontend (Preact + signals, Vite, target chrome102)
+  domains/    ← add a Home Assistant domain here, nowhere else
 server/     backend  (Node 22, deps: ws + yaml)
+  ha/         WebSocket client · state store · service allow-list
+  test/       integration tests + mock Home Assistant
 ```
 
 ## Licence

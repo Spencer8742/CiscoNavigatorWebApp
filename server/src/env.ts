@@ -30,6 +30,13 @@ export interface Env {
     insecureTls: boolean;
     /** False when URL or token is missing — the HA client stays parked. */
     enabled: boolean;
+    /**
+     * How long the link may be down before entities are shown as unavailable.
+     * Long enough to ride out a Home Assistant restart without the dashboard
+     * visibly flickering; short enough that a real outage stops the panel
+     * claiming states it can no longer verify.
+     */
+    unavailableGraceMs: number;
   };
 
   immich: {
@@ -98,6 +105,7 @@ export function loadEnv(): Env {
       token: haToken,
       insecureTls: bool('HA_INSECURE_TLS'),
       enabled: Boolean(haUrl && haToken),
+      unavailableGraceMs: int('HA_UNAVAILABLE_GRACE_MS', 30_000),
     },
 
     immich: {
