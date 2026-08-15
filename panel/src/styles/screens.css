@@ -914,28 +914,49 @@
   align-items: start;
 }
 
+/* The Home screen does not scroll.
+ *
+ * It is the panel's resting face, glanced at from across a room — a scrollbar
+ * on it means content is hidden behind a gesture nobody will make while
+ * walking past. So the layout fits the viewport instead: the card takes
+ * whatever height is left after the clock, alerts and status strip, and the
+ * image inside it fills that rather than dictating it.
+ *
+ * Everything below is therefore about NOT letting content set the height.
+ * `minmax(0, 1fr)` and `min-height: 0` appear repeatedly because a grid or
+ * flex item's default minimum size is its content, which is exactly the
+ * behaviour that pushes a tall photo past the bottom of the screen.
+ */
 @media (min-width: 60rem) {
-  /* Stretch, not start: the card takes the full height of the content area so
-     the photo and the artwork are worth looking at from across a room, rather
-     than sitting as a small square with emptiness under it. */
+  /* Compound selector so this wins over the generic `.scroll` utility the
+     other screens share — Home is the one screen that must not scroll. */
+  .screen-body.home-body {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
   .home-split {
     align-items: stretch;
-  }
-
-  /* A floor, so the card is a deliberate part of the layout rather than
-     something that shrinks to a thumbnail whenever the left column is short.
-     It still grows past this when there is height to take. */
-  .side-card {
-    min-height: 24rem;
-  }
-}
-
-@media (min-width: 60rem) {
-  .home-split {
-    /* The card is a fixed-ish share rather than 1fr: artwork and a photo
-       both want a stable aspect, and a column that grows with the window
-       makes them jump about as tiles reflow. */
+    flex: 1 1 auto;
+    min-height: 0;
+    grid-template-rows: minmax(0, 1fr);
+    /* The card is a fixed-ish share rather than 1fr: artwork and a photo both
+       want a stable width, and a column that grows with the window makes them
+       jump about as tiles reflow. */
     grid-template-columns: minmax(0, 1fr) minmax(20rem, 26rem);
+  }
+
+  .home-col {
+    min-height: 0;
+    /* If someone configures more favourites than fit, the COLUMN scrolls —
+       not the screen. The card stays put and the layout still reads as one
+       screenful. */
+    overflow-y: auto;
+  }
+
+  .side-card {
+    min-height: 0;
   }
 }
 
@@ -989,11 +1010,12 @@
 .np-art {
   position: relative;
   width: 100%;
-  /* Square is the floor, not the target: given more height it takes it, so a
-     tall panel shows big artwork instead of a small square and a gap. */
+  /* Takes the leftover height and no more. No aspect-ratio: that would derive
+     height from width and push the transport controls off the bottom on a
+     short panel. `object-fit: cover` on the image keeps it looking right at
+     whatever shape this ends up. */
   flex: 1 1 auto;
   min-height: 0;
-  aspect-ratio: 1 / 1;
   border-radius: var(--r-md);
   overflow: hidden;
   background: var(--surface-2);
@@ -1016,6 +1038,7 @@
 }
 
 .np-meta {
+  flex: 0 0 auto;
   min-width: 0;
 }
 
@@ -1033,6 +1056,7 @@
 
 .np-transport {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   gap: var(--s-2);
@@ -1058,8 +1082,11 @@
 .photo-peek {
   position: relative;
   width: 100%;
+  /* Same rule as the artwork: fills what is left, never demands more. A
+     portrait photo and a panorama therefore produce the same layout — the
+     photo is cropped to the card, the card is not resized to the photo. */
   flex: 1 1 auto;
-  min-height: 10rem;
+  min-height: 0;
   border-radius: var(--r-lg);
   overflow: hidden;
   border: 1px solid var(--border-subtle);
