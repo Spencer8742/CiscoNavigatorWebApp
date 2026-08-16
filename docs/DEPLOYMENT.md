@@ -445,9 +445,23 @@ Which to use is a per-display choice. The dashboard where you will actually
 touch things; the panes where you only ever glance at it, since they are sized
 to be read from across a room.
 
-The photo screensaver is suppressed on cast displays either way — it is woken
-by touch, and a Hub that stopped delivering touch could take the screen and
-never give it back. Use the `photos` pane for a slideshow.
+A `pane: dashboard` display falls into the photo screensaver after
+`idle.timeoutSeconds`, the same as the Navigator, and a touch brings the
+dashboard back. Turn it off per-house with `cast.screensaver: false` if you
+would rather a Hub always be a control panel:
+
+```yaml
+cast:
+  screensaver: true    # default
+```
+
+The reason it is a switch at all: the screensaver is dismissed by touch, and
+Google has never promised a Hub will deliver any. On one that stopped, a
+display that had gone to photos would stay there — a slideshow rather than a
+disaster, but not a control panel.
+
+The rotating panes are unaffected either way. They have their own idea of what
+to show, and `photos` is already a slideshow.
 
 ### Casting it
 

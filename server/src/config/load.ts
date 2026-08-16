@@ -75,6 +75,7 @@ export const FALLBACK_CONFIG: DashboardConfig = {
     baseUrl: '',
     displays: [],
     checkSeconds: 300,
+    screensaver: true,
     panes: ['clock', 'media', 'photos'],
     rotateSeconds: 30,
     followMusic: true,
@@ -295,6 +296,7 @@ function validate(raw: unknown): DashboardConfig {
       // Five minutes: a display that drops is back well before anyone has
       // finished wondering why it is showing a photo of a beach.
       checkSeconds: num(castRaw['checkSeconds'], 300, 'cast.checkSeconds', 0, 86_400),
+      screensaver: bool(castRaw['screensaver'], true, 'cast.screensaver'),
       panes: paneList(castRaw['panes']),
       // Below ~8s a rotating display is a distraction rather than something
       // you glance at; 0 pins the first pane and never rotates.

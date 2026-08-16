@@ -181,6 +181,20 @@ export interface CastConfig {
    * visible reload.
    */
   checkSeconds: number;
+  /**
+   * Let a `pane: dashboard` display fall into the photo screensaver when it
+   * has been idle for `idle.timeoutSeconds`, exactly as the Navigator does.
+   *
+   * Only affects displays showing the full dashboard. The rotating panes have
+   * their own idea of what to show, and `photos` is already a slideshow.
+   *
+   * The reason this is a switch rather than simply always on: the screensaver
+   * is dismissed by touch. A Hub delivers touch today, but Google has never
+   * promised to, and on one that stopped, a display that has gone to photos
+   * would stay there. That is a slideshow rather than a disaster — but if a
+   * Hub is your wall control panel, you may want it to always be one.
+   */
+  screensaver: boolean;
   /** Panes to rotate through, in order. An empty list disables cast mode. */
   panes: CastPane[];
   /** Seconds each pane holds before the next one. */

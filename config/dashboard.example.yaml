@@ -338,6 +338,15 @@ cast:
   # short connection per display and never causes a visible reload.
   checkSeconds: 300
 
+  # Let a `pane: dashboard` display fall into the photo screensaver when it has
+  # been idle for idle.timeoutSeconds, exactly as the Navigator does. A touch
+  # brings the dashboard back.
+  #
+  # Set false if a Hub is your wall control panel and you want it to always be
+  # one. The panes below are unaffected either way — `photos` is already a
+  # slideshow.
+  screensaver: true
+
   # In order. clock | status | media | photos
   panes:
     - clock

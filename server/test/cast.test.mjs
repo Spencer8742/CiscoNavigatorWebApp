@@ -452,6 +452,9 @@ describe('the keeper', () => {
         { host: address, name: 'Kitchen', pane: 'dashboard' },
       ]);
       assert.equal(config.cast.baseUrl, `http://127.0.0.1:${port}`);
+      // Unwritten in the YAML above: a cast dashboard screensaves by default,
+      // because a wall display that never dims is the surprising one.
+      assert.equal(config.cast.screensaver, true);
 
       // A connection is the whole assertion: the TLS handshake will not
       // complete against a plain socket, and completing it is not what this
