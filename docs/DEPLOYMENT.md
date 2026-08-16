@@ -428,6 +428,27 @@ Add `&pane=media` to pin one display to a single pane — the kitchen Hub can
 show what is playing while the hallway one shows the clock, from the same
 config.
 
+### Or cast the real dashboard
+
+`&pane=dashboard` renders the **full interactive dashboard** instead of the
+panes, with the same keep-alive:
+
+```
+http://navigator.local:8099/?cast=1&pane=dashboard
+```
+
+Touch works on a Nest Hub (confirmed August 2026), so this is a genuine
+control panel — rooms, media, the queue, all of it. It is laid out for the
+Navigator's 1280x800 and also fits a 1024x600 Hub without scrolling.
+
+Which to use is a per-display choice. The dashboard where you will actually
+touch things; the panes where you only ever glance at it, since they are sized
+to be read from across a room.
+
+The photo screensaver is suppressed on cast displays either way — it is woken
+by touch, and a Hub that stopped delivering touch could take the screen and
+never give it back. Use the `photos` pane for a slideshow.
+
 ### Casting it
 
 [CATT](https://github.com/skorokithakis/catt) is the simplest route and works
@@ -476,12 +497,11 @@ may interrupt playback on that speaker. Try without it first.
 
 Be clear-eyed about this before wiring up ten displays:
 
-- **Touch is not guaranteed.** Cast mode asks the platform for it
-  (`touchScreenOptimizedApp`), and Home Assistant gets touch working through
-  their own registered receiver — but whether a Nest Hub honours it for a page
-  reached via DashCast is unverified. Tapping advances the pane if it works;
-  nothing depends on it. Google's own framing is that Cast is for showing
-  things, not interacting with them, and they have never guaranteed otherwise.
+- **Touch works, but is not guaranteed to keep working.** Cast mode asks for
+  it with `touchScreenOptimizedApp` and a Nest Hub honours it today (confirmed
+  August 2026). Google's own framing is that Cast is for showing things rather
+  than interacting with them, and they have never promised otherwise — so if
+  it stops, `?pane=` panes are the fallback and need no changes.
 - **The Hub still owns its screen.** Timers, alarms, voice answers and ambient
   mode will interrupt and take over. No amount of work on this side prevents
   that.

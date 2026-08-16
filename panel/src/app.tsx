@@ -12,7 +12,7 @@ import { Cast } from '~/screens/Cast.tsx';
 import { EntitySheet } from '~/components/EntitySheet.tsx';
 import { ui } from '~/config/index.ts';
 import { connectionProblem, ready, route, screensaverActive } from '~/state/ui.ts';
-import { isCastMode } from '~/lib/cast.ts';
+import { isCastDashboard, isCastMode, startCastReceiver } from '~/lib/cast.ts';
 
 /**
  * The shell.
@@ -37,6 +37,17 @@ import { isCastMode } from '~/lib/cast.ts';
  * constant keeps the Navigator's render path identical to what it was.
  */
 const CAST = isCastMode();
+/** `?cast=1&pane=dashboard` — the real dashboard, on a cast display. */
+const CAST_DASHBOARD = CAST && isCastDashboard();
+
+/*
+ * Claim the Cast session as early as possible, for BOTH cast variants.
+ *
+ * Not inside a component: the receiver has to be claimed once per page, and
+ * the timeout it is racing starts when the page loads, not when a component
+ * happens to mount.
+ */
+if (CAST) void startCastReceiver();
 
 export function App() {
   /*
@@ -47,7 +58,7 @@ export function App() {
    * would leave every screen's timers and subscriptions running on a device
    * with less headroom than the Navigator.
    */
-  if (CAST) {
+  if (CAST && !CAST_DASHBOARD) {
     return (
       <ErrorBoundary>
         {ready.value ? <Cast /> : <div id="boot"><span /></div>}
@@ -67,9 +78,20 @@ export function App() {
         Waking is handled by the global activity listener in state/idle.ts, so
         a touch anywhere on the photo brings the panel back.
       */}
-      {screensaverActive.value && ready.value ? <Screensaver /> : null}
+      {/*
+        The screensaver is suppressed on a cast display. It is woken by touch,
+        and on a Hub that may not deliver any — so it could take the screen and
+        never give it back. Use the `photos` pane if you want the slideshow on
+        a Hub.
+      */}
+      {screensaverActive.value && ready.value && !CAST ? <Screensaver /> : null}
 
-      <div class="shell" data-nav={ui.value.navPosition} data-hidden={screensaverActive.value && ready.value ? '' : undefined}>
+      <div
+        class="shell"
+        data-nav={ui.value.navPosition}
+        data-cast={CAST_DASHBOARD ? '' : undefined}
+        data-hidden={screensaverActive.value && ready.value && !CAST ? '' : undefined}
+      >
         <div class="shell-nav">
           <Nav />
         </div>

@@ -303,6 +303,10 @@ media:
 # Add `&pane=media` to pin one display to a single pane, so the kitchen Hub
 # can show what is playing while the hallway one shows the clock.
 #
+# Or `&pane=dashboard` for the FULL interactive dashboard rather than these
+# panes — touch works on a Nest Hub, so that is a real control panel. Use it
+# where you actually touch things and the panes where you only glance.
+#
 # See docs/DEPLOYMENT.md §3a for how to cast it, and for the honest limits —
 # touch is not guaranteed, and the Hub still takes its screen back for timers
 # and voice.
