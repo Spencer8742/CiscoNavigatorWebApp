@@ -48,7 +48,7 @@ const DEFAULTS: DashboardConfig = {
   media: { players: [], default: 'active', volumeStep: 0.05, sections: ['Speakers', 'TVs'] },
   // baseUrl/displays/checkSeconds drive the backend's cast keeper and are
   // never read by the panel; they are here to satisfy the shared type.
-  cast: { baseUrl: '', displays: [], checkSeconds: 300,
+  cast: { baseUrl: '', displays: [], checkSeconds: 300, screensaver: true,
     panes: ['clock', 'media', 'photos'], rotateSeconds: 30, followMusic: true,
     audioKeepAlive: false },
 };

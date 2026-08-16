@@ -10,7 +10,7 @@ import { ConnectionHelp } from '~/screens/ConnectionHelp.tsx';
 import { Screensaver } from '~/screens/Screensaver.tsx';
 import { Cast } from '~/screens/Cast.tsx';
 import { EntitySheet } from '~/components/EntitySheet.tsx';
-import { ui } from '~/config/index.ts';
+import { castConfig, ui } from '~/config/index.ts';
 import { connectionProblem, ready, route, screensaverActive } from '~/state/ui.ts';
 import { isCastDashboard, isCastMode, startCastReceiver } from '~/lib/cast.ts';
 
@@ -66,6 +66,18 @@ export function App() {
     );
   }
 
+  /*
+   * Whether the photo screensaver may take the screen.
+   *
+   * The Navigator: always. A cast display showing the dashboard: only when
+   * `cast.screensaver` allows it, because the screensaver is dismissed by
+   * touch and a Hub is not contractually obliged to deliver any — see
+   * shared/config.ts. Read reactively so toggling it in dashboard.yaml lands
+   * without re-casting anything.
+   */
+  const mayScreensave = !CAST || (CAST_DASHBOARD && castConfig.value.screensaver);
+  const showScreensaver = screensaverActive.value && ready.value && mayScreensave;
+
   return (
     <ErrorBoundary>
       {/*
@@ -78,19 +90,13 @@ export function App() {
         Waking is handled by the global activity listener in state/idle.ts, so
         a touch anywhere on the photo brings the panel back.
       */}
-      {/*
-        The screensaver is suppressed on a cast display. It is woken by touch,
-        and on a Hub that may not deliver any — so it could take the screen and
-        never give it back. Use the `photos` pane if you want the slideshow on
-        a Hub.
-      */}
-      {screensaverActive.value && ready.value && !CAST ? <Screensaver /> : null}
+      {showScreensaver ? <Screensaver /> : null}
 
       <div
         class="shell"
         data-nav={ui.value.navPosition}
         data-cast={CAST_DASHBOARD ? '' : undefined}
-        data-hidden={screensaverActive.value && ready.value && !CAST ? '' : undefined}
+        data-hidden={showScreensaver ? '' : undefined}
       >
         <div class="shell-nav">
           <Nav />
