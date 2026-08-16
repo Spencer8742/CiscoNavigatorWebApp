@@ -297,20 +297,47 @@ media:
 # therefore a separate, read-only view: a few big panes that rotate on their
 # own, sized to be read from across a room.
 #
-# Cast the normal panel URL with `cast=1` added:
-#     http://navigator.local:8099/?cast=1&t=YOUR_PANEL_TOKEN
+# List your displays below and the backend casts them itself, and keeps them
+# cast: a Hub loses whatever it was showing on every reboot, timer and voice
+# answer, so something has to notice and put it back. Nothing else to install.
 #
-# Add `&pane=media` to pin one display to a single pane, so the kitchen Hub
-# can show what is playing while the hallway one shows the clock.
-#
-# Or `&pane=dashboard` for the FULL interactive dashboard rather than these
-# panes — touch works on a Nest Hub, so that is a real control panel. Use it
-# where you actually touch things and the panes where you only glance.
-#
-# See docs/DEPLOYMENT.md §3a for how to cast it, and for the honest limits —
-# touch is not guaranteed, and the Hub still takes its screen back for timers
-# and voice.
+# See docs/DEPLOYMENT.md §3a for the honest limits — touch is not guaranteed,
+# and the Hub still takes its screen back for timers and voice.
 cast:
+  # How a Hub reaches this dashboard: scheme, host, port, no path.
+  #
+  # This cannot be worked out for you. `localhost` is the container, and a
+  # .local name is resolved by a Nest Hub through Google rather than over your
+  # LAN — so it has to be the LAN address of the machine running this.
+  #
+  # Leave it empty and the backend never casts anything.
+  baseUrl: ''
+
+  # The displays to keep the dashboard on.
+  #
+  # Use IP ADDRESSES, not names. Cast devices are normally found by name over
+  # mDNS, and mDNS does not cross a Docker bridge network; an address needs no
+  # discovery at all. Give each Hub a DHCP reservation while you are there.
+  #
+  # `pane:` is optional and may be dashboard | clock | status | media | photos.
+  # `dashboard` is the FULL interactive UI rather than the panes below — touch
+  # works on a Nest Hub, so that is a real control panel. Use it where you
+  # actually touch things and the panes where you only glance.
+  displays: []
+  #  - host: 192.168.1.42
+  #    name: Kitchen
+  #    pane: dashboard
+  #  - host: 192.168.1.43
+  #    name: Hallway
+  #    pane: clock
+  #  - 192.168.1.44          # bare address: uses the rotation below
+
+  # Seconds between checks. 0 turns the keeper off without deleting the list.
+  #
+  # A display already showing the dashboard is left alone, so this costs one
+  # short connection per display and never causes a visible reload.
+  checkSeconds: 300
+
   # In order. clock | status | media | photos
   panes:
     - clock

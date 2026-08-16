@@ -163,7 +163,9 @@ went wrong.
 │             │ StateStore (authoritative entity map)    │             │
 │             │ reconnect w/ exponential backoff + jitter │            │
 │             └──────────────────────────────────────────┘             │
+│  mass/      Music Assistant WS · players · queues · library browse   │
 │  immich/    REST client · album/asset queries · image streaming      │
+│  cast/      Cast v2 over TLS · keeps Nest Hubs showing the dashboard │
 │  config/    dashboard.yaml → validated, versioned, hot-reloaded      │
 └───────────┬───────────────────────────────────┬──────────────────────┘
             │ WebSocket (persistent)            │ HTTPS (on demand)
@@ -260,7 +262,9 @@ CiscoNavigatorWebApp/
 │       ├── http/              # router, static, security headers
 │       ├── hub/               # panel sockets, snapshot, fan-out
 │       ├── ha/                # client.ts, store.ts, services.ts
+│       ├── mass/              # client.ts, store.ts, commands.ts, browse.ts
 │       ├── immich/            # client.ts, images.ts
+│       ├── cast/              # protocol.ts, device.ts, keeper.ts
 │       └── lib/               # backoff.ts, log.ts, lru.ts
 │
 ├── Dockerfile                 # multi-stage: build panel → run server

@@ -186,7 +186,9 @@ panel/      frontend (Preact + signals, Vite, target chrome102)
               registry.tsx = how it looks · controls.tsx = how it works
 server/     backend  (Node 22, deps: ws + yaml)
   ha/         WebSocket client · state store · service allow-list
+  mass/       Music Assistant · players, queues, library browsing
   immich/     REST client · playlist · image proxy (originals unreachable)
+  cast/       Cast v2 — keeps Google Nest Hubs showing the dashboard
   test/       integration tests + mock Home Assistant and Immich
 ```
 

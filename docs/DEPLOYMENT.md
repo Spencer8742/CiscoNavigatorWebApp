@@ -421,7 +421,7 @@ cast:
 The URL is your normal panel URL plus `cast=1`:
 
 ```
-http://navigator.local:8099/?cast=1&t=YOUR_PANEL_TOKEN
+http://192.168.1.71:8099/?cast=1&t=YOUR_PANEL_TOKEN
 ```
 
 Add `&pane=media` to pin one display to a single pane — the kitchen Hub can
@@ -434,7 +434,7 @@ config.
 panes, with the same keep-alive:
 
 ```
-http://navigator.local:8099/?cast=1&pane=dashboard
+http://192.168.1.71:8099/?cast=1&pane=dashboard
 ```
 
 Touch works on a Nest Hub (confirmed August 2026), so this is a genuine
@@ -451,30 +451,82 @@ never give it back. Use the `photos` pane for a slideshow.
 
 ### Casting it
 
-[CATT](https://github.com/skorokithakis/catt) is the simplest route and works
-over plain HTTP on the LAN:
+**The backend does this itself.** List your displays under `cast:` and it
+casts them, notices when a Hub drops back to Google's ambient screen, and
+casts it again — forever. There is nothing else to install and no second
+container.
+
+```yaml
+cast:
+  # How a Hub reaches this dashboard. The LAN IP of the machine running the
+  # container, not localhost and not a .local name — see below.
+  baseUrl: http://192.168.1.71:8099
+
+  displays:
+    - host: 192.168.1.42
+      name: Kitchen
+      pane: dashboard
+    - host: 192.168.1.43
+      name: Hallway
+      pane: clock
+    - 192.168.1.44            # bare address: uses the panes rotation
+
+  checkSeconds: 300           # 0 turns the keeper off
+```
+
+Restart is not needed — `dashboard.yaml` is watched, and editing the `cast:`
+section re-casts every listed display immediately. Editing anything else does
+not touch them.
+
+Three things that will otherwise cost you an evening:
+
+- **Use IP addresses, not names.** A Nest Hub is normally found by name over
+  mDNS, and mDNS does not cross a Docker bridge network. Addressing devices
+  directly is what lets this run in the ordinary container. Get each Hub's IP
+  from your router, or from Google Home → device → settings → device
+  information, and give it a DHCP reservation.
+- **`baseUrl` cannot be guessed.** The backend knows the port it bound and
+  nothing else. `localhost` is the container, and a `.local` name is resolved
+  by a Nest Hub through Google rather than over your LAN. Write down the LAN
+  address of the machine running this.
+- **Do not put your panel token in `baseUrl`.** The backend appends it from
+  `PANEL_TOKEN` in `.env`, so it stays in one place.
+
+A display already showing the dashboard is left strictly alone, so the check
+costs one short connection per display every `checkSeconds` and never causes a
+visible reload.
+
+#### Casting by hand
+
+Nothing above stops you casting yourself, which is useful for trying a pane
+before committing to it:
 
 ```bash
 pipx install catt
 catt --device "Kitchen display" cast_site \
-  "http://navigator.local:8099/?cast=1&t=YOUR_PANEL_TOKEN"
+  "http://192.168.1.71:8099/?cast=1&pane=media&t=YOUR_PANEL_TOKEN"
 ```
 
-From Home Assistant, the same thing as a service call:
+To stop, `catt --device "Kitchen display" stop`, or just say "hey Google, stop"
+at the Hub. The keeper will cast it back at the next check.
+
+#### What does not work: Home Assistant's cast service
+
+This looks like it should work and does not:
 
 ```yaml
+# DOES NOT WORK — answers "App DashCast is not supported"
 action: media_player.play_media
-target:
-  entity_id: media_player.kitchen_display
 data:
   media_content_type: cast
-  media_content_id: >-
-    {"app_name":"DashCast","app_data":{"url":"http://navigator.local:8099/?cast=1&t=YOUR_PANEL_TOKEN","force":true}}
+  media_content_id: '{"app_name":"DashCast","app_data":{"url":"…"}}'
 ```
 
-Wrap that in an automation that re-casts when the device goes idle, or use
-[continuously_casting_dashboards](https://github.com/b0mbays/continuously_casting_dashboards),
-which already handles yielding to timers, voice and speaker groups.
+Home Assistant can only launch receivers that pychromecast ships a controller
+for — YouTube, BBC Sounds, Plex and a handful of others. DashCast is not among
+them, so the call is rejected before it reaches the device. It is not a
+configuration problem and no `app_data` fixes it. That gap is exactly why the
+backend speaks the Cast protocol directly (`server/src/cast/`).
 
 ### Holding the screen
 

@@ -155,6 +155,32 @@ export interface MediaConfig {
  * room rather than tapped.
  */
 export interface CastConfig {
+  /**
+   * How a Cast display reaches this dashboard — scheme, host and port, with
+   * no path: `http://192.168.1.71:8099`.
+   *
+   * It cannot be inferred. The backend knows the port it bound and nothing
+   * else; `localhost` is the container, and a `.local` name is resolved by a
+   * Nest Hub through Google rather than over your LAN. So the one address
+   * that works is the LAN address of the machine running this, written down.
+   *
+   * Empty means the backend never casts anything. Cast mode still works — you
+   * can always point something at `/?cast=1` yourself.
+   */
+  baseUrl: string;
+  /**
+   * Displays to keep the dashboard on. Empty means the backend casts nothing.
+   */
+  displays: CastDisplay[];
+  /**
+   * Seconds between checks. 0 turns the keeper off without deleting the
+   * display list.
+   *
+   * A display already showing the dashboard is left strictly alone, so this
+   * costs one short connection per display per interval and never causes a
+   * visible reload.
+   */
+  checkSeconds: number;
   /** Panes to rotate through, in order. An empty list disables cast mode. */
   panes: CastPane[];
   /** Seconds each pane holds before the next one. */
@@ -180,6 +206,47 @@ export interface CastConfig {
 export type CastPane = 'clock' | 'status' | 'media' | 'photos';
 
 export const CAST_PANES: readonly CastPane[] = ['clock', 'status', 'media', 'photos'];
+
+/**
+ * What a single display shows: one pinned pane, or the whole dashboard.
+ *
+ * `dashboard` is the real, interactive UI rather than the cast panes — a Nest
+ * Hub's touchscreen works on a cast page, so a Hub can be a small Navigator
+ * instead of a slideshow. The panes remain the better choice for a display
+ * that is glanced at from across a room.
+ */
+export type CastTarget = CastPane | 'dashboard';
+
+export const CAST_TARGETS: readonly CastTarget[] = [...CAST_PANES, 'dashboard'];
+
+/**
+ * One Google Nest Hub (or any Cast display) that the backend keeps the
+ * dashboard on.
+ *
+ * A Hub cannot be told to remember anything: every reboot, voice answer and
+ * timer takes the screen back, and the cast session that was showing the
+ * dashboard is simply gone. Listing a display here means the backend notices
+ * and casts it again.
+ */
+export interface CastDisplay {
+  /**
+   * The device's address on your LAN, optionally with a port —
+   * `192.168.1.42`, or `192.168.1.42:8009`.
+   *
+   * Prefer an IP. Cast devices are normally found by name over mDNS, and mDNS
+   * does not cross a Docker bridge network; an IP needs no discovery at all,
+   * which is what lets this run in the ordinary container rather than a
+   * host-networked one. The port is only ever worth writing for a test
+   * double — real devices all listen on 8009.
+   */
+  host: string;
+  /** A label for the log. Cosmetic; the host is what is connected to. */
+  name?: string;
+  /**
+   * What this display shows. Omit for the rotation configured in `panes`.
+   */
+  pane?: CastTarget;
+}
 
 export interface DashboardConfig {
   version: 1;
