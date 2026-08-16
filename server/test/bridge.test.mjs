@@ -876,3 +876,73 @@ describe('artwork proxy', () => {
     assert.ok(res.status === 502 || res.status === 404 || res.status === 415);
   });
 });
+
+describe('cast mode', () => {
+  /**
+   * Cast mode is the only page in the app permitted to load a third-party
+   * script, and that exception is the entire risk surface of the feature. It
+   * exists because a Nest Hub can only hold its screen with Google's receiver
+   * SDK, which is served from gstatic.com and nowhere else.
+   *
+   * These assert the exception is exactly as narrow as intended: one host,
+   * only for a request that asked for cast mode, with nothing else relaxed.
+   */
+
+  test('the ordinary panel gets no third-party script origin', async () => {
+    const res = await fetch(`http://127.0.0.1:${PANEL_PORT}/?t=${TOKEN}`);
+    const csp = res.headers.get('content-security-policy') ?? '';
+
+    assert.match(csp, /script-src 'self'/);
+    assert.ok(!csp.includes('gstatic'), 'the Navigator must never be sent this');
+    assert.ok(!csp.includes('google.com'));
+  });
+
+  test('cast mode relaxes only the Cast SDK', async () => {
+    const res = await fetch(`http://127.0.0.1:${PANEL_PORT}/?cast=1&t=${TOKEN}`);
+    const csp = res.headers.get('content-security-policy') ?? '';
+
+    assert.ok(csp.includes('https://www.gstatic.com'), 'the SDK host must be allowed');
+
+    // Everything that was strict stays strict. A regression here would be
+    // invisible — the page would work perfectly either way.
+    for (const directive of [
+      "object-src 'none'",
+      "base-uri 'none'",
+      "form-action 'none'",
+      "frame-ancestors 'none'",
+      "default-src 'self'",
+    ]) {
+      assert.ok(csp.includes(directive), `${directive} must survive cast mode`);
+    }
+    assert.ok(!csp.includes("'unsafe-eval'"));
+    assert.ok(!csp.includes("script-src 'self' *"), 'no wildcard script origin');
+  });
+
+  test('cast=1 anywhere other than the value does not relax anything', async () => {
+    // The check is an exact match, not a "contains cast" — otherwise
+    // `?castle=1` or `?cast=0` would quietly widen the policy.
+    for (const q of ['cast=0', 'cast=true', 'castle=1', 'x=cast%3D1']) {
+      const res = await fetch(`http://127.0.0.1:${PANEL_PORT}/?${q}&t=${TOKEN}`);
+      const csp = res.headers.get('content-security-policy') ?? '';
+      assert.ok(!csp.includes('gstatic'), `"${q}" must not enable cast mode`);
+    }
+  });
+
+  test('serves a real, silent wav for the keep-alive', async () => {
+    const res = await fetch(`http://127.0.0.1:${PANEL_PORT}/silence.wav`);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'audio/wav');
+
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    assert.equal(String.fromCharCode(...bytes.slice(0, 4)), 'RIFF');
+    assert.equal(String.fromCharCode(...bytes.slice(8, 12)), 'WAVE');
+
+    // 8-bit PCM is UNSIGNED, so silence is 128. Filling with zeroes would
+    // emit full-scale DC — silent on most hardware, a thump on some, and
+    // wrong either way.
+    assert.ok(
+      bytes.slice(44).every((v) => v === 128),
+      'every sample must be the 8-bit zero point',
+    );
+  });
+});

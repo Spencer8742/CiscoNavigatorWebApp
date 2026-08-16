@@ -1127,3 +1127,235 @@
      arbitrary photo does not need it to stay legible. */
   background: rgba(0, 0, 0, 0.6);
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Cast mode — Google Nest Hub displays
+
+   A different design problem from the Navigator. The Navigator is 10" at
+   arm's length and gets touched; a Nest Hub is 7" across a kitchen and gets
+   glanced at. So: far larger type, far less of it, and nothing that looks
+   like a control when it may not be one.
+
+   Sizes are in vw/vh rather than rem because the cast surface is whatever
+   resolution the device reports (a Nest Hub renders at 1024×600, a Hub Max at
+   1280×800) and the same layout has to fill both.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.cast {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  /* A cast display has no cursor and, on a Nest Hub, no reliable touch —
+     but selection highlights on a permanently-on screen look like damage. */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.cast-pane {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2vh;
+  padding: 4vh 5vw;
+  text-align: center;
+  animation: cast-in 600ms var(--ease) both;
+}
+
+/* Opacity only. The whole transition stays on the compositor, which matters
+   more here than on the Navigator: a cast surface is an encoded video stream,
+   so anything that repaints costs bitrate as well as CPU. */
+@keyframes cast-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* ── Clock ─────────────────────────────────────────────────────────────── */
+
+.cast-time {
+  display: flex;
+  align-items: baseline;
+  gap: 1.5vw;
+  font-size: 19vh;
+  font-weight: 250;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.cast-meridiem {
+  font-size: 5vh;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+.cast-date {
+  font-size: 4vh;
+  font-weight: 450;
+  color: var(--text-dim);
+}
+
+.cast-weather {
+  display: flex;
+  align-items: center;
+  gap: 1.5vw;
+  font-size: 4.5vh;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+/* ── Alerts ────────────────────────────────────────────────────────────── */
+
+.cast-alerts {
+  display: flex;
+  flex-direction: column;
+  gap: 1vh;
+  margin-top: 1vh;
+}
+
+.cast-alert {
+  display: flex;
+  align-items: center;
+  gap: 1.2vw;
+  padding: 1vh 2.5vw;
+  border-radius: var(--r-full);
+  background: rgba(248, 113, 113, 0.14);
+  border: 1px solid rgba(248, 113, 113, 0.4);
+  color: var(--danger);
+  font-size: 3vh;
+  font-weight: 560;
+}
+
+/* ── Status ────────────────────────────────────────────────────────────── */
+
+.cast-grid {
+  display: grid;
+  /* Two columns, because three at this type size is unreadable from the
+     other side of a room and one wastes the width.
+
+     `auto` rather than `1fr`: equal fractions stretch each cell to half the
+     screen and centre the number inside it, which pushes the two columns to
+     opposite edges with a void between them. Sizing to content and centring
+     the grid keeps the pair together where the eye reads them as a set. */
+  grid-template-columns: repeat(2, auto);
+  justify-content: center;
+  gap: 3vh 7vw;
+  max-width: 92vw;
+}
+
+.cast-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4vh;
+  min-width: 0;
+}
+
+.cast-stat-value {
+  font-size: 7vh;
+  font-weight: 350;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.cast-stat-label {
+  font-size: 2.4vh;
+  font-weight: 560;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+/* ── Now playing ───────────────────────────────────────────────────────── */
+
+.cast-media {
+  flex-direction: row;
+  gap: 4vw;
+  /* Centred as a pair. Left-aligned leaves a void on the right whenever the
+     track name is short, which is most of the time. */
+  justify-content: center;
+  align-items: center;
+  text-align: left;
+}
+
+.cast-art {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44vh;
+  height: 44vh;
+  max-width: 44vw;
+  border-radius: 2vh;
+  overflow: hidden;
+  background: var(--surface-2);
+  color: var(--text-faint);
+}
+
+.cast-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.cast-media-meta {
+  flex: 0 1 auto;
+  /* Capped so a long title wraps rather than stretching the row off-centre. */
+  max-width: 46vw;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1vh;
+}
+
+.cast-track {
+  font-size: 6.5vh;
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+.cast-artist {
+  font-size: 4.2vh;
+  font-weight: 450;
+  color: var(--text-dim);
+}
+
+.cast-album {
+  font-size: 3.2vh;
+  color: var(--text-faint);
+}
+
+.cast-room {
+  display: flex;
+  align-items: center;
+  gap: 1vw;
+  margin-top: 1vh;
+  font-size: 2.8vh;
+  font-weight: 560;
+  color: var(--text-faint);
+}
+
+/* ── Photos ────────────────────────────────────────────────────────────── */
+
+.cast-photos {
+  flex-direction: row;
+  gap: 0;
+  padding: 0;
+}
+
+.cast-photos img {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  /* Cover, not contain: on a display there is no reason to show letterbox
+     bars, and a slight crop is invisible from across a room. The paired
+     portrait case is what `flex: 1 1 0` on two images gives us for free. */
+  object-fit: cover;
+  display: block;
+}

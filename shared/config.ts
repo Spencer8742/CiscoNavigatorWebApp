@@ -134,22 +134,6 @@ export interface MediaConfig {
   default: string;
   volumeStep: number;
   /**
-   * Surface every Music Assistant speaker on the Media screen, without
-   * listing it here.
-   *
-   * Music Assistant already knows what your speakers are, what they can do
-   * and how they are grouped; making you retype that list into YAML would be
-   * a second source of truth that goes stale the moment you add a speaker.
-   *
-   * `players` above still matters when set — it fixes the order and lets you
-   * override names. Discovered speakers are added to it, never instead of it.
-   *
-   * Scope of what this grants: entities in the `media_player` domain carrying
-   * Music Assistant's own `mass_player_type` attribute, and only the media
-   * services already on the guard's allow-list. It does not widen access to
-   * any other domain.
-   */
-  /**
    * Section headings for the player list, in the order they appear.
    *
    * Names live here rather than being typed at the panel because naming is a
@@ -161,6 +145,42 @@ export interface MediaConfig {
   sections: string[];
 }
 
+/**
+ * Cast mode: what a Google Nest Hub shows.
+ *
+ * A Nest Hub cannot run this dashboard — Fuchsia has no browser — so the only
+ * way onto that screen is to cast a page to it, and a cast page is a display
+ * rather than a control surface. Cast mode is therefore a separate, simpler
+ * view: a few panes that rotate on their own, sized to be read from across the
+ * room rather than tapped.
+ */
+export interface CastConfig {
+  /** Panes to rotate through, in order. An empty list disables cast mode. */
+  panes: CastPane[];
+  /** Seconds each pane holds before the next one. */
+  rotateSeconds: number;
+  /**
+   * Skip straight to whatever is playing when music starts, and stay there.
+   *
+   * A display in the kitchen showing the weather while someone is choosing
+   * music is showing the wrong thing.
+   */
+  followMusic: boolean;
+  /**
+   * Play a silent audio loop to hold the cast session open.
+   *
+   * OFF by default, and worth understanding before turning on: it takes the
+   * device's audio focus, which on a Nest Hub that is ALSO a Music Assistant
+   * speaker may interrupt or block playback on that speaker. Only reach for
+   * it if `disableIdleTimeout` alone is not holding the session.
+   */
+  audioKeepAlive: boolean;
+}
+
+export type CastPane = 'clock' | 'status' | 'media' | 'photos';
+
+export const CAST_PANES: readonly CastPane[] = ['clock', 'status', 'media', 'photos'];
+
 export interface DashboardConfig {
   version: 1;
   ui: UiConfig;
@@ -169,6 +189,7 @@ export interface DashboardConfig {
   rooms: RoomConfig[];
   home: HomeConfig;
   media: MediaConfig;
+  cast: CastConfig;
 }
 
 /**

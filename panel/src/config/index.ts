@@ -46,6 +46,8 @@ const DEFAULTS: DashboardConfig = {
   rooms: [],
   home: { favorites: [], scenes: [], status: [], alerts: [] },
   media: { players: [], default: 'active', volumeStep: 0.05, sections: ['Speakers', 'TVs'] },
+  cast: { panes: ['clock', 'media', 'photos'], rotateSeconds: 30, followMusic: true,
+    audioKeepAlive: false },
 };
 
 export const config = signal<DashboardConfig>(DEFAULTS);
@@ -57,6 +59,7 @@ export const immichConfig = computed(() => config.value.immich);
 export const rooms = computed(() => config.value.rooms);
 export const homeConfig = computed(() => config.value.home);
 export const mediaConfig = computed(() => config.value.media);
+export const castConfig = computed(() => config.value.cast);
 
 /** Options bundle for lib/format.ts, derived once instead of at each call site. */
 export const timeOpts = computed(() => ({

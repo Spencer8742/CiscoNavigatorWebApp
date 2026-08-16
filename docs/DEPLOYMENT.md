@@ -398,6 +398,101 @@ minutes.
 
 ---
 
+## 3a. Google Nest Hub displays (cast mode)
+
+A Nest Hub runs Fuchsia. It has no browser, no sideloading and no kiosk mode,
+so **casting is the only way to put this dashboard on one**. What you get is a
+display rather than a control panel — see the honest limits at the end of this
+section before you invest in it.
+
+### What cast mode is
+
+A separate, read-only view: a few big panes that rotate on their own, sized to
+be read from across a room. Configure it under `cast:` in `dashboard.yaml`:
+
+```yaml
+cast:
+  panes: [clock, media, photos]   # clock | status | media | photos
+  rotateSeconds: 30               # 0 pins the first pane
+  followMusic: true               # jump to Now Playing when music starts
+  audioKeepAlive: false           # see "If the session still drops"
+```
+
+The URL is your normal panel URL plus `cast=1`:
+
+```
+http://navigator.local:8099/?cast=1&t=YOUR_PANEL_TOKEN
+```
+
+Add `&pane=media` to pin one display to a single pane — the kitchen Hub can
+show what is playing while the hallway one shows the clock, from the same
+config.
+
+### Casting it
+
+[CATT](https://github.com/skorokithakis/catt) is the simplest route and works
+over plain HTTP on the LAN:
+
+```bash
+pipx install catt
+catt --device "Kitchen display" cast_site \
+  "http://navigator.local:8099/?cast=1&t=YOUR_PANEL_TOKEN"
+```
+
+From Home Assistant, the same thing as a service call:
+
+```yaml
+action: media_player.play_media
+target:
+  entity_id: media_player.kitchen_display
+data:
+  media_content_type: cast
+  media_content_id: >-
+    {"app_name":"DashCast","app_data":{"url":"http://navigator.local:8099/?cast=1&t=YOUR_PANEL_TOKEN","force":true}}
+```
+
+Wrap that in an automation that re-casts when the device goes idle, or use
+[continuously_casting_dashboards](https://github.com/b0mbays/continuously_casting_dashboards),
+which already handles yielding to timers, voice and speaker groups.
+
+### Holding the screen
+
+DashCast navigates away from itself, which destroys the receiver context that
+would normally keep the session alive — historically the screen was reclaimed
+after ten minutes, and after the Fuchsia update, after about thirty seconds.
+
+Cast mode picks that role back up: it loads Google's Cast receiver SDK and
+declares itself a long-lived receiver (`disableIdleTimeout`). This is why
+`?cast=1` gets a slightly different Content-Security-Policy — it is the only
+page allowed to load a script from `gstatic.com`, and it is the only exception
+in the whole app.
+
+**If the session still drops**, set `audioKeepAlive: true`. It plays a silent
+loop, which is a stronger signal to the platform — but it takes the device's
+audio focus, and on a Nest Hub that is *also* a Music Assistant speaker that
+may interrupt playback on that speaker. Try without it first.
+
+### What you will not get
+
+Be clear-eyed about this before wiring up ten displays:
+
+- **Touch is not guaranteed.** Cast mode asks the platform for it
+  (`touchScreenOptimizedApp`), and Home Assistant gets touch working through
+  their own registered receiver — but whether a Nest Hub honours it for a page
+  reached via DashCast is unverified. Tapping advances the pane if it works;
+  nothing depends on it. Google's own framing is that Cast is for showing
+  things, not interacting with them, and they have never guaranteed otherwise.
+- **The Hub still owns its screen.** Timers, alarms, voice answers and ambient
+  mode will interrupt and take over. No amount of work on this side prevents
+  that.
+- **It can break.** None of this is a supported API. It has broken before.
+
+If you want a display you can actually *use*, put a cheap Android tablet on the
+wall with Fully Kiosk Browser pointed at the normal panel URL. This app is a
+PWA built for exactly that, and no casting is involved.
+
+---
+
 ## 4. On-device debugging
 
 This is the only way to get real numbers. A laptop tells you nothing useful

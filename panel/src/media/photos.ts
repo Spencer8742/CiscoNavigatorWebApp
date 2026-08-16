@@ -66,7 +66,8 @@ const cache = new Lru<string, HTMLImageElement>(CACHE_SIZE, (_id, img) => {
 });
 
 let queue: PhotoRef[] = [];
-let fetching = false;
+/** The in-flight batch, shared so concurrent callers await the same one. */
+let inFlight: Promise<void> | null = null;
 let index = -1;
 /** Photos already served, kept so "previous" works within a session. */
 const history: PhotoRef[] = [];
@@ -105,20 +106,34 @@ async function load(ref: PhotoRef): Promise<HTMLImageElement | null> {
   return img;
 }
 
+/**
+ * Fetch the next batch, coalescing concurrent callers.
+ *
+ * The subtlety is in what a second caller gets. Returning early while a fetch
+ * is in flight makes `await fill()` a no-op for that caller — so `advance()`
+ * would find the queue still empty, give up, and wait a whole interval before
+ * trying again. On the screensaver that is a blank screen for `intervalSeconds`
+ * on every cold start. Sharing the in-flight promise means the second caller
+ * waits for the same batch and then has photos, which is what it asked for.
+ */
 async function fill(): Promise<void> {
-  if (fetching) return;
-  fetching = true;
-  try {
-    const photos = await requestPhotos(BATCH);
-    if (photos.length === 0) {
-      photosEmpty.value = queue.length === 0 && history.length === 0;
-      return;
+  if (inFlight) return inFlight;
+
+  inFlight = (async () => {
+    try {
+      const photos = await requestPhotos(BATCH);
+      if (photos.length === 0) {
+        photosEmpty.value = queue.length === 0 && history.length === 0;
+        return;
+      }
+      photosEmpty.value = false;
+      queue.push(...photos);
+    } finally {
+      inFlight = null;
     }
-    photosEmpty.value = false;
-    queue.push(...photos);
-  } finally {
-    fetching = false;
-  }
+  })();
+
+  return inFlight;
 }
 
 /**

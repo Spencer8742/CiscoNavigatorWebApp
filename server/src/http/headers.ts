@@ -21,25 +21,45 @@ import type { ServerResponse } from 'node:http';
  * - `connect-src 'self'` covers both fetch and the WebSocket, since ws:// and
  *   wss:// to the same host are same-origin for CSP purposes.
  */
-const CSP = [
+const BASE = [
   "default-src 'self'",
-  "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self' data:",
-  "connect-src 'self' ws: wss:",
   "media-src 'self'",
   "object-src 'none'",
   "base-uri 'none'",
   "form-action 'none'",
   "frame-ancestors 'none'",
+];
+
+const CSP = [...BASE, "script-src 'self'", "connect-src 'self' ws: wss:"].join('; ');
+
+/**
+ * Cast mode needs one exception, and gets exactly one.
+ *
+ * A Nest Hub can only show this page by casting, and holding the cast session
+ * open requires Google's receiver SDK, which is only distributed from
+ * gstatic.com (see panel/src/lib/cast.ts). So `script-src` gains that one
+ * host, and `connect-src` gains the Cast infrastructure the SDK talks to.
+ *
+ * Everything else stays as strict as before, and this policy is only ever
+ * sent to a request that explicitly asked for cast mode — the Navigator, and
+ * every ordinary page load, still gets a CSP with no third-party origins in
+ * it at all.
+ */
+const CAST_CSP = [
+  ...BASE,
+  "script-src 'self' https://www.gstatic.com",
+  "connect-src 'self' ws: wss: https://*.gstatic.com https://*.google.com",
 ].join('; ');
 
-export function applySecurityHeaders(res: ServerResponse): void {
-  res.setHeader('content-security-policy', CSP);
+export function applySecurityHeaders(res: ServerResponse, cast = false): void {
+  res.setHeader('content-security-policy', cast ? CAST_CSP : CSP);
   res.setHeader('x-content-type-options', 'nosniff');
   res.setHeader('referrer-policy', 'no-referrer');
-  // The panel needs none of these; denying them is free.
+  // The panel needs none of these; denying them is free. `autoplay` is left
+  // alone because cast mode may hold the session open with a silent loop.
   res.setHeader('permissions-policy', 'camera=(), microphone=(), geolocation=(), interest-cohort=()');
   // Never let an intermediary or a browser cache an authenticated API
   // response — this is overridden explicitly for /img, which is immutable.
