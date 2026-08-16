@@ -1,13 +1,10 @@
 import { computed } from '@preact/signals';
-import { entity, maPlayerIds } from '~/state/entities.ts';
+import { entity } from '~/state/entities.ts';
+import { players } from '~/state/players.ts';
 import { homeConfig, mediaConfig, roomsById } from '~/config/index.ts';
 import { activeRoom, prefs } from '~/state/ui.ts';
-import { countsAsOn, describe, friendlyName, type EntityDescriptor } from '~/domains/registry.ts';
-import {
-  canGroup,
-  groupMembers,
-  MA_PLAYER_TYPE_ATTR,
-} from '@shared/protocol.ts';
+import { countsAsOn, describe, type EntityDescriptor } from '~/domains/registry.ts';
+import type { MassMedia } from '@shared/protocol.ts';
 
 /**
  * Derived views over the entity store.
@@ -123,17 +120,12 @@ export const roomActivity = computed<Map<string, number>>(() => {
   return out;
 });
 
-/**
- * A one-line summary of whatever is playing, for the screensaver overlay.
- *
- * Reads only the configured media players, so a house full of Chromecasts
- * that are not on the dashboard cannot wake this computed.
- */
 /* ── Music Assistant speakers ─────────────────────────────────────────────
-   Music Assistant is the source of truth. Everything below reads its own
-   attributes off the entities Home Assistant already streams us — there is no
-   second connection, no grouping state of our own, and a group made from any
-   other dashboard shows up here without the panel asking for anything. */
+   Music Assistant is the source of truth for everything about music, and the
+   panel now talks to it directly rather than reading `media_player` entities
+   Home Assistant mirrored from it. That is what makes the queue editable and
+   grouping exact: MA tells us which players a speaker CAN group with, which
+   Home Assistant's media_player model has nowhere to put. */
 
 export interface SpeakerInfo {
   id: string;
@@ -144,65 +136,57 @@ export interface SpeakerInfo {
   isGroup: boolean;
   state: string;
   available: boolean;
-  /** 0..1, or null when the player has no volume control. */
+  /** 0-100, Music Assistant's own scale. Null when there is no volume. */
   volume: number | null;
   muted: boolean;
   canGroup: boolean;
-  /** Everyone playing in sync with this player, itself included. */
+  /** Everyone playing in sync with this player. Empty when ungrouped. */
   members: string[];
+  /** Players this one is able to group with. */
+  canGroupWith: string[];
+  /** The leader this speaker follows, when it is a synced child. */
+  syncedTo: string | null;
+  /** Null when the player has no power control of its own. */
+  powered: boolean | null;
+  /** The queue driving it — needed by every queue command. */
+  queueId: string | null;
+  /** What is playing on it, straight from Music Assistant. */
+  media: MassMedia | null;
 }
 
 /**
- * Every speaker the panel can reach: configured players plus, when discovery
- * is on, everything Music Assistant exposes.
+ * Every speaker Music Assistant knows about.
  *
- * Configured entries come first and in the order they were written, because
- * someone who bothered to list them meant that order. Discovered speakers
- * follow, alphabetically by name.
+ * `media.players` in `dashboard.yaml` is now only a rename: identity comes
+ * from Music Assistant, so there is nothing to list and nothing to keep in
+ * sync. Entries are matched by Music Assistant player id, falling back to a
+ * case-insensitive name match so an existing config keeps working.
  */
 export const speakers = computed<SpeakerInfo[]>(() => {
-  const cfg = mediaConfig.value;
-  const describeOne = (id: string, nameOverride?: string): SpeakerInfo | null => {
-    const s = entity(id).value;
-    if (!s) return null;
-    const type = s.a[MA_PLAYER_TYPE_ATTR];
-    return {
-      id,
-      name: nameOverride ?? friendlyName(s, id),
-      kind: typeof type === 'string' ? type : 'player',
-      isGroup: type === 'group',
-      state: s.s,
-      available: s.s !== 'unavailable' && s.s !== 'unknown',
-      volume: typeof s.a['volume_level'] === 'number' ? s.a['volume_level'] : null,
-      muted: s.a['is_volume_muted'] === true,
-      canGroup: canGroup(s),
-      members: groupMembers(s),
-    };
-  };
-
-  const out: SpeakerInfo[] = [];
-  const seen = new Set<string>();
-
-  for (const p of cfg.players) {
-    const info = describeOne(p.entity, p.name);
-    if (info) {
-      out.push(info);
-      seen.add(p.entity);
-    }
+  const overrides = new Map<string, string>();
+  for (const p of mediaConfig.value.players) {
+    if (p.name) overrides.set(p.entity.toLowerCase(), p.name);
   }
 
-  if (cfg.discoverMusicAssistant) {
-    const found: SpeakerInfo[] = [];
-    for (const id of maPlayerIds.value) {
-      if (seen.has(id)) continue;
-      const info = describeOne(id);
-      if (info) found.push(info);
-    }
-    found.sort((a, b) => a.name.localeCompare(b.name));
-    out.push(...found);
-  }
-
-  return out;
+  return players.value.map((p) => ({
+    id: p.id,
+    name: overrides.get(p.id.toLowerCase()) ?? overrides.get(p.name.toLowerCase()) ?? p.name,
+    kind: p.type,
+    isGroup: p.type === 'group',
+    state: p.state,
+    available: p.available,
+    volume: p.volume,
+    muted: p.muted,
+    // A player with nothing it can group with cannot be grouped — that is
+    // Music Assistant's own answer, not a guess from a feature bitmask.
+    canGroup: p.canGroupWith.length > 0,
+    members: p.members,
+    canGroupWith: p.canGroupWith,
+    syncedTo: p.syncedTo,
+    powered: p.powered,
+    queueId: p.queueId,
+    media: p.media,
+  }));
 });
 
 /**
@@ -212,15 +196,6 @@ export const speakers = computed<SpeakerInfo[]>(() => {
  * always what you want on a wall panel: you walked over because music is
  * playing, and it should already be showing rather than making you find which
  * of five speakers it is.
- *
- * Reads `speakers` rather than `media.players`, which matters for the setup
- * this app actually encourages: with Music Assistant discovery on and nothing
- * listed in `dashboard.yaml`, there ARE no configured players, and keying off
- * the config alone left the Media screen empty — showing "player not found"
- * next to a house full of speakers the panel could see perfectly well.
- *
- * Shared so the Home card and the Media screen never disagree about which
- * player is "the" one.
  */
 export const defaultPlayerId = computed<string>(() => {
   const cfg = mediaConfig.value;
@@ -228,8 +203,16 @@ export const defaultPlayerId = computed<string>(() => {
   const first = all[0]?.id ?? '';
 
   if (cfg.default !== 'active') {
-    return all.some((s) => s.id === cfg.default) ? cfg.default : first;
+    const named = all.find(
+      (s) => s.id === cfg.default || s.name.toLowerCase() === cfg.default.toLowerCase(),
+    );
+    return named?.id ?? first;
   }
+
+  // A synced follower is playing the same thing as its leader; showing the
+  // leader is what someone means by "what's playing".
+  const playing = all.filter((s) => s.state === 'playing' && !s.syncedTo);
+  if (playing[0]) return playing[0].id;
 
   for (const s of all) {
     if (s.state === 'playing') return s.id;
@@ -240,25 +223,18 @@ export const defaultPlayerId = computed<string>(() => {
   return first;
 });
 
-/** True when a player is actively producing sound. */
+/** True when a speaker is actively producing sound. */
 export const anythingPlaying = computed<boolean>(() =>
   speakers.value.some(
     (s) => s.state === 'playing' || s.state === 'paused' || s.state === 'buffering',
   ),
 );
 
-/**
- * A one-line summary of whatever is playing, for the screensaver overlay.
- */
+/** A one-line summary of whatever is playing, for the screensaver overlay. */
 export const nowPlaying = computed<string | null>(() => {
-  for (const speaker of speakers.value) {
-    if (speaker.state !== 'playing') continue;
-    const state = entity(speaker.id).value;
-    if (!state) continue;
-    const title = typeof state.a['media_title'] === 'string' ? state.a['media_title'] : null;
-    if (!title) continue;
-    const artist = typeof state.a['media_artist'] === 'string' ? state.a['media_artist'] : null;
-    return artist ? `${title} — ${artist}` : title;
+  for (const s of speakers.value) {
+    if (s.state !== 'playing' || !s.media?.title) continue;
+    return s.media.artist ? `${s.media.title} — ${s.media.artist}` : s.media.title;
   }
   return null;
 });

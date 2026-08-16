@@ -246,10 +246,11 @@ home:
 
 # ─── Media players ─────────────────────────────────────────────────────────
 #
-# Browsing your music library needs no configuration at all. If the Music
-# Assistant integration is set up in Home Assistant, the Browse button on the
-# Media screen finds it and offers Recent, Favorites, Albums, Artists,
-# Playlists, Radio and Search. Nothing about your library is copied here.
+# Speakers, the queue and the whole library come from Music Assistant
+# DIRECTLY — set MASS_URL and MASS_TOKEN in your .env and there is nothing to
+# configure here. Players are discovered, groups are whatever Music Assistant
+# says they are, and Browse offers Recent, Favorites, Albums, Artists,
+# Playlists, Radio and Search with no library copied into this file.
 media:
   # Headings for the player list, in order. Which speaker goes under which
   # heading is chosen by tapping Organize on the Media screen and is stored in
@@ -260,23 +261,13 @@ media:
     - Outside
     - TVs
 
-  # Music Assistant speakers are discovered automatically — you do not need to
-  # list them. Music Assistant already knows what your speakers are, what they
-  # can do and how they are grouped; retyping that here would be a second
-  # source of truth that goes stale the moment you add a speaker.
-  #
-  # Set to false to show only the players listed below.
-  discoverMusicAssistant: true
-
-  # Optional even with discovery on. Listing a player fixes its position in
-  # the switcher and lets you rename it; discovered speakers are appended.
+  # Optional, and only a RENAME. Identity comes from Music Assistant, so there
+  # is nothing to keep in sync — an entry here just relabels a speaker whose
+  # Music Assistant name you do not like. Match by Music Assistant player id
+  # or by its current name.
   players:
-    - entity: media_player.living_room_speaker
-      name: Living Room
-    - entity: media_player.kitchen_speaker
+    - entity: kitchen_speaker
       name: Kitchen
-    - entity: media_player.bedroom_speaker
-      name: Bedroom
 
   # Which player to show first. 'active' picks whichever is currently playing,
   # falling back to the first in the list. Or name an entity_id.

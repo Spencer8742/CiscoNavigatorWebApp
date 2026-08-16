@@ -1,7 +1,9 @@
-import { callService } from '~/net/socket.ts';
+import { callService, massCommand } from '~/net/socket.ts';
 import { optimistic, peekEntity } from '~/state/entities.ts';
+import { players } from '~/state/players.ts';
 import { markActivity, showToast } from '~/state/ui.ts';
 import { domainOf } from '~/lib/format.ts';
+import type { MassPlayer } from '@shared/protocol.ts';
 
 /**
  * Every command the panel can send.
@@ -281,110 +283,182 @@ export function setNumber(entityId: string, value: number, final: boolean): void
   }
 }
 
-/* ── Media player ─────────────────────────────────────────────────────────*/
+/* ── Music, straight to Music Assistant ───────────────────────────────────
+   None of this goes through Home Assistant any more. Music Assistant is the
+   thing that actually owns the speakers, the queue and the library, and
+   talking to it directly is what makes the queue editable at all.
 
-export function mediaPlayPause(entityId: string): void {
-  const state = peekEntity(entityId);
-  if (!state) return;
-  // Optimistic so the play/pause glyph swaps instantly; some receivers take
-  // a second to report back and the delay reads as a missed tap.
-  optimistic(entityId, state.s === 'playing' ? 'paused' : 'playing');
-  send('media_player', 'media_play_pause', entityId);
-}
+   Volume here is 0-100, Music Assistant's own scale. Converting to and from
+   Home Assistant's 0-1 in three places is exactly how a slider ends up
+   setting a speaker to 1% of what was asked for. */
 
-export function mediaNext(entityId: string): void {
-  send('media_player', 'media_next_track', entityId);
-}
-
-export function mediaPrevious(entityId: string): void {
-  send('media_player', 'media_previous_track', entityId);
-}
-
-export function setVolume(entityId: string, level: number, final: boolean): void {
-  const clamped = Math.max(0, Math.min(1, level));
-  optimistic(entityId, peekEntity(entityId)?.s ?? 'playing', { volume_level: clamped });
-
-  const fire = () =>
-    send('media_player', 'volume_set', entityId, { volume_level: Number(clamped.toFixed(3)) });
-  if (final) {
-    cancelThrottle(entityId + ':vol');
-    fire();
-  } else {
-    throttle(entityId + ':vol', DRAG_INTERVAL_MS, fire);
+function mass(command: string, args?: Record<string, unknown>): void {
+  markActivity();
+  if (!massCommand(command, args)) {
+    showToast('Not connected', 'error');
   }
 }
 
-export function nudgeVolume(entityId: string, delta: number): void {
-  const state = peekEntity(entityId);
-  const current = typeof state?.a['volume_level'] === 'number' ? state.a['volume_level'] : 0;
-  setVolume(entityId, current + delta, true);
+/**
+ * A speaker's queue id, which most commands need instead of the player id.
+ *
+ * Returns null when Music Assistant has not given the player a queue — a
+ * speaker playing a physical input, say. Callers skip rather than guess,
+ * because guessing means sending a command at the wrong queue.
+ */
+function queueOf(playerId: string): string | null {
+  return players.peek().find((p) => p.id === playerId)?.queueId ?? null;
 }
 
-export function setMuted(entityId: string, muted: boolean): void {
-  optimistic(entityId, peekEntity(entityId)?.s ?? 'playing', { is_volume_muted: muted });
-  send('media_player', 'volume_mute', entityId, { is_volume_muted: muted });
+function player(playerId: string): MassPlayer | undefined {
+  return players.peek().find((p) => p.id === playerId);
 }
 
-export function selectSource(entityId: string, source: string): void {
-  optimistic(entityId, peekEntity(entityId)?.s ?? 'on', { source });
-  send('media_player', 'select_source', entityId, { source });
+/** Optimistically patch one player, so a tap moves the UI in the same frame. */
+function patchPlayer(playerId: string, changes: Partial<MassPlayer>): void {
+  players.value = players.value.map((p) => (p.id === playerId ? { ...p, ...changes } : p));
 }
 
-export function setMediaPower(entityId: string, on: boolean): void {
-  optimistic(entityId, on ? 'on' : 'off');
-  send('media_player', on ? 'turn_on' : 'turn_off', entityId);
+export function mediaPlayPause(playerId: string): void {
+  const current = player(playerId);
+  if (!current) return;
+  patchPlayer(playerId, { state: current.state === 'playing' ? 'paused' : 'playing' });
+
+  const queue = queueOf(playerId);
+  // Prefer the queue: when Music Assistant is the source it is the queue that
+  // is playing, and the player command is a shim around it.
+  if (queue) mass('player_queues/play_pause', { queue_id: queue });
+  else mass('players/cmd/play_pause', { player_id: playerId });
+}
+
+export function mediaNext(playerId: string): void {
+  const queue = queueOf(playerId);
+  if (queue) mass('player_queues/next', { queue_id: queue });
+  else mass('players/cmd/next', { player_id: playerId });
+}
+
+export function mediaPrevious(playerId: string): void {
+  const queue = queueOf(playerId);
+  if (queue) mass('player_queues/previous', { queue_id: queue });
+  else mass('players/cmd/previous', { player_id: playerId });
+}
+
+/** Volume, 0-100. */
+export function setVolume(playerId: string, level: number, final: boolean): void {
+  const clamped = Math.max(0, Math.min(100, Math.round(level)));
+  patchPlayer(playerId, { volume: clamped });
+
+  const fire = () => mass('players/cmd/volume_set', { player_id: playerId, volume_level: clamped });
+  if (final) {
+    cancelThrottle(playerId + ':vol');
+    fire();
+  } else {
+    throttle(playerId + ':vol', DRAG_INTERVAL_MS, fire);
+  }
+}
+
+export function nudgeVolume(playerId: string, delta: number): void {
+  setVolume(playerId, (player(playerId)?.volume ?? 0) + delta, true);
+}
+
+export function setMuted(playerId: string, muted: boolean): void {
+  patchPlayer(playerId, { muted });
+  mass('players/cmd/volume_mute', { player_id: playerId, muted });
+}
+
+export function setMediaPower(playerId: string, on: boolean): void {
+  patchPlayer(playerId, { powered: on });
+  mass('players/cmd/power', { player_id: playerId, powered: on });
+}
+
+export function seekTo(playerId: string, seconds: number): void {
+  const queue = queueOf(playerId);
+  if (queue) mass('player_queues/seek', { queue_id: queue, position: Math.max(0, Math.round(seconds)) });
+}
+
+export function setShuffle(playerId: string, on: boolean): void {
+  const queue = queueOf(playerId);
+  if (queue) mass('player_queues/shuffle', { queue_id: queue, shuffle_enabled: on });
+}
+
+export function setRepeat(playerId: string, mode: 'off' | 'one' | 'all'): void {
+  const queue = queueOf(playerId);
+  if (queue) mass('player_queues/repeat', { queue_id: queue, repeat_mode: mode });
 }
 
 /* ── Speaker grouping ─────────────────────────────────────────────────────
-   Both of these are standard Home Assistant services. Music Assistant
-   implements them, so the app never talks to Music Assistant directly and
-   holds no grouping state of its own — the truth stays in one place. */
+   Music Assistant's own grouping, rather than Home Assistant's join/unjoin
+   shim over it. `set_members` is absolute — it sets the group to exactly the
+   players named — which is what makes removing a speaker the same operation
+   as adding one. */
 
-/**
- * Add speakers to the group led by `leader`.
- *
- * `media_player.join` is absolute, not incremental: it sets the membership to
- * exactly what you pass. So adding one speaker means sending the whole list
- * again, which is also what makes removing one a `join` with the shorter list
- * rather than an `unjoin` of that member.
- */
-export function joinPlayers(leader: string, members: string[]): void {
-  send('media_player', 'join', leader, {
-    // The leader is implied by the target, and Music Assistant rejects a list
-    // that names it as its own child.
-    group_members: members.filter((id) => id !== leader),
+/** Set the group led by `leader` to exactly these members. */
+export function setGroupMembers(leader: string, members: string[]): void {
+  mass('players/cmd/set_members', {
+    player_id: leader,
+    // The leader is implied by the target and Music Assistant rejects a group
+    // that names itself as its own child.
+    child_player_ids: members.filter((id) => id !== leader),
   });
 }
 
 /** Take one speaker out of whatever group it is in. */
-export function unjoinPlayer(entityId: string): void {
-  send('media_player', 'unjoin', entityId);
+export function unjoinPlayer(playerId: string): void {
+  mass('players/cmd/ungroup', { player_id: playerId });
+}
+
+/* ── The queue ────────────────────────────────────────────────────────────*/
+
+/** Jump to a track already in the queue. */
+export function playQueueIndex(queueId: string, index: number): void {
+  mass('player_queues/play_index', { queue_id: queueId, index });
+}
+
+/** Move a track up or down. `by` is a position shift, not an index. */
+export function moveQueueItem(queueId: string, itemId: string, by: number): void {
+  mass('player_queues/move_item', { queue_id: queueId, queue_item_id: itemId, pos_shift: by });
+}
+
+/** Move a track to play immediately after the current one. */
+export function moveQueueItemNext(queueId: string, itemId: string): void {
+  mass('player_queues/move_item', { queue_id: queueId, queue_item_id: itemId, pos_shift: 0 });
+}
+
+export function removeQueueItem(queueId: string, itemId: string): void {
+  mass('player_queues/delete_item', { queue_id: queueId, item_id_or_index: itemId });
+}
+
+export function clearQueue(queueId: string): void {
+  mass('player_queues/clear', { queue_id: queueId });
 }
 
 /* ── Playing something ────────────────────────────────────────────────────*/
 
 /** What to do with the queue when playing something new. */
-export type Enqueue = 'play' | 'replace' | 'next' | 'add';
+export type Enqueue = 'play' | 'replace' | 'next' | 'replace_next' | 'add';
 
 /**
  * Play a Music Assistant library item on a speaker.
- *
- * Fire-and-forget like every other command: the result shows up as ordinary
- * state on the player's entity a moment later, which is what the Now Playing
- * screen is already watching. Nothing here waits for a reply.
  *
  * `radio_mode` asks Music Assistant to keep going with similar music once the
  * item finishes, which is what makes tapping a single artist a reasonable
  * thing to do rather than a way to hear one song and then silence.
  */
 export function playItem(
-  entityId: string,
+  playerId: string,
   uri: string,
   opts: { enqueue?: Enqueue; radio?: boolean } = {},
 ): void {
-  send('music_assistant', 'play_media', entityId, {
-    media_id: uri,
-    enqueue: opts.enqueue ?? 'replace',
+  const queue = queueOf(playerId) ?? playerId;
+  mass('player_queues/play_media', {
+    queue_id: queue,
+    media: uri,
+    option: opts.enqueue ?? 'replace',
     ...(opts.radio ? { radio_mode: true } : {}),
   });
+}
+
+/** Mark something a favourite in Music Assistant, or unmark it. */
+export function setFavorite(uri: string, favorite: boolean): void {
+  mass(favorite ? 'music/favorites/add_item' : 'music/favorites/remove_item', { item: uri });
 }

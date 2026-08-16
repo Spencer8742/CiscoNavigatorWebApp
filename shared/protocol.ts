@@ -64,6 +64,13 @@ export type LinkState = 'connected' | 'connecting' | 'disconnected';
 export interface BackendHealth {
   ha: LinkState;
   immich: LinkState;
+  /** Music Assistant, spoken to directly. 'disabled' when MASS_URL is unset. */
+  mass: LinkState | 'disabled';
+  /**
+   * Why Music Assistant is unhappy — most usefully, a missing or rejected
+   * token, which is otherwise indistinguishable from the server being down.
+   */
+  massError: string | null;
   /**
    * Why Immich is unhappy, if it is — already human-readable, and including
    * whatever Immich itself said. Null when the last request succeeded.
@@ -94,6 +101,83 @@ export interface PhotoRef {
   taken?: string;
   city?: string;
   country?: string;
+}
+
+/* ── Music Assistant players ───────────────────────────────────────────── */
+
+/**
+ * A speaker, as Music Assistant describes it.
+ *
+ * This replaces reading `media_player` entities from Home Assistant. Music
+ * Assistant knows things Home Assistant's media_player model has nowhere to
+ * put: which players a given speaker is *able* to group with, whether it is a
+ * dedicated group or a synced child, and which queue is driving it.
+ *
+ * Volume is 0-100 here, not 0-1 — that is Music Assistant's own scale, and
+ * converting twice is how off-by-a-factor-of-100 bugs happen.
+ */
+export interface MassPlayer {
+  id: string;
+  name: string;
+  /** 'player' | 'stereo_pair' | 'group' — MA's own PlayerType. */
+  type: string;
+  available: boolean;
+  /** 'playing' | 'paused' | 'idle' | 'playing'… MA's PlaybackState. */
+  state: string;
+  powered: boolean | null;
+  /** 0-100, or null when the player has no volume control. */
+  volume: number | null;
+  muted: boolean;
+  /** Everyone playing in sync with this player. Empty when ungrouped. */
+  members: string[];
+  /** The player this one is synced to, if it is a follower. */
+  syncedTo: string | null;
+  /** Players this one is ABLE to group with. Empty means grouping is off. */
+  canGroupWith: string[];
+  /** The queue driving this player — the id every queue command needs. */
+  queueId: string | null;
+  /** Group volume when this is a group leader, else the player's own. */
+  groupVolume: number | null;
+  /** What is on it right now. */
+  media: MassMedia | null;
+}
+
+export interface MassMedia {
+  title: string | null;
+  artist: string | null;
+  album: string | null;
+  /** Proxied artwork path on this origin. */
+  art: string | null;
+  duration: number | null;
+  /** Seconds into the track at `elapsedAt`. */
+  elapsed: number | null;
+  /** Epoch ms the elapsed time was measured, so the panel can extrapolate. */
+  elapsedAt: number | null;
+}
+
+/** The state of a player's queue, minus the items themselves. */
+export interface MassQueue {
+  id: string;
+  name: string;
+  /** How many items the queue holds. */
+  count: number;
+  index: number | null;
+  shuffle: boolean;
+  /** 'off' | 'one' | 'all'. */
+  repeat: string;
+}
+
+/** One row of a queue. */
+export interface QueueEntry {
+  /** MA's queue_item_id — what move and remove act on. */
+  id: string;
+  name: string;
+  /** "Artist · Album". */
+  sub: string | null;
+  art: string | null;
+  duration: number | null;
+  /** Position in the queue, so the panel can show and jump to it. */
+  index: number;
 }
 
 /* ── Music browsing ────────────────────────────────────────────────────── */
@@ -137,6 +221,8 @@ export interface MediaItem {
   s?: string;
   /** Artwork path on THIS origin, already proxied. See http/media-art.ts. */
   a?: string;
+  /** Favourited in Music Assistant. Absent when the item cannot be one. */
+  f?: boolean;
 }
 
 /**
@@ -162,7 +248,16 @@ export type BrowseRequest =
       offset?: number;
     }
   | { kind: 'search'; text: string }
-  | { kind: 'queue'; entity: string };
+  /**
+   * The contents of one item — an album's tracks, an artist's albums, a
+   * playlist's tracks.
+   *
+   * The reason browsing stopped being a flat list: tapping an album should be
+   * able to mean "show me track 7", not only "play the whole thing".
+   */
+  | { kind: 'item'; uri: string; offset?: number }
+  /** The actual rows of a player's queue. */
+  | { kind: 'queue'; queueId: string; offset?: number };
 
 /** A single flat list — a library page, or one section of search results. */
 export interface BrowseList {
@@ -180,27 +275,25 @@ export interface BrowseGroups {
 }
 
 /**
- * What Music Assistant will tell us about a player's queue.
+ * A page of the actual queue.
  *
- * Note what is NOT here: the queue's contents. `music_assistant.get_queue`
- * returns the current item, the next item and a COUNT — the list itself, and
- * the commands to reorder or remove from it, exist only on Music Assistant's
- * own WebSocket API and are not exposed through Home Assistant. Showing "up
- * next" honestly beats faking a queue we cannot edit.
+ * This is the thing the Home Assistant integration could not give us:
+ * `music_assistant.get_queue` returns a summary — current item, next item, a
+ * count. The rows, and the commands that reorder and remove them, exist only
+ * on Music Assistant's own API, which is why the panel talks to it directly.
  */
-export interface QueueInfo {
-  kind: 'queue';
-  name: string;
-  /** Number of items in the queue. */
-  items: number;
-  index: number | null;
-  shuffle: boolean;
-  repeat: string;
-  current: MediaItem | null;
-  next: MediaItem | null;
+export interface QueuePage {
+  kind: 'queuePage';
+  queueId: string;
+  entries: QueueEntry[];
+  offset: number;
+  /** Total items, so the panel can show "12 of 340" without walking it. */
+  total: number;
+  /** Which index is playing, so the current row can be marked. */
+  current: number | null;
 }
 
-export type BrowseResult = BrowseList | BrowseGroups | QueueInfo;
+export type BrowseResult = BrowseList | BrowseGroups | QueuePage;
 
 /** How many items one library page holds. Fixed here so a panel cannot ask
  *  for five hundred rows and then be killed for the memory it took. */
@@ -220,9 +313,22 @@ export type ServerMessage =
       /** Server time, so the panel's clock is right even if the device's isn't. */
       now: number;
       prefs: PanelPrefs;
+      /** Every Music Assistant speaker, if MA is configured. */
+      players: MassPlayer[];
+      /** Queue state for each of those players, keyed by queue id. */
+      queues: MassQueue[];
     }
   /** Incremental entity state. */
   | { t: 'patch'; patch: StatePatch }
+  /**
+   * Music Assistant state changed.
+   *
+   * Sent whole rather than as a diff. A house has tens of speakers, not the
+   * hundreds of entities that made diffing Home Assistant worth the
+   * complexity, and a player carries its now-playing metadata — which changes
+   * as a unit anyway when the track does.
+   */
+  | { t: 'players'; players: MassPlayer[]; queues: MassQueue[] }
   /** Config file changed on disk and revalidated. */
   | { t: 'config'; config: DashboardConfig }
   /** Backend link health changed. */
@@ -254,6 +360,15 @@ export type ClientMessage =
       entity: string;
       data?: Record<string, unknown>;
     }
+  /**
+   * Run a Music Assistant command.
+   *
+   * Fire-and-forget, like `call`: the authoritative result arrives moments
+   * later as a `players` push. The backend checks the command against its own
+   * allow-list and validates every player and queue id in the arguments, for
+   * the same reason the Home Assistant path does — see ha/services.ts.
+   */
+  | { t: 'mass'; id: number; command: string; args?: Record<string, unknown> }
   /** Ask for the next N slideshow photos. */
   | { t: 'photos'; id: number; count: number }
   /**
@@ -352,49 +467,3 @@ export const HEARTBEAT_MS = 25_000;
 /** Miss this many heartbeats and we tear the socket down and reconnect. */
 export const HEARTBEAT_TIMEOUT_MS = 12_000;
 
-/* ── Music Assistant ───────────────────────────────────────────────────── */
-
-/**
- * The attribute Music Assistant's Home Assistant integration puts on every
- * media_player entity it creates, and which nothing else sets.
- *
- * It is how this app tells an MA speaker from any other media player without
- * knowing anything about config entries or the entity registry. Values come
- * from MA's `PlayerType`: `player`, `stereo_pair`, `group`, and a few kinds
- * that are not speakers.
- */
-export const MA_PLAYER_TYPE_ATTR = 'mass_player_type';
-
-/**
- * MA player types that are not speakers you would send music to.
- *
- * `protocol` players are wrapped by a Universal Player and explicitly "hidden
- * from the UI" in MA's own documentation; the rest are visualisers rather
- * than outputs.
- */
-const MA_NON_SPEAKER_TYPES = new Set(['protocol', 'display', 'visualizer', 'light']);
-
-/** Home Assistant's `MediaPlayerEntityFeature.GROUPING` bit. */
-export const MEDIA_FEATURE_GROUPING = 524_288;
-/** `MediaPlayerEntityFeature.VOLUME_SET`. */
-export const MEDIA_FEATURE_VOLUME_SET = 4;
-
-/** Whether this entity is a Music Assistant speaker. */
-export function isMusicAssistantPlayer(entityId: string, state: EntityState): boolean {
-  if (!entityId.startsWith('media_player.')) return false;
-  const type = state.a[MA_PLAYER_TYPE_ATTR];
-  return typeof type === 'string' && !MA_NON_SPEAKER_TYPES.has(type);
-}
-
-/** Whether this player can be joined to others. */
-export function canGroup(state: EntityState | null | undefined): boolean {
-  const features = state?.a['supported_features'];
-  return typeof features === 'number' && (features & MEDIA_FEATURE_GROUPING) !== 0;
-}
-
-/** Entity ids currently playing in sync with this one, including itself. */
-export function groupMembers(state: EntityState | null | undefined): string[] {
-  const raw = state?.a['group_members'];
-  if (!Array.isArray(raw)) return [];
-  return raw.filter((v): v is string => typeof v === 'string');
-}

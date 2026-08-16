@@ -2,9 +2,8 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { Icon } from '~/components/Icon.tsx';
 import { Pressable } from '~/components/Pressable.tsx';
 import { browse } from '~/net/socket.ts';
-import { getToken } from '~/net/auth.ts';
-import { friendlyName } from '~/domains/registry.ts';
-import { entity } from '~/state/entities.ts';
+import { Artwork } from '~/components/Artwork.tsx';
+import { speakers } from '~/state/selectors.ts';
 import * as act from '~/state/actions.ts';
 import { BROWSE_PAGE } from '@shared/protocol.ts';
 import type {
@@ -57,8 +56,9 @@ const TABS: Tab[] = [
     id: 'recent',
     label: 'Recent',
     icon: 'clock',
-    // Music Assistant has no history service; a library sorted by last played
-    // is the same thing and needs no state of our own.
+    // A real play history from Music Assistant, not the library sorted by
+    // last-played — so a radio station or a streamed track you do not own
+    // still shows up here.
     request: { kind: 'library', media: 'track', recent: true },
   },
   {
@@ -79,6 +79,12 @@ const TABS: Tab[] = [
   { id: 'search', label: 'Search', icon: 'search', request: { kind: 'search', text: '' } },
 ];
 
+/** One level of the drill-down: what we opened, and what it was called. */
+interface Crumb {
+  uri: string;
+  name: string;
+}
+
 export function Browse({ playerId, onClose }: { playerId: string; onClose: () => void }) {
   const [tab, setTab] = useState('recent');
   const [offset, setOffset] = useState(0);
@@ -87,9 +93,18 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [chosen, setChosen] = useState<MediaItem | null>(null);
+  /**
+   * The drill-down stack.
+   *
+   * A stack rather than a route, so Back always means "up one" and closing
+   * the sheet forgets the whole path — which is what you want on a panel that
+   * anyone might walk up to next.
+   */
+  const [path, setPath] = useState<Crumb[]>([]);
 
   const current = TABS.find((t) => t.id === tab) ?? (TABS[0] as Tab);
-  const playerName = friendlyName(entity(playerId).value, playerId);
+  const here = path[path.length - 1] ?? null;
+  const playerName = speakers.value.find((s) => s.id === playerId)?.name ?? playerId;
 
   /*
    * Load whenever the view changes.
@@ -103,8 +118,9 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
   useEffect(() => {
     let stale = false;
 
-    const req: BrowseRequest =
-      current.request.kind === 'search'
+    const req: BrowseRequest = here
+      ? { kind: 'item', uri: here.uri, offset }
+      : current.request.kind === 'search'
         ? { kind: 'search', text: query }
         : { ...current.request, offset };
 
@@ -135,10 +151,22 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
     return () => {
       stale = true;
     };
-  }, [tab, offset, query]);
+  }, [tab, offset, query, here?.uri]);
 
   const pick = (t: string): void => {
     setTab(t);
+    setOffset(0);
+    setPath([]);
+  };
+
+  /** Open an item's contents — an album's tracks, an artist's albums. */
+  const open = (item: MediaItem): void => {
+    setPath((p) => [...p, { uri: item.u, name: item.n }]);
+    setOffset(0);
+  };
+
+  const back = (): void => {
+    setPath((p) => p.slice(0, -1));
     setOffset(0);
   };
 
@@ -148,40 +176,60 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
 
       <div class="sheet browse-sheet" role="dialog" aria-label="Browse music" aria-modal="true">
         <div class="sheet-head">
+          {here ? (
+            <Pressable class="sheet-back p-sm" onPress={back} ariaLabel="Back">
+              <Icon name="chevronLeft" size="1.4rem" weight={2.2} />
+            </Pressable>
+          ) : null}
           <div class="sheet-titles">
-            <h2 class="sheet-title truncate">Browse</h2>
+            <h2 class="sheet-title truncate">{here ? here.name : 'Browse'}</h2>
             <div class="sheet-subtitle truncate">Play on {playerName}</div>
           </div>
+          {here ? (
+            <Pressable
+              class="sheet-edit p-sm"
+              onPress={() => setChosen({ u: here.uri, n: here.name, k: 'album' })}
+              ariaLabel={`Play all of ${here.name}`}
+            >
+              Play all
+            </Pressable>
+          ) : null}
           <Pressable class="sheet-close p-sm" onPress={onClose} ariaLabel="Close">
             <Icon name="close" size="1.4rem" weight={2} />
           </Pressable>
         </div>
 
-        <div class="browse-tabs" role="tablist">
-          {TABS.map((t) => (
-            <Pressable
-              key={t.id}
-              class={t.id === tab ? 'browse-tab is-active' : 'browse-tab'}
-              onPress={() => pick(t.id)}
-              ariaPressed={t.id === tab}
-              ariaLabel={t.label}
-            >
-              <Icon name={t.icon} size="1.1rem" weight={1.8} />
-              <span>{t.label}</span>
-            </Pressable>
-          ))}
-        </div>
+        {/* The tab strip disappears while drilled in: it would offer to jump
+            somewhere else from a screen whose whole job is "you are inside
+            this album", and Back is the only navigation that makes sense there. */}
+        {here ? null : (
+          <div class="browse-tabs" role="tablist">
+            {TABS.map((t) => (
+              <Pressable
+                key={t.id}
+                class={t.id === tab ? 'browse-tab is-active' : 'browse-tab'}
+                onPress={() => pick(t.id)}
+                ariaPressed={t.id === tab}
+                ariaLabel={t.label}
+              >
+                <Icon name={t.icon} size="1.1rem" weight={1.8} />
+                <span>{t.label}</span>
+              </Pressable>
+            ))}
+          </div>
+        )}
 
-        {tab === 'search' ? <SearchBox value={query} onSearch={setQuery} /> : null}
+        {tab === 'search' && !here ? <SearchBox value={query} onSearch={setQuery} /> : null}
 
         <div class="sheet-body scroll browse-body">
           <Results
             loading={loading}
             error={error}
             result={result}
-            searching={tab === 'search'}
+            searching={tab === 'search' && !here}
             query={query}
             onPick={setChosen}
+            onOpen={open}
           />
         </div>
 
@@ -237,6 +285,7 @@ function Results({
   searching,
   query,
   onPick,
+  onOpen,
 }: {
   loading: boolean;
   error: string | null;
@@ -244,6 +293,7 @@ function Results({
   searching: boolean;
   query: string;
   onPick: (item: MediaItem) => void;
+  onOpen: (item: MediaItem) => void;
 }) {
   if (loading) {
     return (
@@ -283,7 +333,7 @@ function Results({
           <div key={group.name}>
             <div class="group-section">{group.name}</div>
             {group.items.map((item) => (
-              <ItemRow key={item.u} item={item} onPick={onPick} />
+              <ItemRow key={item.u} item={item} onPick={onPick} onOpen={onOpen} />
             ))}
           </div>
         ))}
@@ -306,7 +356,7 @@ function Results({
     return (
       <>
         {result.items.map((item) => (
-          <ItemRow key={item.u} item={item} onPick={onPick} />
+          <ItemRow key={item.u} item={item} onPick={onPick} onOpen={onOpen} />
         ))}
       </>
     );
@@ -315,49 +365,52 @@ function Results({
   return null;
 }
 
-function ItemRow({ item, onPick }: { item: MediaItem; onPick: (item: MediaItem) => void }) {
-  return (
-    <Pressable
-      as="div"
-      class="browse-row"
-      onPress={() => onPick(item)}
-      ariaLabel={item.n}
-      disabled={item.u === ''}
-    >
-      <Cover item={item} />
-      <div class="browse-meta">
-        <div class="browse-name truncate">{item.n}</div>
-        <div class="browse-sub truncate">{item.s ?? KIND_LABEL[item.k]}</div>
-      </div>
-      <Icon name="chevronRight" size="1.1rem" weight={2} />
-    </Pressable>
-  );
-}
+/** Kinds whose contents can be opened rather than only played. */
+const EXPANDABLE = new Set<MediaKind>(['album', 'artist', 'playlist', 'podcast']);
 
 /**
- * Cover art, or a glyph when there is none.
+ * One browsable row.
  *
- * `loading="lazy"` matters more here than anywhere else in the app: a page is
- * sixty covers, and decoding sixty images at once on this hardware is a visible
- * stall on a screen the user is trying to scroll.
+ * An album has two reasonable meanings for a tap — "play this" and "show me
+ * what is on it" — so it gets both: the row opens it, and a play button on
+ * the right plays it. A track has only one meaning, so the whole row plays.
  */
-function Cover({ item }: { item: MediaItem }) {
-  const [failed, setFailed] = useState(false);
-  const token = getToken();
-
-  if (!item.a || failed) {
-    return (
-      <div class="browse-cover is-empty">
-        <Icon name={KIND_ICON[item.k]} size="1.3rem" weight={1.6} />
-      </div>
-    );
-  }
-
-  const src = `${item.a}${token ? `&t=${encodeURIComponent(token)}` : ''}`;
+function ItemRow({
+  item,
+  onPick,
+  onOpen,
+}: {
+  item: MediaItem;
+  onPick: (item: MediaItem) => void;
+  onOpen: (item: MediaItem) => void;
+}) {
+  const expandable = EXPANDABLE.has(item.k) && item.u !== '';
 
   return (
-    <div class="browse-cover">
-      <img src={src} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} />
+    <div class="browse-row">
+      <Pressable
+        as="div"
+        class="browse-main"
+        onPress={() => (expandable ? onOpen(item) : onPick(item))}
+        ariaLabel={expandable ? `Open ${item.n}` : item.n}
+        disabled={item.u === ''}
+      >
+        <Artwork src={item.a} icon={KIND_ICON[item.k]} />
+        <div class="browse-meta">
+          <div class="browse-name truncate">{item.n}</div>
+          <div class="browse-sub truncate">{item.s ?? KIND_LABEL[item.k]}</div>
+        </div>
+        {expandable ? <Icon name="chevronRight" size="1.1rem" weight={2} /> : null}
+      </Pressable>
+
+      <Pressable
+        class="browse-play p-sm"
+        onPress={() => onPick(item)}
+        ariaLabel={`Play ${item.n}`}
+        disabled={item.u === ''}
+      >
+        <Icon name="play" size="1.1rem" />
+      </Pressable>
     </div>
   );
 }
@@ -504,6 +557,24 @@ function PlayOptions({
                 <span>Start radio from this</span>
               </Pressable>
             </>
+          ) : null}
+
+          {/* Favouriting writes to Music Assistant's library, so it shows up
+              in the Favorites tab and in the Music Assistant app alike. Only
+              offered when we actually know the current state — otherwise the
+              button would be a guess at which way it toggles. */}
+          {item.f !== undefined ? (
+            <Pressable
+              class="play-option"
+              onPress={() => {
+                act.setFavorite(item.u, !item.f);
+                onCancel();
+              }}
+              ariaLabel={item.f ? 'Remove from favorites' : 'Add to favorites'}
+            >
+              <Icon name="heart" size="1.3rem" weight={item.f ? 2.4 : 1.8} />
+              <span>{item.f ? 'Remove from favorites' : 'Add to favorites'}</span>
+            </Pressable>
           ) : null}
         </div>
       </div>

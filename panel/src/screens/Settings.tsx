@@ -5,6 +5,7 @@ import { Pressable } from '~/components/Pressable.tsx';
 import { setPref } from '~/net/socket.ts';
 import type { PanelPrefs } from '@shared/protocol.ts';
 import { entityCount } from '~/state/entities.ts';
+import { speakers } from '~/state/selectors.ts';
 import { formatRelative } from '~/lib/format.ts';
 import { deviceInfo } from '~/lib/device.ts';
 
@@ -78,6 +79,15 @@ export function Settings() {
           <Row k="Panel → backend" v={socketState.value} tone={tone(socketState.value)} />
           <Row k="Backend → Home Assistant" v={h?.ha ?? '—'} tone={tone(h?.ha)} />
           <Row k="Backend → Immich" v={h?.immich ?? '—'} tone={tone(h?.immich)} />
+          <Row
+            k="Backend → Music Assistant"
+            v={h?.mass ?? '—'}
+            tone={h?.mass === 'disabled' ? undefined : tone(h?.mass)}
+          />
+          {/* The specific reason, when there is one. A missing MASS_TOKEN and
+              an unreachable server both read as "disconnected" otherwise, and
+              only one of them is fixed by restarting anything. */}
+          {h?.massError ? <Row k="Music Assistant says" v={h.massError} tone="bad" /> : null}
           <Row k="Overall" v={linkStatus.value} tone={tone(linkStatus.value)} />
           <Row
             k="Last HA message"
@@ -95,7 +105,7 @@ export function Settings() {
           <Row k="Rooms" v={String(cfg.rooms.length)} />
           <Row k="Favorites" v={String(cfg.home.favorites.length)} />
           <Row k="Scenes" v={String(cfg.home.scenes.length)} />
-          <Row k="Media players" v={String(cfg.media.players.length)} />
+          <Row k="Speakers" v={String(speakers.value.length)} />
           <Row k="Live entities" v={String(entityCount())} />
           <Row k="Immich" v={cfg.immich.enabled ? 'enabled' : 'disabled'} />
           <Row k="Idle timeout" v={secs(cfg.idle.timeoutSeconds)} />

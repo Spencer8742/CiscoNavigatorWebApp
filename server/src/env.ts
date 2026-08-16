@@ -39,6 +39,20 @@ export interface Env {
     unavailableGraceMs: number;
   };
 
+  /**
+   * Music Assistant, spoken to directly rather than through Home Assistant.
+   *
+   * The token is required by Music Assistant from API schema 28 onward and
+   * ignored by older servers, so it is always sent when present and its
+   * absence is only an error if the server asks for it.
+   */
+  mass: {
+    url: string;
+    token: string;
+    insecureTls: boolean;
+    enabled: boolean;
+  };
+
   immich: {
     url: string;
     apiKey: string;
@@ -92,6 +106,7 @@ export function loadEnv(): Env {
   const haToken = str('HA_TOKEN');
   const immichUrl = normalizeUrl(str('IMMICH_URL'));
   const immichKey = str('IMMICH_API_KEY');
+  const massUrl = normalizeUrl(str('MASS_URL'));
 
   const env: Env = {
     port: int('PORT', 8099),
@@ -106,6 +121,17 @@ export function loadEnv(): Env {
       insecureTls: bool('HA_INSECURE_TLS'),
       enabled: Boolean(haUrl && haToken),
       unavailableGraceMs: int('HA_UNAVAILABLE_GRACE_MS', 30_000),
+    },
+
+    mass: {
+      url: massUrl,
+      token: str('MASS_TOKEN'),
+      insecureTls: bool('MASS_INSECURE_TLS'),
+      // A URL is enough to try. Whether a token is REQUIRED depends on the
+      // server's schema version, which we only learn once connected — so
+      // refusing to start without one here would lock out older servers that
+      // do not use tokens at all.
+      enabled: Boolean(massUrl),
     },
 
     immich: {
@@ -131,7 +157,14 @@ export function loadEnv(): Env {
     log.warn('IMMICH_URL / IMMICH_API_KEY not set — photo features are disabled.');
   }
 
-  if (env.ha.insecureTls || env.immich.insecureTls) {
+  if (!env.mass.enabled) {
+    log.info(
+      'MASS_URL not set — media falls back to Home Assistant media_player entities. ' +
+        'Set it to browse your library, edit the queue and control speakers directly.',
+    );
+  }
+
+  if (env.ha.insecureTls || env.immich.insecureTls || env.mass.insecureTls) {
     log.warn(
       'TLS certificate verification is disabled for one or more upstreams. ' +
         'Prefer mounting your CA bundle into the container instead.',

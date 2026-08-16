@@ -279,6 +279,7 @@ function describeState(s: SpeakerInfo): string {
 
   const parts = [what];
   if (s.members.length > 1) parts.push(`${s.members.length} rooms`);
-  if (s.volume != null) parts.push(`${Math.round(s.volume * 100)}%`);
+  // Music Assistant's volume is already 0-100.
+  if (s.volume != null) parts.push(`${s.volume}%`);
   return parts.join(' · ');
 }
