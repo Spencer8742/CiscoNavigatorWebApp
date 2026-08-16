@@ -29,6 +29,28 @@ const log = logger('server');
 const VERSION = process.env['APP_VERSION'] ?? 'dev';
 const STARTED_AT = Date.now();
 
+/** One second of 8 kHz mono silence, as a WAV. See the /silence.wav route. */
+const SILENCE = silentWav(8000);
+
+function silentWav(samples: number): Buffer {
+  const buf = Buffer.alloc(44 + samples);
+  buf.write('RIFF', 0);
+  buf.writeUInt32LE(36 + samples, 4);
+  buf.write('WAVEfmt ', 8);
+  buf.writeUInt32LE(16, 16); // PCM header size
+  buf.writeUInt16LE(1, 20); // format: PCM
+  buf.writeUInt16LE(1, 22); // channels: mono
+  buf.writeUInt32LE(samples, 24); // sample rate
+  buf.writeUInt32LE(samples, 28); // byte rate (8-bit mono = rate)
+  buf.writeUInt16LE(1, 32); // block align
+  buf.writeUInt16LE(8, 34); // bits per sample
+  buf.write('data', 36);
+  buf.writeUInt32LE(samples, 40);
+  // 8-bit PCM is unsigned: silence is 128, not 0.
+  buf.fill(128, 44);
+  return buf;
+}
+
 /**
  * Backend entry point.
  *
@@ -262,10 +284,18 @@ async function main(): Promise<void> {
   massClient.start();
 
   async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    applySecurityHeaders(res);
-
     const rawUrl = req.url ?? '/';
     const path = rawUrl.split('?')[0] ?? '/';
+
+    /*
+     * Cast mode relaxes exactly one thing: the CSP gains gstatic.com, because
+     * holding a Nest Hub's screen requires Google's receiver SDK and that is
+     * the only place it is served from. Keyed off the URL the device was
+     * given, so an ordinary page load — and the Navigator — never sees it.
+     */
+    const q = rawUrl.indexOf('?');
+    const query = new URLSearchParams(q === -1 ? '' : rawUrl.slice(q + 1));
+    applySecurityHeaders(res, query.get('cast') === '1');
 
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.writeHead(405, { allow: 'GET, HEAD' });
@@ -293,6 +323,23 @@ async function main(): Promise<void> {
       return;
     }
 
+    /*
+     * A second of silence, for cast mode's optional audio keep-alive.
+     *
+     * Generated rather than committed: it is 8 KB of zeroes and a 44-byte
+     * header, and a binary blob in the repo that nobody can diff is worse
+     * than four lines that say exactly what it is.
+     */
+    if (path === '/silence.wav') {
+      res.writeHead(200, {
+        'content-type': 'audio/wav',
+        'content-length': String(SILENCE.length),
+        'cache-control': 'public, max-age=31536000, immutable',
+      });
+      res.end(req.method === 'HEAD' ? undefined : SILENCE);
+      return;
+    }
+
     if (path === '/api/config') {
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       res.end(JSON.stringify(config.current));
@@ -317,9 +364,7 @@ async function main(): Promise<void> {
         res.end('unauthorized');
         return;
       }
-      const q = rawUrl.indexOf('?');
-      const params = new URLSearchParams(q === -1 ? '' : rawUrl.slice(q + 1));
-      await mediaArt.serve(res, params.get('k'));
+      await mediaArt.serve(res, query.get('k'));
       return;
     }
 
@@ -329,9 +374,7 @@ async function main(): Promise<void> {
         res.end('unauthorized');
         return;
       }
-      const q = rawUrl.indexOf('?');
-      const params = new URLSearchParams(q === -1 ? '' : rawUrl.slice(q + 1));
-      const p = params.get('p');
+      const p = query.get('p');
       if (!p) {
         res.writeHead(400, { 'content-type': 'text/plain' });
         res.end('missing p');
@@ -356,9 +399,7 @@ async function main(): Promise<void> {
         return;
       }
       const assetId = path.slice('/img/'.length);
-      const q = rawUrl.indexOf('?');
-      const params = new URLSearchParams(q === -1 ? '' : rawUrl.slice(q + 1));
-      await immichImages.serve(req, res, assetId, params.get('s'));
+      await immichImages.serve(req, res, assetId, query.get('s'));
       return;
     }
 

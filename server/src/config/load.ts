@@ -3,8 +3,10 @@ import { watch, type FSWatcher } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { logger } from '~/lib/log.ts';
+import { CAST_PANES } from '@shared/config.ts';
 import type {
   AlertRule,
+  CastPane,
   DashboardConfig,
   EntityRef,
   ImmichSource,
@@ -67,6 +69,12 @@ export const FALLBACK_CONFIG: DashboardConfig = {
   rooms: [],
   home: { favorites: [], scenes: [], status: [], alerts: [] },
   media: { players: [], default: 'active', volumeStep: 0.05, sections: ['Speakers', 'TVs'] },
+  cast: {
+    panes: ['clock', 'media', 'photos'],
+    rotateSeconds: 30,
+    followMusic: true,
+    audioKeepAlive: false,
+  },
 };
 
 /* ── Coercion helpers ──────────────────────────────────────────────────────
@@ -204,6 +212,7 @@ function validate(raw: unknown): DashboardConfig {
   const immichRaw = obj(root['immich']);
   const homeRaw = obj(root['home']);
   const mediaRaw = obj(root['media']);
+  const castRaw = obj(root['cast']);
 
   const version = num(root['version'], 1, 'version', 1, 1);
   if (version !== 1) log.warn(`Unknown config version ${version}; treating as 1`);
@@ -274,7 +283,43 @@ function validate(raw: unknown): DashboardConfig {
       volumeStep: num(mediaRaw['volumeStep'], 0.05, 'media.volumeStep', 0.01, 0.5),
       sections: sectionList(mediaRaw['sections']),
     },
+
+    cast: {
+      panes: paneList(castRaw['panes']),
+      // Below ~8s a rotating display is a distraction rather than something
+      // you glance at; 0 pins the first pane and never rotates.
+      rotateSeconds: num(castRaw['rotateSeconds'], 30, 'cast.rotateSeconds', 0, 3600),
+      followMusic: bool(castRaw['followMusic'], true, 'cast.followMusic'),
+      audioKeepAlive: bool(castRaw['audioKeepAlive'], false, 'cast.audioKeepAlive'),
+    },
   };
+}
+
+/**
+ * Which panes a cast display rotates through.
+ *
+ * Unknown names are dropped with a warning rather than failing the config: a
+ * typo here should cost you one pane, not the whole dashboard.
+ */
+function paneList(v: unknown): CastPane[] {
+  if (v === undefined || v === null) return [...FALLBACK_CONFIG.cast.panes];
+  if (!Array.isArray(v)) {
+    warn('cast.panes', 'list', v);
+    return [...FALLBACK_CONFIG.cast.panes];
+  }
+
+  const out: CastPane[] = [];
+  for (const item of v) {
+    if (typeof item !== 'string') continue;
+    const name = item.trim().toLowerCase();
+    if (!(CAST_PANES as readonly string[]).includes(name)) {
+      warn('cast.panes[]', CAST_PANES.join(' | '), item);
+      continue;
+    }
+    // Deduped: the same pane twice would stall the rotation on it.
+    if (!out.includes(name as CastPane)) out.push(name as CastPane);
+  }
+  return out;
 }
 
 function roomList(v: unknown): RoomConfig[] {

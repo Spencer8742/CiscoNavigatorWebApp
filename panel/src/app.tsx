@@ -8,9 +8,11 @@ import { Photos } from '~/screens/Photos.tsx';
 import { Settings } from '~/screens/Settings.tsx';
 import { ConnectionHelp } from '~/screens/ConnectionHelp.tsx';
 import { Screensaver } from '~/screens/Screensaver.tsx';
+import { Cast } from '~/screens/Cast.tsx';
 import { EntitySheet } from '~/components/EntitySheet.tsx';
 import { ui } from '~/config/index.ts';
 import { connectionProblem, ready, route, screensaverActive } from '~/state/ui.ts';
+import { isCastMode } from '~/lib/cast.ts';
 
 /**
  * The shell.
@@ -28,7 +30,31 @@ import { connectionProblem, ready, route, screensaverActive } from '~/state/ui.t
  *    are cheap to rebuild — all their state lives in signals outside them —
  *    so mounting on demand is both lighter and simpler.
  */
+/**
+ * Cast mode is decided once, from the URL, and never changes.
+ *
+ * A signal would imply it can be toggled at runtime; it cannot, and reading a
+ * constant keeps the Navigator's render path identical to what it was.
+ */
+const CAST = isCastMode();
+
 export function App() {
+  /*
+   * Cast mode replaces the shell outright.
+   *
+   * No nav, no screensaver, no entity sheet — a cast display has nowhere to
+   * navigate to and nothing to open. Mounting the full shell and hiding it
+   * would leave every screen's timers and subscriptions running on a device
+   * with less headroom than the Navigator.
+   */
+  if (CAST) {
+    return (
+      <ErrorBoundary>
+        {ready.value ? <Cast /> : <div id="boot"><span /></div>}
+      </ErrorBoundary>
+    );
+  }
+
   return (
     <ErrorBoundary>
       {/*

@@ -289,3 +289,41 @@ media:
 #  Which controls appear is decided by what the entity reports, not by this
 #  file: a non-dimmable light shows no brightness slider, a blind with no
 #  position feedback shows only open/stop/close.
+
+
+# ─── Google Nest Hub displays (cast mode) ──────────────────────────────────
+# A Nest Hub has no browser, so the only way onto its screen is to cast a page
+# to it — and a cast page is a display, not a control panel. Cast mode is
+# therefore a separate, read-only view: a few big panes that rotate on their
+# own, sized to be read from across a room.
+#
+# Cast the normal panel URL with `cast=1` added:
+#     http://navigator.local:8099/?cast=1&t=YOUR_PANEL_TOKEN
+#
+# Add `&pane=media` to pin one display to a single pane, so the kitchen Hub
+# can show what is playing while the hallway one shows the clock.
+#
+# See docs/DEPLOYMENT.md §3a for how to cast it, and for the honest limits —
+# touch is not guaranteed, and the Hub still takes its screen back for timers
+# and voice.
+cast:
+  # In order. clock | status | media | photos
+  panes:
+    - clock
+    - media
+    - photos
+
+  # Seconds each pane holds. 0 pins the first one and never rotates.
+  rotateSeconds: 30
+
+  # Jump to Now Playing the moment music starts, and stay there. A display in
+  # the kitchen showing the weather while someone is choosing an album is
+  # showing the wrong thing.
+  followMusic: true
+
+  # Play a silent loop to hold the cast session open.
+  #
+  # OFF by default. It takes the device's audio focus, so on a Nest Hub that
+  # is ALSO a Music Assistant speaker it may interrupt playback on that
+  # speaker. Only turn it on if the session is being dropped without it.
+  audioKeepAlive: false
