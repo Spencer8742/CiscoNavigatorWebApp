@@ -97,6 +97,22 @@ export class HaStore {
   }
 
   /**
+   * Any one Music Assistant entity, or null if none exist.
+   *
+   * Browsing needs Music Assistant's config entry id, and the cheapest way to
+   * learn it is to ask the entity registry about an entity we already know
+   * belongs to it. Searched over every entity rather than the visible set: a
+   * user who hid every speaker, or listed none, should still be able to
+   * browse.
+   */
+  anyMusicAssistantEntity(): string | null {
+    for (const [id, state] of this.#states) {
+      if (isMusicAssistantPlayer(id, state)) return id;
+    }
+    return null;
+  }
+
+  /**
    * Apply a new dashboard config.
    *
    * Returns a patch describing what changed for panels: entities the config

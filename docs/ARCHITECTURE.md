@@ -355,6 +355,45 @@ Slider drags are **rate-limited to one command per ~120 ms while dragging plus
 a guaranteed final command on release**, so a 3-second drag sends ~25 messages
 instead of ~180, and always ends on the exact value.
 
+### Music Assistant: nothing of our own
+
+Speaker grouping and music browsing both go through the **same socket and the
+same allow-list** as everything else. There is no second connection to Music
+Assistant and no state duplicated from it:
+
+| Feature | Service | Notes |
+| --- | --- | --- |
+| Grouping | `media_player.join` / `unjoin` | Standard HA services, which MA implements |
+| Group membership | `group_members` attribute | Arrives on the existing subscription |
+| Library | `music_assistant.get_library` | Favorites and Recently Played are the same call with different filter and sort |
+| Search | `music_assistant.search` | |
+| Up next | `music_assistant.get_queue` | |
+| Playback | `music_assistant.play_media` | Fire-and-forget, like every other command |
+
+The first three of those are `SupportsResponse.ONLY` — they answer rather than
+act — so the client sends `return_response: true` and reads
+`result.response`. This is the only request/reply path in the backend besides
+photos; everything else is a push or fire-and-forget.
+
+Two consequences worth knowing:
+
+- **The config entry id is discovered, not configured.** `search` and
+  `get_library` target a Music Assistant *config entry* rather than an entity.
+  The backend finds it by asking `config/entity_registry/get` about any entity
+  carrying `mass_player_type`. That command needs no admin rights, so an
+  ordinary long-lived token is enough.
+- **The queue can be read but not edited.** `get_queue` returns the current
+  item, the next item and a count — not the list. Reordering, removing and
+  jumping exist only on Music Assistant's own WebSocket API. So the panel shows
+  "Up next" rather than a queue it could not act on.
+
+Cover art never reaches the panel as a Music Assistant URL. Those URLs are
+frequently container hostnames nothing else can resolve, and handing them over
+would tell the panel where another service lives. The backend registers each
+one and returns an opaque key on our own origin instead — see
+`server/src/http/media-art.ts` for why a key rather than a `?url=` parameter is
+the whole point.
+
 ### Reconnection
 
 Exponential backoff with full jitter: `min(30s, 500ms · 2^n) · random(0.5–1.0)`.

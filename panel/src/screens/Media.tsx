@@ -10,6 +10,8 @@ import { attrNumber, attrString, friendlyName } from '~/domains/registry.ts';
 import { defaultPlayerId, speakers } from '~/state/selectors.ts';
 import { GroupSheet } from '~/components/GroupSheet.tsx';
 import { PlayerPicker } from '~/components/PlayerPicker.tsx';
+import { Browse } from '~/components/Browse.tsx';
+import { UpNext } from '~/components/UpNext.tsx';
 import { canGroup, groupMembers } from '@shared/protocol.ts';
 import { getToken } from '~/net/auth.ts';
 import * as act from '~/state/actions.ts';
@@ -33,6 +35,7 @@ export function Media() {
   const [chosen, setChosen] = useState<string | null>(null);
   const [grouping, setGrouping] = useState(false);
   const [picking, setPicking] = useState(false);
+  const [browsing, setBrowsing] = useState(false);
 
   // Reset the manual choice if the configured players change under us.
   const all = speakers.value;
@@ -95,6 +98,14 @@ export function Media() {
           </span>
           <Icon name="chevronDown" size="1rem" weight={2.2} />
         </Pressable>
+
+        {/* Alongside the player rather than buried in Now Playing: choosing
+            what to hear and choosing where to hear it are the two things this
+            screen is for, and neither should cost a scroll. */}
+        <Pressable class="browse-button" onPress={() => setBrowsing(true)} ariaLabel="Browse music">
+          <Icon name="search" size="1.1rem" weight={1.9} />
+          <span>Browse</span>
+        </Pressable>
       </div>
 
       {/* Where the sound is coming from, and the way into changing it. One
@@ -111,6 +122,7 @@ export function Media() {
 
       <div class="screen-body scroll">
         {state ? <NowPlaying id={activeId} state={state} /> : <MissingPlayer id={activeId} />}
+        {state ? <UpNext playerId={activeId} state={state} /> : null}
       </div>
 
       {picking ? (
@@ -128,6 +140,8 @@ export function Media() {
           onClose={() => setGrouping(false)}
         />
       ) : null}
+
+      {browsing ? <Browse playerId={activeId} onClose={() => setBrowsing(false)} /> : null}
     </div>
   );
 }

@@ -360,3 +360,31 @@ export function joinPlayers(leader: string, members: string[]): void {
 export function unjoinPlayer(entityId: string): void {
   send('media_player', 'unjoin', entityId);
 }
+
+/* ── Playing something ────────────────────────────────────────────────────*/
+
+/** What to do with the queue when playing something new. */
+export type Enqueue = 'play' | 'replace' | 'next' | 'add';
+
+/**
+ * Play a Music Assistant library item on a speaker.
+ *
+ * Fire-and-forget like every other command: the result shows up as ordinary
+ * state on the player's entity a moment later, which is what the Now Playing
+ * screen is already watching. Nothing here waits for a reply.
+ *
+ * `radio_mode` asks Music Assistant to keep going with similar music once the
+ * item finishes, which is what makes tapping a single artist a reasonable
+ * thing to do rather than a way to hear one song and then silence.
+ */
+export function playItem(
+  entityId: string,
+  uri: string,
+  opts: { enqueue?: Enqueue; radio?: boolean } = {},
+): void {
+  send('music_assistant', 'play_media', entityId, {
+    media_id: uri,
+    enqueue: opts.enqueue ?? 'replace',
+    ...(opts.radio ? { radio_mode: true } : {}),
+  });
+}

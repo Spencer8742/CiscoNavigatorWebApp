@@ -140,6 +140,16 @@ export function Pressable({
     onPointerUp,
     onPointerCancel: end,
     'aria-label': ariaLabel,
+    /*
+     * Styling hook, on BOTH element types.
+     *
+     * `:disabled` only exists on a real `<button>`, so a disabled row rendered
+     * as a div had no way to look disabled — it stayed fully lit while
+     * refusing to respond, which reads as a broken panel rather than an
+     * unavailable one. One attribute both can be styled by.
+     */
+    'data-disabled': disabled ? '' : undefined,
+    'aria-disabled': disabled ? true : undefined,
     style,
   };
 

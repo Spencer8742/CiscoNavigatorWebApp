@@ -92,6 +92,13 @@ const ALLOWED: Record<string, ReadonlySet<string>> = {
     'join',
     'unjoin',
   ]),
+  /**
+   * Music Assistant's own play verb, which takes a library URI rather than a
+   * URL. Nothing else from this domain is permitted: `play_announcement` can
+   * make a speaker fetch and play an arbitrary URL, and `transfer_queue`
+   * re-targets a second player.
+   */
+  music_assistant: new Set(['play_media']),
   input_boolean: new Set(['turn_on', 'turn_off', 'toggle']),
   input_number: new Set(['set_value', 'increment', 'decrement']),
   input_select: new Set(['select_option', 'select_next', 'select_previous']),
@@ -147,6 +154,7 @@ const ALLOWED_DATA: Record<string, ReadonlySet<string>> = {
     // checked against the same allow-list as the target — see below.
     'group_members',
   ]),
+  music_assistant: new Set(['media_id', 'media_type', 'enqueue', 'radio_mode']),
   input_number: new Set(['value']),
   input_select: new Set(['option']),
   humidifier: new Set(['humidity', 'mode']),
@@ -154,6 +162,42 @@ const ALLOWED_DATA: Record<string, ReadonlySet<string>> = {
   script: new Set(['variables']),
   scene: new Set(['transition']),
 };
+
+/**
+ * Domains whose services act on an entity from a DIFFERENT domain.
+ *
+ * Normally the entity's domain must equal the service's, so `lock.unlock`
+ * cannot be aimed at a light. Integration-level services break that rule
+ * legitimately: `music_assistant.play_media` targets a `media_player`. Listing
+ * the exceptions keeps the general rule strict rather than loosening it.
+ */
+const TARGET_DOMAIN: Record<string, string> = {
+  music_assistant: 'media_player',
+};
+
+/**
+ * What `media_id` may contain.
+ *
+ * Music Assistant will happily play a local file path or an arbitrary URL if
+ * you hand it one, which would turn "play this album" into a way to read the
+ * Music Assistant host's disk or make it fetch a URL of the caller's choosing.
+ * Library URIs — `library://album/12`, `spotify://track/…`, `filesystem://…` —
+ * all have a scheme, so requiring one and refusing `file:`, `http:` and
+ * `https:` leaves exactly the provider URIs that browsing produces.
+ */
+const MEDIA_URI_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
+const FORBIDDEN_URI_SCHEMES = new Set(['file', 'http', 'https', 'ftp', 'data']);
+const MAX_MEDIA_IDS = 25;
+const MAX_URI_LENGTH = 512;
+
+/** Whether a `media_id` value is a library URI we are willing to forward. */
+export function isPlayableUri(raw: unknown): boolean {
+  if (typeof raw !== 'string') return false;
+  if (raw.length === 0 || raw.length > MAX_URI_LENGTH) return false;
+  if (!MEDIA_URI_RE.test(raw)) return false;
+  const scheme = raw.slice(0, raw.indexOf(':')).toLowerCase();
+  return !FORBIDDEN_URI_SCHEMES.has(scheme);
+}
 
 export interface ServiceCall {
   domain: string;
@@ -191,7 +235,7 @@ export class ServiceGuard {
     // The entity's own domain must match the service domain, so
     // `lock.unlock` cannot be aimed at a `light.` entity and vice versa.
     const entityDomain = entity.slice(0, entity.indexOf('.'));
-    if (entityDomain !== domain) {
+    if (entityDomain !== (TARGET_DOMAIN[domain] ?? domain)) {
       log.warn(`Refused ${domain}.${service} for "${entity}": domain mismatch`);
       return 'Not permitted';
     }
@@ -221,6 +265,18 @@ export class ServiceGuard {
           log.warn(`Refused ${domain}.${service}: "${member}" is not a permitted player`);
           return 'Not permitted';
         }
+      }
+    }
+
+    // (4) `media_id` names what to play. Music Assistant accepts file paths
+    // and URLs there as well as library URIs, so only the URIs are forwarded —
+    // see MEDIA_URI_RE.
+    const mediaId = data?.['media_id'];
+    if (mediaId !== undefined) {
+      const ids = Array.isArray(mediaId) ? mediaId : [mediaId];
+      if (ids.length === 0 || ids.length > MAX_MEDIA_IDS || !ids.every(isPlayableUri)) {
+        log.warn(`Refused ${domain}.${service}: media_id is not a library URI`);
+        return 'Not permitted';
       }
     }
 

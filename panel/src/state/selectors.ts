@@ -129,55 +129,6 @@ export const roomActivity = computed<Map<string, number>>(() => {
  * Reads only the configured media players, so a house full of Chromecasts
  * that are not on the dashboard cannot wake this computed.
  */
-/**
- * The player the panel should show when the user has not picked one.
- *
- * `media.default: active` picks whatever is currently playing, which is
- * almost always what you want on a wall panel: you walked over because music
- * is playing, and it should already be showing rather than making you find
- * which of five speakers it is.
- *
- * Shared so the Home card and the Media screen never disagree about which
- * player is "the" one.
- */
-export const defaultPlayerId = computed<string>(() => {
-  const cfg = mediaConfig.value;
-  const first = cfg.players[0]?.entity ?? '';
-
-  if (cfg.default !== 'active') {
-    return cfg.players.some((p) => p.entity === cfg.default) ? cfg.default : first;
-  }
-
-  for (const p of cfg.players) {
-    if (entity(p.entity).value?.s === 'playing') return p.entity;
-  }
-  for (const p of cfg.players) {
-    const s = entity(p.entity).value?.s;
-    if (s === 'paused' || s === 'buffering') return p.entity;
-  }
-  return first;
-});
-
-/** True when a configured player is actively producing sound. */
-export const anythingPlaying = computed<boolean>(() =>
-  mediaConfig.value.players.some((p) => {
-    const s = entity(p.entity).value?.s;
-    return s === 'playing' || s === 'paused' || s === 'buffering';
-  }),
-);
-
-export const nowPlaying = computed<string | null>(() => {
-  for (const p of mediaConfig.value.players) {
-    const state = entity(p.entity).value;
-    if (state?.s !== 'playing') continue;
-    const title = typeof state.a['media_title'] === 'string' ? state.a['media_title'] : null;
-    if (!title) continue;
-    const artist = typeof state.a['media_artist'] === 'string' ? state.a['media_artist'] : null;
-    return artist ? `${title} — ${artist}` : title;
-  }
-  return null;
-});
-
 /* ── Music Assistant speakers ─────────────────────────────────────────────
    Music Assistant is the source of truth. Everything below reads its own
    attributes off the entities Home Assistant already streams us — there is no
@@ -252,6 +203,64 @@ export const speakers = computed<SpeakerInfo[]>(() => {
   }
 
   return out;
+});
+
+/**
+ * The player the panel should show when the user has not picked one.
+ *
+ * `media.default: active` picks whatever is currently playing, which is almost
+ * always what you want on a wall panel: you walked over because music is
+ * playing, and it should already be showing rather than making you find which
+ * of five speakers it is.
+ *
+ * Reads `speakers` rather than `media.players`, which matters for the setup
+ * this app actually encourages: with Music Assistant discovery on and nothing
+ * listed in `dashboard.yaml`, there ARE no configured players, and keying off
+ * the config alone left the Media screen empty — showing "player not found"
+ * next to a house full of speakers the panel could see perfectly well.
+ *
+ * Shared so the Home card and the Media screen never disagree about which
+ * player is "the" one.
+ */
+export const defaultPlayerId = computed<string>(() => {
+  const cfg = mediaConfig.value;
+  const all = speakers.value;
+  const first = all[0]?.id ?? '';
+
+  if (cfg.default !== 'active') {
+    return all.some((s) => s.id === cfg.default) ? cfg.default : first;
+  }
+
+  for (const s of all) {
+    if (s.state === 'playing') return s.id;
+  }
+  for (const s of all) {
+    if (s.state === 'paused' || s.state === 'buffering') return s.id;
+  }
+  return first;
+});
+
+/** True when a player is actively producing sound. */
+export const anythingPlaying = computed<boolean>(() =>
+  speakers.value.some(
+    (s) => s.state === 'playing' || s.state === 'paused' || s.state === 'buffering',
+  ),
+);
+
+/**
+ * A one-line summary of whatever is playing, for the screensaver overlay.
+ */
+export const nowPlaying = computed<string | null>(() => {
+  for (const speaker of speakers.value) {
+    if (speaker.state !== 'playing') continue;
+    const state = entity(speaker.id).value;
+    if (!state) continue;
+    const title = typeof state.a['media_title'] === 'string' ? state.a['media_title'] : null;
+    if (!title) continue;
+    const artist = typeof state.a['media_artist'] === 'string' ? state.a['media_artist'] : null;
+    return artist ? `${title} — ${artist}` : title;
+  }
+  return null;
 });
 
 /** Speakers that are ad-hoc joinable, i.e. not permanent MA groups. */

@@ -47,6 +47,15 @@ interface Pending {
 
 /** A service call that hasn't come back in this long is not coming back. */
 const CALL_TIMEOUT_MS = 10_000;
+/**
+ * Longer, for calls whose answer we actually need.
+ *
+ * A `light.turn_on` that has not returned in ten seconds has failed. A
+ * `music_assistant.get_library` against a cold Spotify provider genuinely can
+ * take longer than that and still succeed, and timing it out would show an
+ * error on a screen that was about to fill with albums.
+ */
+const RESPONSE_TIMEOUT_MS = 25_000;
 /** Application-level ping interval — catches half-open sockets. */
 const PING_INTERVAL_MS = 30_000;
 const PING_TIMEOUT_MS = 10_000;
@@ -368,6 +377,74 @@ export class HaClient {
         this.#pending.delete(id);
         reject(new Error('Home Assistant did not respond'));
       }, CALL_TIMEOUT_MS);
+
+      this.#pending.set(id, { resolve, reject, timer });
+    });
+  }
+
+  /**
+   * Call a service that RETURNS something, and hand back what it returned.
+   *
+   * Home Assistant only includes a service's response when the caller opts in
+   * with `return_response`, and refuses the call outright if you ask a service
+   * that has nothing to say. So this is a separate method rather than a flag
+   * on `callService`: the two are not interchangeable and mixing them up
+   * produces a confusing error from HA rather than a missing field.
+   *
+   * The result envelope is `{ context, response }` — the response is what the
+   * service itself built.
+   */
+  async callWithResponse(
+    domain: string,
+    service: string,
+    target: { entity_id: string } | Record<string, never>,
+    data: Record<string, unknown>,
+  ): Promise<unknown> {
+    const result = await this.#request(
+      {
+        type: 'call_service',
+        domain,
+        service,
+        ...(Object.keys(target).length > 0 ? { target } : {}),
+        service_data: data,
+        return_response: true,
+      },
+      RESPONSE_TIMEOUT_MS,
+    );
+
+    if (result && typeof result === 'object' && 'response' in result) {
+      return (result as { response: unknown }).response;
+    }
+    return result;
+  }
+
+  /**
+   * Send an arbitrary WebSocket command and wait for its result.
+   *
+   * Used for registry lookups, which are plain commands rather than service
+   * calls. Not exposed to panels — the callers are all in this process.
+   */
+  command(type: string, payload: Record<string, unknown> = {}): Promise<unknown> {
+    return this.#request({ type, ...payload }, CALL_TIMEOUT_MS);
+  }
+
+  #request(msg: Record<string, unknown>, timeoutMs: number): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      if (this.#state !== 'connected') {
+        reject(new Error('Home Assistant is not connected'));
+        return;
+      }
+
+      const id = this.#nextId();
+      if (!this.#send({ id, ...msg })) {
+        reject(new Error('Home Assistant is not connected'));
+        return;
+      }
+
+      const timer = setTimeout(() => {
+        this.#pending.delete(id);
+        reject(new Error('Home Assistant did not respond'));
+      }, timeoutMs);
 
       this.#pending.set(id, { resolve, reject, timer });
     });
