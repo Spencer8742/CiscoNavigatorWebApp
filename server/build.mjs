@@ -37,6 +37,21 @@ const options = {
   logLevel: 'info',
 };
 
+/**
+ * A second bundle, for the test suite only.
+ *
+ * `dist/server.js` starts listening when it is imported, so it cannot be
+ * imported to test a function. This exposes the pieces that are worth
+ * exercising directly — see src/testkit.ts. Nothing ships it; the container's
+ * entry point is dist/server.js as before.
+ */
+/** @type {import('esbuild').BuildOptions} */
+const testkit = {
+  ...options,
+  entryPoints: ['src/testkit.ts'],
+  outfile: 'dist/testkit.js',
+};
+
 if (process.argv.includes('--run')) {
   // `npm run dev` path: rebuild on change. Node's own --watch restarts the
   // process when dist/server.js is rewritten.
@@ -45,5 +60,5 @@ if (process.argv.includes('--run')) {
   await ctx.watch();
   await import('./dist/server.js');
 } else {
-  await build(options);
+  await Promise.all([build(options), build(testkit)]);
 }

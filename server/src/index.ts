@@ -18,6 +18,7 @@ import { MassClient } from '~/mass/client.ts';
 import { MassStore } from '~/mass/store.ts';
 import { MassCommands } from '~/mass/commands.ts';
 import { MassBrowser } from '~/mass/browse.ts';
+import { CastKeeper } from '~/cast/keeper.ts';
 import { PrefsStore } from '~/config/prefs.ts';
 import { ImmichClient } from '~/immich/client.ts';
 import { ImmichImages } from '~/immich/images.ts';
@@ -271,6 +272,19 @@ async function main(): Promise<void> {
     },
   });
 
+  /* ── Google Nest Hubs ────────────────────────────────────────────────────
+     Optional, and inert unless `cast.displays` names something. A Hub loses
+     whatever it was showing on every reboot, timer and voice answer, so this
+     checks each one and casts the dashboard back. See cast/keeper.ts for why
+     that job is in here rather than in a helper container beside it. */
+
+  const castKeeper = new CastKeeper({
+    getConfig: () => config.current,
+    // The token comes from the environment and stops here: this is what
+    // saves it from being copied into a script or a second container.
+    token: env.panelToken,
+  });
+
   // A config edit changes which entities are visible. The store already holds
   // every entity Home Assistant knows about, so newly referenced ones can be
   // pushed immediately rather than waiting for them to change state.
@@ -278,6 +292,7 @@ async function main(): Promise<void> {
     const patch = store.setConfig(cfg);
     if (!isEmptyPatch(patch)) hub.broadcastPatch(patch);
     playlist.setConfig(cfg);
+    castKeeper.reload();
   });
 
   haClient.start();
@@ -447,6 +462,9 @@ async function main(): Promise<void> {
     log.info(`Home Assistant: ${env.ha.enabled ? env.ha.url : 'not configured'}`);
     log.info(`Immich: ${env.immich.enabled ? env.immich.url : 'not configured'}`);
     log.info(`Music Assistant: ${env.mass.enabled ? env.mass.url : 'not configured'}`);
+    // Started here rather than above so the first cast cannot land on a
+    // display before there is anything for it to load.
+    castKeeper.start();
   });
 
   /* ── Shutdown ────────────────────────────────────────────────────────────
@@ -465,6 +483,7 @@ async function main(): Promise<void> {
     haClient.stop();
     massClient.stop();
     massStore.dispose();
+    castKeeper.stop();
     hub.close();
     config.close();
     server.close(() => process.exit(0));

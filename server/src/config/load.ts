@@ -3,10 +3,12 @@ import { watch, type FSWatcher } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { logger } from '~/lib/log.ts';
-import { CAST_PANES } from '@shared/config.ts';
+import { CAST_PANES, CAST_TARGETS } from '@shared/config.ts';
 import type {
   AlertRule,
+  CastDisplay,
   CastPane,
+  CastTarget,
   DashboardConfig,
   EntityRef,
   ImmichSource,
@@ -70,6 +72,9 @@ export const FALLBACK_CONFIG: DashboardConfig = {
   home: { favorites: [], scenes: [], status: [], alerts: [] },
   media: { players: [], default: 'active', volumeStep: 0.05, sections: ['Speakers', 'TVs'] },
   cast: {
+    baseUrl: '',
+    displays: [],
+    checkSeconds: 300,
     panes: ['clock', 'media', 'photos'],
     rotateSeconds: 30,
     followMusic: true,
@@ -285,6 +290,11 @@ function validate(raw: unknown): DashboardConfig {
     },
 
     cast: {
+      baseUrl: str(castRaw['baseUrl'], '', 'cast.baseUrl'),
+      displays: displayList(castRaw['displays']),
+      // Five minutes: a display that drops is back well before anyone has
+      // finished wondering why it is showing a photo of a beach.
+      checkSeconds: num(castRaw['checkSeconds'], 300, 'cast.checkSeconds', 0, 86_400),
       panes: paneList(castRaw['panes']),
       // Below ~8s a rotating display is a distraction rather than something
       // you glance at; 0 pins the first pane and never rotates.
@@ -319,6 +329,69 @@ function paneList(v: unknown): CastPane[] {
     // Deduped: the same pane twice would stall the rotation on it.
     if (!out.includes(name as CastPane)) out.push(name as CastPane);
   }
+  return out;
+}
+
+/**
+ * The Cast displays the backend keeps the dashboard on.
+ *
+ * Written either way, because most people want the same thing on every
+ * display and should not have to say so twice:
+ *
+ *   displays:
+ *     - 192.168.1.42                     # the configured rotation
+ *     - host: 192.168.1.43
+ *       name: Kitchen
+ *       pane: dashboard
+ *
+ * A bad entry is dropped with a warning. Nothing here can fail the config —
+ * a typo in a display's address must not cost you the dashboard on the wall.
+ */
+function displayList(v: unknown): CastDisplay[] {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v)) {
+    warn('cast.displays', 'list', v);
+    return [];
+  }
+
+  const out: CastDisplay[] = [];
+  v.forEach((item, i) => {
+    const path = `cast.displays[${i}]`;
+    const raw = typeof item === 'string' ? { host: item } : obj(item);
+
+    // `ip:` accepted as an alias — it is what most people will reach for,
+    // and being right about the word is not worth a silent misconfiguration.
+    const host = str(raw['host'] ?? raw['ip'], '', `${path}.host`);
+    if (!host) {
+      warn(path, 'an address like 192.168.1.42', item);
+      return;
+    }
+    /*
+     * A URL here is a natural mistake and produces a baffling failure — a TLS
+     * connection to a host called "http" — so it is caught by name.
+     */
+    if (host.includes('/') || /\s/.test(host)) {
+      warn(`${path}.host`, 'a bare address, not a URL', host);
+      return;
+    }
+
+    const display: CastDisplay = { host };
+
+    const name = str(raw['name'], '', `${path}.name`);
+    if (name) display.name = name;
+
+    const pane = raw['pane'];
+    if (pane !== undefined && pane !== null) {
+      const wanted = typeof pane === 'string' ? pane.trim().toLowerCase() : '';
+      if ((CAST_TARGETS as readonly string[]).includes(wanted)) {
+        display.pane = wanted as CastTarget;
+      } else {
+        warn(`${path}.pane`, CAST_TARGETS.join(' | '), pane);
+      }
+    }
+
+    out.push(display);
+  });
   return out;
 }
 
