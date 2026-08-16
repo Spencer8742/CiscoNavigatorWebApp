@@ -20,7 +20,7 @@ import {
 } from '~/state/selectors.ts';
 import { Icon } from '~/components/Icon.tsx';
 import { getToken } from '~/net/auth.ts';
-import { castPaneOverride, startCastReceiver } from '~/lib/cast.ts';
+import { castPaneOverride } from '~/lib/cast.ts';
 import { CAST_PANES, type CastPane } from '@shared/config.ts';
 
 /**
@@ -37,12 +37,13 @@ import { CAST_PANES, type CastPane } from '@shared/config.ts';
  * So: a handful of panes that rotate on their own, typography sized to be read
  * from across a kitchen rather than tapped, and nothing that needs a finger.
  *
- * ## Interaction, if it turns out to work
+ * ## Interaction
  *
- * `lib/cast.ts` asks the platform for touch. Whether a Nest Hub honours that
- * for a receiver reached through DashCast is unverified. This screen is
- * designed to be correct either way — tapping advances to the next pane, which
- * is a bonus when it works and costs nothing when it does not.
+ * `lib/cast.ts` asks the platform for touch, and a Nest Hub does honour it
+ * (confirmed August 2026) — so tapping advances to the next pane. If you want
+ * the real, fully interactive dashboard instead, cast `?pane=dashboard`; these
+ * panes remain the better choice for a display you only ever read, and the
+ * only choice if Google stops delivering touch.
  *
  * ## One display, one job
  *
@@ -67,12 +68,6 @@ export function Cast() {
 
   const [index, setIndex] = useState(0);
   const pane = panes[index % panes.length] ?? 'clock';
-
-  // Take over the Cast session once, on mount. Everything below renders
-  // correctly whether or not this succeeds — see lib/cast.ts.
-  useEffect(() => {
-    void startCastReceiver();
-  }, []);
 
   /*
    * Rotate.

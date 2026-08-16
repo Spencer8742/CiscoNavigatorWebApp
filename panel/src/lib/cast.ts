@@ -24,10 +24,11 @@
  * - `disableIdleTimeout` — the actual fix. Tells the platform this receiver
  *   is a long-lived experience rather than a finished video.
  * - `touchScreenOptimizedApp` — asks the platform to deliver touch to the
- *   page. Whether a Nest Hub honours this for a receiver reached via
- *   DashCast is genuinely unverified; if it does, the dashboard becomes
- *   interactive, and if it does not, cast mode is still a display. Nothing
- *   depends on it working.
+ *   page. **Confirmed working** on a Nest Hub reached via DashCast (August
+ *   2026), which is what makes `?pane=dashboard` worth having: the real
+ *   dashboard becomes a real control panel. Google has never guaranteed this
+ *   and could stop honouring it, so nothing here depends on it — without
+ *   touch the rotating panes are still a display.
  *
  * ## What this deliberately does NOT do
  *
@@ -80,6 +81,21 @@ export function isCastMode(): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Whether this cast display should show the FULL dashboard rather than the
+ * simplified panes — `?cast=1&pane=dashboard`.
+ *
+ * Worth having as well as the panes, not instead of them. With touch working
+ * this is a real control panel and the better default; without it, a
+ * dashboard you cannot touch is a worse display than panes designed to be
+ * read from across a room. Which you get depends on the device and on
+ * whether Google keeps honouring `touchScreenOptimizedApp`, so it stays a
+ * per-URL choice rather than something this code decides for you.
+ */
+export function isCastDashboard(): boolean {
+  return castPaneOverride() === 'dashboard';
 }
 
 /**
