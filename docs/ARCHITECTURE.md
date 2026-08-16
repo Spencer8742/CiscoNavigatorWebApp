@@ -18,8 +18,9 @@ Room Navigator (Chromium 102, kiosk, 10.1")
         ▼
 navigator-panel (Node 22, ~25 MB container)
         │  holds all credentials, all state, all retry logic
-        ├── WS  ──▶ Home Assistant  (one connection, shared by all panels)
-        └── HTTP ──▶ Immich         (API key never leaves this process)
+        ├── WS  ──▶ Home Assistant   (the house: lights, locks, sensors)
+        ├── WS  ──▶ Music Assistant  (the music: speakers, queue, library)
+        └── HTTP ──▶ Immich          (API key never leaves this process)
 ```
 
 The organising principle: **the panel is a renderer, the backend is the
@@ -355,44 +356,57 @@ Slider drags are **rate-limited to one command per ~120 ms while dragging plus
 a guaranteed final command on release**, so a 3-second drag sends ~25 messages
 instead of ~180, and always ends on the exact value.
 
-### Music Assistant: nothing of our own
+### Music Assistant is a SECOND connection, not a Home Assistant feature
 
-Speaker grouping and music browsing both go through the **same socket and the
-same allow-list** as everything else. There is no second connection to Music
-Assistant and no state duplicated from it:
+Home Assistant owns the house — lights, locks, covers, sensors. **Music
+Assistant owns the music**, and the backend talks to it directly on its own
+WebSocket (`ws://host:8095/ws`) rather than through Home Assistant's
+`music_assistant.*` services.
 
-| Feature | Service | Notes |
+That is a deliberate reversal of the "one connection, one source of truth"
+rule everywhere else in this document, so it is worth being specific about
+what it bought. The Home Assistant integration exposes a small slice of Music
+Assistant. Three things a wall panel wants are not in it:
+
+| | Through Home Assistant | Direct |
 | --- | --- | --- |
-| Grouping | `media_player.join` / `unjoin` | Standard HA services, which MA implements |
-| Group membership | `group_members` attribute | Arrives on the existing subscription |
-| Library | `music_assistant.get_library` | Favorites and Recently Played are the same call with different filter and sort |
-| Search | `music_assistant.search` | |
-| Up next | `music_assistant.get_queue` | |
-| Playback | `music_assistant.play_media` | Fire-and-forget, like every other command |
+| Queue | current item, next item, a count | the rows, paged — plus move, remove, jump, clear |
+| "Recently played" | the library re-sorted by last-played | a real play history, including things you do not own |
+| Updates | re-fetch after each track change | pushed the instant anything changes it |
+| Drill-down | album → (nothing) | album → tracks, artist → albums, playlist → tracks |
+| Groupable-with | inferred from a feature bitmask | `can_group_with`, exactly |
 
-The first three of those are `SupportsResponse.ONLY` — they answer rather than
-act — so the client sends `return_response: true` and reads
-`result.response`. This is the only request/reply path in the backend besides
-photos; everything else is a push or fire-and-forget.
+Protocol notes, being the parts that fail silently rather than loudly:
 
-Two consequences worth knowing:
+- **The server info frame is unsolicited.** It arrives before anything is
+  asked for and carries no `message_id`, so it is consumed as part of
+  connecting rather than dispatched like a reply.
+- **Auth from schema 28.** Newer servers require a token
+  (`MASS_TOKEN`); older ones have no `auth` command at all, so sending one
+  would break them. The schema version in the info frame decides.
+- **Partial results.** A long list arrives as several messages sharing one
+  `message_id`, all but the last flagged `partial`. Treating the first as the
+  whole answer truncates every long list — and only for people with big
+  libraries.
 
-- **The config entry id is discovered, not configured.** `search` and
-  `get_library` target a Music Assistant *config entry* rather than an entity.
-  The backend finds it by asking `config/entity_registry/get` about any entity
-  carrying `mass_player_type`. That command needs no admin rights, so an
-  ordinary long-lived token is enough.
-- **The queue can be read but not edited.** `get_queue` returns the current
-  item, the next item and a count — not the list. Reordering, removing and
-  jumping exist only on Music Assistant's own WebSocket API. So the panel shows
-  "Up next" rather than a queue it could not act on.
+The command surface is allow-listed by exact name, and that matters more here
+than on the Home Assistant side, not less: Music Assistant's API is an
+*administrative* API. The same socket that skips a track can delete a
+playlist, remove a provider and trigger a full resync. Every player and queue
+id in a command is checked against what Music Assistant actually told us
+about, and `media` must be a library URI — Music Assistant will otherwise
+happily play `file:///etc/passwd` or fetch a URL of the caller's choosing.
 
-Cover art never reaches the panel as a Music Assistant URL. Those URLs are
+Cover art never reaches the panel as a Music Assistant URL. Those are
 frequently container hostnames nothing else can resolve, and handing them over
 would tell the panel where another service lives. The backend registers each
-one and returns an opaque key on our own origin instead — see
-`server/src/http/media-art.ts` for why a key rather than a `?url=` parameter is
-the whole point.
+one and returns an opaque key on our own origin — see
+`server/src/http/media-art.ts` for why a key rather than a `?url=` parameter
+is the whole point.
+
+**Without `MASS_URL` the panel still runs.** Home Assistant, photos and the
+clock are unaffected; the Media screen explains what is missing rather than
+sitting empty.
 
 ### Reconnection
 

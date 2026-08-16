@@ -149,7 +149,6 @@ export interface MediaConfig {
    * services already on the guard's allow-list. It does not widen access to
    * any other domain.
    */
-  discoverMusicAssistant: boolean;
   /**
    * Section headings for the player list, in the order they appear.
    *

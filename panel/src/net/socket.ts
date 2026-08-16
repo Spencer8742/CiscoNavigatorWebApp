@@ -1,6 +1,7 @@
 import { Backoff } from '@shared/backoff.ts';
 import { socketUrl } from '~/net/auth.ts';
 import { applyPatch, applySnapshot } from '~/state/entities.ts';
+import { setPlayers } from '~/state/players.ts';
 import { setConfig } from '~/config/index.ts';
 import { connectionProblem, health, prefs, ready, showToast, socketState } from '~/state/ui.ts';
 import { diagnose } from '~/net/diagnose.ts';
@@ -176,6 +177,7 @@ function handle(msg: ServerMessage): void {
       applySnapshot(msg.states);
       health.value = msg.health;
       prefs.value = msg.prefs;
+      setPlayers(msg.players, msg.queues);
       socketState.value = 'connected';
       ready.value = true;
       // Clear any diagnosis: whatever was wrong is now demonstrably fixed.
@@ -190,6 +192,10 @@ function handle(msg: ServerMessage): void {
 
     case 'patch':
       applyPatch(msg.patch);
+      break;
+
+    case 'players':
+      setPlayers(msg.players, msg.queues);
       break;
 
     case 'config':
@@ -317,6 +323,17 @@ export function callService(
   data?: Record<string, unknown>,
 ): boolean {
   return send({ t: 'call', id: nextId(), domain, service, entity, data });
+}
+
+/**
+ * Run a Music Assistant command.
+ *
+ * Fire-and-forget for the same reason `callService` is: the UI has already
+ * moved, and Music Assistant pushes the authoritative state a moment later.
+ * Waiting for the ack would add a round trip to every tap.
+ */
+export function massCommand(command: string, args?: Record<string, unknown>): boolean {
+  return send({ t: 'mass', id: nextId(), command, args });
 }
 
 /**

@@ -1,5 +1,5 @@
 import { signal, type Signal } from '@preact/signals';
-import { isMusicAssistantPlayer, type EntityState, type StatePatch } from '@shared/protocol.ts';
+import type { EntityState, StatePatch } from '@shared/protocol.ts';
 
 /**
  * The entity store: one signal per entity.
@@ -21,34 +21,6 @@ import { isMusicAssistantPlayer, type EntityState, type StatePatch } from '@shar
 
 const store = new Map<string, Signal<EntityState | null>>();
 
-/**
- * Ids of every Music Assistant speaker currently known.
- *
- * A separate signal rather than something derived by iterating `store`,
- * because `store` is a plain Map: a computed that walked it would neither
- * notice a speaker appearing nor stop at the ones it cares about — it would
- * subscribe to all two hundred entities and reintroduce exactly the re-render
- * storm this file exists to prevent.
- *
- * This changes only when the SET of speakers changes, which is on connect, on
- * resync, and when someone adds a speaker to Music Assistant. Their states
- * change through their own signals as usual.
- */
-export const maPlayerIds = signal<string[]>([]);
-
-/** Recompute the speaker list, writing only when it genuinely differs. */
-function refreshMaPlayers(): void {
-  const found: string[] = [];
-  for (const [id, sig] of store) {
-    const state = sig.peek();
-    if (state && isMusicAssistantPlayer(id, state)) found.push(id);
-  }
-  found.sort();
-
-  const prev = maPlayerIds.peek();
-  if (prev.length === found.length && prev.every((id, i) => id === found[i])) return;
-  maPlayerIds.value = found;
-}
 
 /**
  * Get (or lazily create) the signal for an entity.
@@ -84,7 +56,6 @@ export function applySnapshot(states: Record<string, EntityState>): void {
     const next = states[id];
     if (next) entity(id).value = next;
   }
-  refreshMaPlayers();
 }
 
 /**
@@ -94,10 +65,6 @@ export function applySnapshot(states: Record<string, EntityState>): void {
  * the same logic the backend runs — written once, in one shape, on both ends.
  */
 export function applyPatch(patch: StatePatch): void {
-  // Only an add or a delete can change WHICH speakers exist; a state change
-  // on one that already exists cannot.
-  const membershipChanged = Boolean(patch.add) || Boolean(patch.del);
-
   if (patch.add) {
     for (const id in patch.add) {
       const next = patch.add[id];
@@ -139,7 +106,6 @@ export function applyPatch(patch: StatePatch): void {
     }
   }
 
-  if (membershipChanged) refreshMaPlayers();
 }
 
 /**

@@ -1315,3 +1315,190 @@
   font-size: 0.875rem;
   color: var(--text-faint);
 }
+
+/* ── Browse rows, split ───────────────────────────────────────────────────
+   An album means two things — "play it" and "show me what is on it" — so the
+   row is two targets: the body opens, the button on the right plays. Both are
+   well past a fingertip, which is why this is a split row rather than a menu
+   hiding one of them behind a second tap. */
+
+.browse-main {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-lg);
+  text-align: left;
+  color: var(--text-dim);
+}
+
+.browse-play {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  height: 3rem;
+  margin-right: var(--s-2);
+  border-radius: var(--r-full);
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.browse-play[data-disabled] { opacity: 0.35; }
+
+.sheet-back {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: var(--r-md);
+  color: var(--text-dim);
+  background: transparent;
+}
+
+/* ── Progress ─────────────────────────────────────────────────────────── */
+
+.np-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin: var(--s-3) 0 var(--s-2);
+}
+
+.np-time {
+  flex: 0 0 auto;
+  min-width: 3.2rem;
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+
+.np-time:last-child { text-align: right; }
+
+/* ── Queue ────────────────────────────────────────────────────────────── */
+
+.queue-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  width: 100%;
+  min-height: var(--touch);
+  margin: 0 var(--s-6) var(--s-4);
+  padding: var(--s-2) var(--s-4);
+  border-radius: var(--r-lg);
+  background: var(--surface-1);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-dim);
+  text-align: left;
+}
+
+.queue-bar[data-disabled] { opacity: 0.45; }
+
+.queue-bar-label {
+  font-size: 0.75rem;
+  font-weight: 560;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.queue-bar-count {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 1rem;
+  font-weight: 580;
+  color: var(--text);
+}
+
+.queue-sheet {
+  width: min(58rem, 100%);
+  height: 92%;
+  max-height: 92%;
+}
+
+.queue-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  width: 100%;
+  margin-bottom: var(--s-2);
+  border-radius: var(--r-lg);
+  background: var(--surface-1);
+  border: 1px solid var(--border-subtle);
+}
+
+.queue-row.is-playing {
+  border-color: var(--accent-dim);
+  background: var(--accent-soft);
+}
+
+.queue-main {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 4.25rem;
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-lg);
+  text-align: left;
+  color: var(--text-dim);
+}
+
+.queue-time {
+  flex: 0 0 auto;
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+
+.queue-more {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  height: 3rem;
+  margin-right: var(--s-2);
+  border-radius: var(--r-full);
+  background: var(--surface-3);
+  color: var(--text-dim);
+}
+
+/* Reorder controls, revealed per row. Buttons rather than a drag handle:
+   RoomOS reorders touch events unpredictably (docs/ROOMOS.md §5) and HTML
+   drag-and-drop never fires on touch at all. */
+.queue-actions {
+  flex: 1 0 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  padding: 0 var(--s-3) var(--s-3);
+}
+
+.move-chip.is-danger,
+.play-option.is-danger {
+  color: var(--danger, #ff6b6b);
+  border-color: color-mix(in srgb, var(--danger, #ff6b6b) 40%, transparent);
+}
+
+/* `color-mix` is not available on the RoomOS engine (Chromium 102), so the
+   border above silently falls back to the inherited one there. The colour
+   still carries the meaning, which is what matters. */
+@supports not (color: color-mix(in srgb, red 50%, blue)) {
+  .move-chip.is-danger,
+  .play-option.is-danger {
+    border-color: var(--border);
+  }
+}
+
+.move-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}

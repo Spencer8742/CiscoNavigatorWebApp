@@ -14,7 +14,10 @@ import { Hub } from '~/hub/index.ts';
 import { HaClient } from '~/ha/client.ts';
 import { HaStore, isEmptyPatch } from '~/ha/store.ts';
 import { ServiceGuard } from '~/ha/services.ts';
-import { MusicBrowser } from '~/ha/music.ts';
+import { MassClient } from '~/mass/client.ts';
+import { MassStore } from '~/mass/store.ts';
+import { MassCommands } from '~/mass/commands.ts';
+import { MassBrowser } from '~/mass/browse.ts';
 import { PrefsStore } from '~/config/prefs.ts';
 import { ImmichClient } from '~/immich/client.ts';
 import { ImmichImages } from '~/immich/images.ts';
@@ -111,6 +114,8 @@ async function main(): Promise<void> {
     ha: env.ha.enabled ? haClient.state : 'disconnected',
     immich: env.immich.enabled ? (immichReachable ? 'connected' : 'disconnected') : 'disconnected',
     immichError: env.immich.enabled ? (immich.lastError?.message ?? null) : null,
+    mass: env.mass.enabled ? massClient.state : 'disabled',
+    massError: env.mass.enabled ? massClient.lastError : null,
     haLastMessage: haClient.lastMessageAt ? new Date(haClient.lastMessageAt).toISOString() : null,
     uptime: Math.floor((Date.now() - STARTED_AT) / 1000),
     version: VERSION,
@@ -176,7 +181,43 @@ async function main(): Promise<void> {
   prefs.onChange((next) => hub.broadcastPrefs(next));
 
   const services = new ServiceGuard(haClient, store);
-  const music = new MusicBrowser(haClient, store, mediaArt);
+
+  /* ── Music Assistant ─────────────────────────────────────────────────────
+     A second connection, and the only one this app opens besides Home
+     Assistant. It is here because the music half of a wall panel — the queue,
+     the library, real-time queue changes — is simply not in the slice of
+     Music Assistant that Home Assistant exposes. See mass/client.ts. */
+
+  const massClient = new MassClient(env.mass, {
+    onEvent(event) {
+      massStore.apply(event);
+    },
+
+    onReady() {
+      // Refetch on every (re)connect rather than trusting what we held: while
+      // the link was down the house kept playing, and a stale queue on a wall
+      // is worse than a blank one.
+      void massStore.refresh();
+    },
+
+    onStateChange(state) {
+      log.info(`Music Assistant link: ${state}`);
+      // Unlike Home Assistant, there is no grace period here. A speaker whose
+      // state we cannot verify should stop claiming to be playing, and there
+      // is no equivalent of "the light is probably still on".
+      if (state !== 'connected') massStore.clear();
+      hub.broadcastHealth(getHealth());
+    },
+  });
+
+  const massStore = new MassStore(massClient, mediaArt, {
+    onChange(players, queues) {
+      hub.broadcastPlayers(players, queues);
+    },
+  });
+
+  const massCommands = new MassCommands(massClient, massStore);
+  const massBrowser = new MassBrowser(massClient, massStore, mediaArt);
 
   const hub = new Hub(server, {
     auth,
@@ -195,7 +236,9 @@ async function main(): Promise<void> {
     onPref: (key, value) => prefs.set(key, value),
     onLayout: (layout) => prefs.setLayout(layout, config.current.media.sections),
 
-    onBrowse: (req) => music.browse(req),
+    getPlayers: () => massStore.snapshot(),
+    onMassCommand: (command, args) => massCommands.run(command, args),
+    onBrowse: (req) => massBrowser.browse(req),
 
     onPhotos: async (count) => {
       const photos = await playlist.take(count);
@@ -216,6 +259,7 @@ async function main(): Promise<void> {
   });
 
   haClient.start();
+  massClient.start();
 
   async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     applySecurityHeaders(res);
@@ -361,6 +405,7 @@ async function main(): Promise<void> {
     log.info(`Panel authentication: ${auth.enabled ? 'enabled' : 'DISABLED'}`);
     log.info(`Home Assistant: ${env.ha.enabled ? env.ha.url : 'not configured'}`);
     log.info(`Immich: ${env.immich.enabled ? env.immich.url : 'not configured'}`);
+    log.info(`Music Assistant: ${env.mass.enabled ? env.mass.url : 'not configured'}`);
   });
 
   /* ── Shutdown ────────────────────────────────────────────────────────────
@@ -377,6 +422,8 @@ async function main(): Promise<void> {
     log.info(`${signal} received — shutting down`);
 
     haClient.stop();
+    massClient.stop();
+    massStore.dispose();
     hub.close();
     config.close();
     server.close(() => process.exit(0));

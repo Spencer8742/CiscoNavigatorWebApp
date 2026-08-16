@@ -1,9 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { Icon } from '~/components/Icon.tsx';
 import { Pressable } from '~/components/Pressable.tsx';
-import { entity } from '~/state/entities.ts';
-import { anythingPlaying, defaultPlayerId } from '~/state/selectors.ts';
-import { attrString, friendlyName } from '~/domains/registry.ts';
+import { anythingPlaying, defaultPlayerId, speakers } from '~/state/selectors.ts';
 import { fetchGrid, photoUrl } from '~/media/photos.ts';
 import { thumbHashCss } from '~/lib/thumbhash.ts';
 import { getToken } from '~/net/auth.ts';
@@ -26,7 +24,9 @@ import type { PhotoRef } from '@shared/protocol.ts';
  */
 export function HomeSide() {
   const wantsMedia = prefs.value.homeSide === 'media';
-  const hasPlayers = mediaConfig.value.players.length > 0;
+  // Speakers come from Music Assistant now, so "do we have any" is a question
+  // about what MA reported rather than about what dashboard.yaml listed.
+  const hasPlayers = speakers.value.length > 0;
   const photosOn = immichConfig.value.enabled;
 
   if (wantsMedia && hasPlayers && anythingPlaying.value) return <NowPlayingCard />;
@@ -40,20 +40,17 @@ export function HomeSide() {
 /** Artwork, title, and transport — the parts you use without walking closer. */
 function NowPlayingCard() {
   const id = defaultPlayerId.value;
-  const state = entity(id).value;
-  if (!state) return null;
+  const player = speakers.value.find((s) => s.id === id);
+  if (!player) return null;
 
-  const title = attrString(state, 'media_title') ?? friendlyName(state, id);
-  const artist = attrString(state, 'media_artist') ?? attrString(state, 'app_name') ?? '';
-  const playing = state.s === 'playing';
-
-  const picture = attrString(state, 'entity_picture');
+  const media = player.media;
+  const title = media?.title ?? player.name;
+  const artist = media?.artist ?? '';
+  const playing = player.state === 'playing';
   const token = getToken();
-  // Artwork is proxied: Home Assistant's media URLs are relative to HA and
-  // need its credentials, which the panel does not have.
-  const art = picture
-    ? `/img/ha?u=${encodeURIComponent(picture)}${token ? `&t=${encodeURIComponent(token)}` : ''}`
-    : null;
+  // Already proxied by the backend — the panel never holds a Music Assistant
+  // address. See server/src/http/media-art.ts.
+  const art = media?.art ? `${media.art}${token ? `&t=${encodeURIComponent(token)}` : ''}` : null;
 
   return (
     <section class="side-card" aria-label="Now playing">
@@ -106,6 +103,7 @@ function NowPlayingCard() {
     </section>
   );
 }
+
 
 /**
  * How many photos to pull per request.

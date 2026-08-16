@@ -8,6 +8,8 @@ import type {
   BackendHealth,
   BrowseRequest,
   BrowseResult,
+  MassPlayer,
+  MassQueue,
   PanelPrefs,
   ClientMessage,
   EntityState,
@@ -49,6 +51,10 @@ export interface HubDeps {
   onPhotos?: (count: number) => Promise<ServerMessage | null>;
   /** Answer a music browse request, or throw with a user-visible reason. */
   onBrowse?: (req: BrowseRequest) => Promise<BrowseResult>;
+  /** Current Music Assistant players and queues, sent in `hello`. */
+  getPlayers: () => { players: MassPlayer[]; queues: MassQueue[] };
+  /** Run a Music Assistant command. Returns an error string, or null. */
+  onMassCommand?: (command: string, args: unknown) => string | null;
   /** Current panel preferences, sent in `hello`. */
   getPrefs: () => PanelPrefs;
   /** Apply a preference change. Returns an error string, or null. */
@@ -131,6 +137,7 @@ export class Hub {
     });
 
     // The snapshot. Everything the panel needs to paint, in one frame.
+    const music = this.#deps.getPlayers();
     this.#send(panel, {
       t: 'hello',
       config: this.#deps.config.current,
@@ -138,6 +145,8 @@ export class Hub {
       health: this.#deps.getHealth(),
       now: Date.now(),
       prefs: this.#deps.getPrefs(),
+      players: music.players,
+      queues: music.queues,
     });
   }
 
@@ -174,6 +183,23 @@ export class Hub {
         // The broadcast is driven by the store's change event rather than
         // sent from here, so a panel that changes a preference and one that
         // merely observes it both learn about it the same way.
+        break;
+      }
+
+      case 'mass': {
+        if (!this.#deps.onMassCommand) {
+          this.#send(panel, {
+            t: 'error',
+            ref: msg.id,
+            code: 'mass_unavailable',
+            message: 'Music Assistant is not configured',
+          });
+          return;
+        }
+        const problem = this.#deps.onMassCommand(msg.command, msg.args);
+        if (problem) {
+          this.#send(panel, { t: 'error', ref: msg.id, code: 'mass_failed', message: problem });
+        }
         break;
       }
 
@@ -250,6 +276,10 @@ export class Hub {
 
   broadcastPrefs(prefs: PanelPrefs): void {
     this.broadcast({ t: 'prefs', prefs });
+  }
+
+  broadcastPlayers(players: MassPlayer[], queues: MassQueue[]): void {
+    this.broadcast({ t: 'players', players, queues });
   }
 
   #send(panel: Panel, msg: ServerMessage): void {
