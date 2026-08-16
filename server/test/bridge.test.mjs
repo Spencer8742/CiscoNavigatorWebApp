@@ -56,6 +56,22 @@ class TestPanel {
     this.errors = [];
   }
 
+  /** In-flight browse requests, keyed by id — mirrors panel/src/net/socket.ts. */
+  #browsers = new Map();
+  #browseSeq = 900;
+
+  /** Ask to browse and wait for the answer, exactly as the panel does. */
+  browse(req) {
+    const id = (this.#browseSeq += 1);
+    return new Promise((resolve, reject) => {
+      this.#browsers.set(id, { resolve, reject });
+      this.send({ t: 'browse', id, req });
+      setTimeout(() => {
+        if (this.#browsers.delete(id)) reject(new Error('browse timed out'));
+      }, 8000);
+    });
+  }
+
   async connect() {
     this.ws = new WebSocket(`ws://127.0.0.1:${PANEL_PORT}/ws?t=${TOKEN}`);
 
@@ -75,6 +91,17 @@ class TestPanel {
         this.config = msg.config;
       } else if (msg.t === 'error') {
         this.errors.push(msg);
+        const waiter = this.#browsers.get(msg.ref);
+        if (waiter) {
+          this.#browsers.delete(msg.ref);
+          waiter.reject(new Error(msg.message));
+        }
+      } else if (msg.t === 'browse') {
+        const waiter = this.#browsers.get(msg.ref);
+        if (waiter) {
+          this.#browsers.delete(msg.ref);
+          waiter.resolve(msg.result);
+        }
       }
     });
 
@@ -211,6 +238,55 @@ before(async () => {
   // NOT in dashboard.test.yaml — every filtering assertion keys off this one.
   ha.seed('light.secret_basement', 'on', { friendly_name: 'Secret' });
   ha.seed('lock.back_door', 'unlocked', { friendly_name: 'Back Door' });
+
+  /* Music Assistant. `media_player.kitchen` is NOT in the fixture — it is
+     reached only through discovery, which is what the browse tests need it to
+     prove. `media_player.hifi` is an MA player nobody may touch, because
+     discovery is what makes "not on the dashboard" a meaningful boundary. */
+  ha.seedMaPlayer('media_player.kitchen', 'Kitchen');
+  ha.seedRegistry('media_player.kitchen');
+  ha.seedLibrary('album', 140);
+  ha.seedLibrary('artist', 8);
+  ha.seedLibrary('track', 30);
+  ha.seedLibrary('playlist', 3);
+  ha.seedLibrary('radio', 4);
+  ha.maQueues.set('media_player.kitchen', {
+    queue_id: 'kitchen',
+    active: true,
+    name: 'Kitchen',
+    items: 12,
+    shuffle_enabled: false,
+    repeat_mode: 'off',
+    current_index: 3,
+    elapsed_time: 45,
+    current_item: {
+      queue_item_id: 'q3',
+      name: 'Playing now',
+      duration: 210,
+      media_item: {
+        media_type: 'track',
+        uri: 'library://track/3',
+        name: 'Playing now',
+        version: '',
+        image: 'http://music-assistant.local:8095/img/now.jpg',
+        artists: [{ media_type: 'artist', uri: 'library://artist/3', name: 'Artist 3' }],
+      },
+    },
+    next_item: {
+      queue_item_id: 'q4',
+      name: 'Coming up',
+      duration: 180,
+      media_item: {
+        media_type: 'track',
+        uri: 'library://track/4',
+        name: 'Coming up',
+        version: '',
+        image: 'http://music-assistant.local:8095/img/next.jpg',
+        artists: [{ media_type: 'artist', uri: 'library://artist/4', name: 'Artist 4' }],
+        album: { media_type: 'album', uri: 'library://album/4', name: 'Album 4' },
+      },
+    },
+  });
 
   await ha.start();
   backend = await startBackend();
@@ -874,5 +950,411 @@ describe('artwork proxy', () => {
     );
     assert.notEqual(res.status, 400, 'a legitimate HA path must not be rejected by the guard');
     assert.ok(res.status === 502 || res.status === 404 || res.status === 415);
+  });
+});
+
+describe('music browsing', () => {
+  /**
+   * Browsing is the only request/reply path besides photos, and it is built on
+   * `return_response` — the half of Home Assistant's service protocol the rest
+   * of this backend never touches. These tests exist because the failure modes
+   * are silent: a service called without `return_response` is REFUSED rather
+   * than answered emptily, and a wrong config entry id is a "not found" that
+   * looks exactly like an empty library.
+   */
+
+  test('lists a library page, normalized and paged', async () => {
+    const panel = new TestPanel();
+    await panel.connect();
+
+    const first = await panel.browse({ kind: 'library', media: 'album' });
+
+    assert.equal(first.kind, 'list');
+    assert.equal(first.offset, 0);
+    assert.equal(first.items.length, 60, 'a page is BROWSE_PAGE items');
+    assert.equal(first.more, true, '140 albums means there is another page');
+
+    const item = first.items[0];
+    assert.equal(item.u, 'library://album/0');
+    assert.equal(item.n, 'album 000');
+    assert.equal(item.k, 'album');
+    assert.equal(item.s, 'Artist 0', 'an album is subtitled by its artist');
+
+    // Page two must be DIFFERENT items, not the same page echoed back — the
+    // offset has to survive the whole path to Music Assistant. It counts
+    // ITEMS, as Music Assistant does, not pages.
+    const second = await panel.browse({ kind: 'library', media: 'album', offset: 60 });
+    assert.equal(second.offset, 60);
+    assert.equal(second.items[0].u, 'library://album/60');
+
+    // The last page must not claim there is another.
+    const last = await panel.browse({ kind: 'library', media: 'album', offset: 120 });
+    assert.equal(last.items.length, 20);
+    assert.equal(last.more, false);
+
+    panel.close();
+  });
+
+  test('asks for the response, so Home Assistant does not refuse the call', async () => {
+    /*
+     * `search`, `get_library` and `get_queue` are all SupportsResponse.ONLY.
+     * Calling one WITHOUT return_response is a hard error from HA, not an
+     * empty answer — the mock reproduces that, so a regression here fails
+     * loudly rather than showing an empty library.
+     */
+    const panel = new TestPanel();
+    await panel.connect();
+
+    const before = ha.serviceCalls.length;
+    await panel.browse({ kind: 'library', media: 'artist' });
+
+    const call = ha.serviceCalls.slice(before).find((c) => c.service === 'get_library');
+    assert.ok(call, 'get_library must have been called');
+    assert.equal(call.return_response, true);
+    assert.equal(call.domain, 'music_assistant');
+
+    panel.close();
+  });
+
+  test('discovers the config entry id from the entity registry', async () => {
+    /*
+     * `search` and `get_library` target a CONFIG ENTRY, not an entity. Nothing
+     * in dashboard.yaml names it, so it is discovered by asking the registry
+     * about a Music Assistant entity. If that lookup broke, every library call
+     * would be rejected as "config entry not found" — which the mock enforces.
+     */
+    const panel = new TestPanel();
+    await panel.connect();
+
+    await panel.browse({ kind: 'library', media: 'artist' });
+
+    const call = ha.serviceCalls.find((c) => c.service === 'get_library');
+    assert.equal(call.service_data.config_entry_id, ha.maConfigEntry);
+
+    panel.close();
+  });
+
+  test('recently played sorts by last played rather than by name', async () => {
+    const panel = new TestPanel();
+    await panel.connect();
+
+    const before = ha.serviceCalls.length;
+    const result = await panel.browse({ kind: 'library', media: 'track', recent: true });
+
+    const call = ha.serviceCalls.slice(before).find((c) => c.service === 'get_library');
+    assert.equal(call.service_data.order_by, 'last_played_desc');
+    // And the order actually differs from the default, so this is not a flag
+    // that gets sent and ignored.
+    assert.equal(result.items[0].u, 'library://track/29');
+
+    panel.close();
+  });
+
+  test('favorites asks Music Assistant to filter, rather than filtering here', async () => {
+    const panel = new TestPanel();
+    await panel.connect();
+
+    const before = ha.serviceCalls.length;
+    const result = await panel.browse({ kind: 'library', media: 'album', favorite: true });
+
+    const call = ha.serviceCalls.slice(before).find((c) => c.service === 'get_library');
+    assert.equal(call.service_data.favorite, true);
+    // 140 albums, every fourth one a favorite.
+    assert.equal(result.items.length, 35);
+
+    panel.close();
+  });
+
+  test('search returns non-empty groups in a sensible order', async () => {
+    const panel = new TestPanel();
+    await panel.connect();
+
+    const result = await panel.browse({ kind: 'search', text: 'album 01' });
+
+    assert.equal(result.kind, 'groups');
+    const names = result.groups.map((g) => g.name);
+    assert.deepEqual(names, ['Albums'], 'only groups with matches are sent');
+    assert.ok(result.groups[0].items.length > 0);
+    assert.equal(result.groups[0].items[0].k, 'album');
+
+    panel.close();
+  });
+
+  test('an empty search is answered without troubling Music Assistant', async () => {
+    const panel = new TestPanel();
+    await panel.connect();
+
+    const before = ha.serviceCalls.length;
+    const result = await panel.browse({ kind: 'search', text: '   ' });
+
+    assert.deepEqual(result, { kind: 'groups', groups: [] });
+    await sleep(150);
+    assert.equal(
+      ha.serviceCalls.slice(before).filter((c) => c.service === 'search').length,
+      0,
+      'whitespace is not a query',
+    );
+
+    panel.close();
+  });
+
+  test('reports the queue for a player the panel may see', async () => {
+    const panel = new TestPanel();
+    await panel.connect();
+    await waitFor(() => panel.states.has('media_player.kitchen'), 'the discovered MA player');
+
+    const result = await panel.browse({ kind: 'queue', entity: 'media_player.kitchen' });
+
+    assert.equal(result.kind, 'queue');
+    assert.equal(result.items, 12);
+    assert.equal(result.index, 3);
+    assert.equal(result.current.n, 'Playing now');
+    assert.equal(result.next.n, 'Coming up');
+    assert.equal(result.next.s, 'Artist 4 · Album 4');
+
+    panel.close();
+  });
+
+  test('refuses a queue lookup for a player that is not on the dashboard', async () => {
+    /*
+     * Browsing must not become a side channel around the allow-list. This
+     * targets a media_player the config never names and discovery never
+     * surfaced, so the only thing standing between the panel and it is the
+     * check in the browser itself.
+     */
+    const panel = new TestPanel();
+    await panel.connect();
+
+    const before = ha.serviceCalls.length;
+    await assert.rejects(
+      () => panel.browse({ kind: 'queue', entity: 'media_player.not_a_thing' }),
+      /Not permitted/,
+    );
+
+    await sleep(150);
+    assert.equal(
+      ha.serviceCalls.slice(before).filter((c) => c.service === 'get_queue').length,
+      0,
+      'the call must not reach Home Assistant at all',
+    );
+
+    panel.close();
+  });
+
+  test('never hands the panel a Music Assistant URL', async () => {
+    /*
+     * Cover art comes back from Music Assistant as an absolute URL on its own
+     * host. Forwarding that would both leak where Music Assistant lives and
+     * break for every panel that cannot resolve a container hostname — so the
+     * backend swaps it for a key on our own origin. This asserts the raw URL
+     * appears nowhere in what the panel receives.
+     */
+    const panel = new TestPanel();
+    await panel.connect();
+
+    const result = await panel.browse({ kind: 'library', media: 'album' });
+    const wire = JSON.stringify(result);
+
+    assert.ok(!wire.includes('music-assistant.local'), 'the upstream host must not be sent');
+    assert.ok(!wire.includes('8095'), 'the upstream port must not be sent');
+    for (const item of result.items) {
+      assert.match(item.a, /^\/img\/art\?k=[0-9a-f]{16}$/);
+    }
+
+    panel.close();
+  });
+
+  test('the artwork route takes keys, not URLs', async () => {
+    /*
+     * The obvious version of this proxy — /img/art?url=… — would let a panel
+     * choose which host this process connects to, on a trusted LAN. There is
+     * no key a panel can compose: it is a digest of a URL Music Assistant
+     * itself produced.
+     */
+    const panel = new TestPanel();
+    await panel.connect();
+    await panel.browse({ kind: 'library', media: 'album' });
+
+    const bad = [
+      ['a URL', 'http://evil.example/x.png'],
+      ['a made-up key', 'deadbeefdeadbeef'],
+      ['a path', '../../etc/passwd'],
+      ['nothing', ''],
+    ];
+
+    for (const [label, key] of bad) {
+      const res = await fetch(
+        `http://127.0.0.1:${PANEL_PORT}/img/art?k=${encodeURIComponent(key)}&t=${TOKEN}`,
+      );
+      assert.ok(res.status === 400 || res.status === 404, `${label} must not be fetched`);
+    }
+
+    const noAuth = await fetch(`http://127.0.0.1:${PANEL_PORT}/img/art?k=0123456789abcdef`);
+    assert.equal(noAuth.status, 401, 'the route requires the panel token');
+
+    panel.close();
+  });
+
+  test('explains itself when Music Assistant cannot answer', async () => {
+    const panel = new TestPanel();
+    await panel.connect();
+
+    // Music Assistant removed and re-added: the id we discovered is stale.
+    const real = ha.maConfigEntry;
+    ha.maConfigEntry = 'a-different-entry';
+    try {
+      await assert.rejects(
+        () => panel.browse({ kind: 'library', media: 'album' }),
+        /Music Assistant/,
+        'the panel must be told, not left on a spinner',
+      );
+    } finally {
+      ha.maConfigEntry = real;
+    }
+
+    // And it must recover on its own once the entry is valid again, rather
+    // than needing the backend restarted.
+    const after = await panel.browse({ kind: 'library', media: 'artist' });
+    assert.equal(after.kind, 'list');
+    assert.equal(after.items.length, 8);
+
+    panel.close();
+  });
+});
+
+describe('playing something', () => {
+  test('forwards a library URI to music_assistant.play_media', async () => {
+    const panel = new TestPanel();
+    await panel.connect();
+
+    const before = ha.serviceCalls.length;
+    panel.send({
+      t: 'call',
+      id: 200,
+      domain: 'music_assistant',
+      service: 'play_media',
+      entity: 'media_player.speaker',
+      data: { media_id: 'library://album/7', enqueue: 'replace' },
+    });
+
+    const call = await waitFor(
+      () => ha.serviceCalls.slice(before).find((c) => c.domain === 'music_assistant'),
+      'play_media to reach HA',
+    );
+
+    assert.equal(call.service, 'play_media');
+    // An integration service targets an entity from ANOTHER domain. The guard
+    // has to permit exactly that pairing without loosening the general rule.
+    assert.deepEqual(call.target, { entity_id: 'media_player.speaker' });
+    assert.equal(call.service_data.media_id, 'library://album/7');
+    assert.equal(call.service_data.enqueue, 'replace');
+
+    panel.close();
+  });
+
+  test('refuses a media_id that is not a library URI', async () => {
+    /*
+     * Music Assistant will play a local file path or fetch an arbitrary URL if
+     * handed one. Left unchecked, "play this album" becomes a way to read the
+     * Music Assistant host's disk, or to make it fetch a URL of the caller's
+     * choosing from inside the LAN.
+     */
+    const refuse = [
+      ['a local file', 'file:///etc/passwd'],
+      ['a bare path', '/etc/shadow'],
+      ['an http URL', 'http://evil.example/payload.mp3'],
+      ['an https URL', 'https://evil.example/payload.mp3'],
+      ['a data URL', 'data:audio/mp3;base64,AAAA'],
+      ['an empty string', ''],
+      ['a number', 42],
+      ['an empty list', []],
+    ];
+
+    const panel = new TestPanel();
+    await panel.connect();
+
+    for (const [label, mediaId] of refuse) {
+      const before = ha.serviceCalls.length;
+      const mark = panel.messageCount;
+
+      panel.send({
+        t: 'call',
+        id: 201,
+        domain: 'music_assistant',
+        service: 'play_media',
+        entity: 'media_player.speaker',
+        data: { media_id: mediaId },
+      });
+
+      await waitFor(() => panel.since(mark).find((m) => m.t === 'error'), `refusal of ${label}`);
+      await sleep(100);
+      assert.equal(
+        ha.serviceCalls.slice(before).filter((c) => c.domain === 'music_assistant').length,
+        0,
+        `${label} must not reach Home Assistant`,
+      );
+    }
+
+    panel.close();
+  });
+
+  test('refuses the Music Assistant services that are not play_media', async () => {
+    /*
+     * `play_announcement` makes a speaker fetch and play an arbitrary URL, and
+     * `transfer_queue` re-targets a second player. Neither is on the allow-list
+     * and neither should become reachable by adding the domain.
+     */
+    const panel = new TestPanel();
+    await panel.connect();
+
+    for (const service of ['play_announcement', 'transfer_queue', 'get_library']) {
+      const before = ha.serviceCalls.length;
+      const mark = panel.messageCount;
+
+      panel.send({
+        t: 'call',
+        id: 202,
+        domain: 'music_assistant',
+        service,
+        entity: 'media_player.speaker',
+        data: { url: 'http://evil.example/x.mp3' },
+      });
+
+      await waitFor(() => panel.since(mark).find((m) => m.t === 'error'), `refusal of ${service}`);
+      await sleep(100);
+      assert.equal(
+        ha.serviceCalls.slice(before).filter((c) => c.domain === 'music_assistant').length,
+        0,
+        `${service} must not reach Home Assistant`,
+      );
+    }
+
+    panel.close();
+  });
+
+  test('still refuses a player that is not on the dashboard', async () => {
+    const panel = new TestPanel();
+    await panel.connect();
+
+    const before = ha.serviceCalls.length;
+    const mark = panel.messageCount;
+
+    panel.send({
+      t: 'call',
+      id: 203,
+      domain: 'music_assistant',
+      service: 'play_media',
+      entity: 'media_player.nowhere',
+      data: { media_id: 'library://album/1' },
+    });
+
+    await waitFor(() => panel.since(mark).find((m) => m.t === 'error'), 'an error response');
+    await sleep(100);
+    assert.equal(
+      ha.serviceCalls.slice(before).filter((c) => c.domain === 'music_assistant').length,
+      0,
+    );
+
+    panel.close();
   });
 });

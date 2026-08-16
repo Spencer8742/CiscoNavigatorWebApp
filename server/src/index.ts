@@ -9,10 +9,12 @@ import { StaticFiles } from '~/http/static.ts';
 import { applySecurityHeaders } from '~/http/headers.ts';
 import { PanelAuth } from '~/http/auth.ts';
 import { ArtworkProxy } from '~/http/artwork.ts';
+import { MediaArt } from '~/http/media-art.ts';
 import { Hub } from '~/hub/index.ts';
 import { HaClient } from '~/ha/client.ts';
 import { HaStore, isEmptyPatch } from '~/ha/store.ts';
 import { ServiceGuard } from '~/ha/services.ts';
+import { MusicBrowser } from '~/ha/music.ts';
 import { PrefsStore } from '~/config/prefs.ts';
 import { ImmichClient } from '~/immich/client.ts';
 import { ImmichImages } from '~/immich/images.ts';
@@ -48,6 +50,7 @@ async function main(): Promise<void> {
 
   const auth = new PanelAuth(env.panelToken);
   const artwork = new ArtworkProxy(env.ha);
+  const mediaArt = new MediaArt();
 
   /* ── Immich ──────────────────────────────────────────────────────────────
      The playlist holds the slideshow position server-side, so RoomOS wiping
@@ -173,6 +176,7 @@ async function main(): Promise<void> {
   prefs.onChange((next) => hub.broadcastPrefs(next));
 
   const services = new ServiceGuard(haClient, store);
+  const music = new MusicBrowser(haClient, store, mediaArt);
 
   const hub = new Hub(server, {
     auth,
@@ -190,6 +194,8 @@ async function main(): Promise<void> {
     getPrefs: () => prefs.current,
     onPref: (key, value) => prefs.set(key, value),
     onLayout: (layout) => prefs.setLayout(layout, config.current.media.sections),
+
+    onBrowse: (req) => music.browse(req),
 
     onPhotos: async (count) => {
       const photos = await playlist.take(count);
@@ -256,6 +262,23 @@ async function main(): Promise<void> {
      * an <img src>, and browsers do not attach Authorization headers to those,
      * so the panel appends ?t=<token>. PanelAuth accepts both forms.
      */
+    /*
+     * Cover art for browsing. `?k=` is a key this backend minted from a URL
+     * Music Assistant gave us — the panel cannot name a URL. See
+     * http/media-art.ts for why that distinction is the whole design.
+     */
+    if (path === '/img/art') {
+      if (!auth.check(req)) {
+        res.writeHead(401, { 'content-type': 'text/plain' });
+        res.end('unauthorized');
+        return;
+      }
+      const q = rawUrl.indexOf('?');
+      const params = new URLSearchParams(q === -1 ? '' : rawUrl.slice(q + 1));
+      await mediaArt.serve(res, params.get('k'));
+      return;
+    }
+
     if (path === '/img/ha') {
       if (!auth.check(req)) {
         res.writeHead(401, { 'content-type': 'text/plain' });

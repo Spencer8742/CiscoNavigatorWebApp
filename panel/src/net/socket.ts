@@ -7,6 +7,8 @@ import { diagnose } from '~/net/diagnose.ts';
 import {
   HEARTBEAT_MS,
   HEARTBEAT_TIMEOUT_MS,
+  type BrowseRequest,
+  type BrowseResult,
   type ClientMessage,
   type PanelPrefs,
   type PlayerLayout,
@@ -42,6 +44,22 @@ const nextId = (): number => (seq += 1);
 
 /** Resolvers for in-flight photo requests, keyed by message id. */
 const photoWaiters = new Map<number, (photos: PhotoRef[]) => void>();
+
+interface BrowseWaiter {
+  resolve(result: BrowseResult): void;
+  reject(error: Error): void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+/**
+ * In-flight browse requests, keyed by message id.
+ *
+ * Keyed rather than FIFO like the photo waiters, because these are user-driven
+ * and overlap: tapping through Albums → Artists → Search fast enough sends
+ * three requests before the first replies, and the answers can arrive in any
+ * order.
+ */
+const browseWaiters = new Map<number, BrowseWaiter>();
 
 export function connect(): void {
   closed = false;
@@ -98,6 +116,10 @@ function open(): void {
     if (sock !== ws) return; // a stale socket we already replaced
     ws = null;
     clearTimers();
+    // Nothing outstanding can be answered now. Without this a browse started
+    // just before a Wi-Fi roam leaves a spinner on screen for its full
+    // timeout, on a panel that has already visibly reconnected.
+    failBrowseWaiters();
     socketState.value = closed ? 'disconnected' : 'connecting';
     scheduleReconnect();
   };
@@ -196,15 +218,36 @@ function handle(msg: ServerMessage): void {
       break;
     }
 
+    case 'browse': {
+      const waiter = browseWaiters.get(msg.ref);
+      if (waiter) {
+        browseWaiters.delete(msg.ref);
+        clearTimeout(waiter.timer);
+        waiter.resolve(msg.result);
+      }
+      break;
+    }
+
     case 'pong':
       clearTimeout(pongTimer);
       pongTimer = undefined;
       break;
 
-    case 'error':
-      // Surfaced as a transient toast, never as a blocking dialog.
+    case 'error': {
+      // A failed browse is shown in the browser itself, where the user is
+      // looking and where a Retry button can live. Toasting it as well would
+      // put the same sentence on screen twice.
+      const waiter = msg.ref === undefined ? undefined : browseWaiters.get(msg.ref);
+      if (waiter && msg.ref !== undefined) {
+        browseWaiters.delete(msg.ref);
+        clearTimeout(waiter.timer);
+        waiter.reject(new Error(msg.message));
+        break;
+      }
+      // Everything else: a transient toast, never a blocking dialog.
       showToast(msg.message, 'error');
       break;
+    }
   }
 }
 
@@ -228,6 +271,14 @@ function startHeartbeat(): void {
       ws?.close();
     }, HEARTBEAT_TIMEOUT_MS);
   }, HEARTBEAT_MS);
+}
+
+function failBrowseWaiters(): void {
+  for (const [id, waiter] of browseWaiters) {
+    browseWaiters.delete(id);
+    clearTimeout(waiter.timer);
+    waiter.reject(new Error('Connection lost'));
+  }
 }
 
 function clearTimers(): void {
@@ -292,6 +343,28 @@ export function setPref(key: 'homeSide', value: PanelPrefs['homeSide']): boolean
 export function setPlayerLayout(layout: PlayerLayout): boolean {
   prefs.value = { ...prefs.value, players: layout };
   return send({ t: 'layout', id: nextId(), layout });
+}
+
+/**
+ * Ask Music Assistant for something.
+ *
+ * The only call in this file the caller waits on. Rejects rather than
+ * resolving empty, because "your library is empty" and "we could not reach
+ * Music Assistant" must not look the same on a wall panel — the first is
+ * information, the second is something to go and fix.
+ */
+export function browse(req: BrowseRequest): Promise<BrowseResult> {
+  return new Promise((resolve, reject) => {
+    const id = nextId();
+    if (!send({ t: 'browse', id, req })) {
+      reject(new Error('Not connected'));
+      return;
+    }
+    const timer = setTimeout(() => {
+      if (browseWaiters.delete(id)) reject(new Error('Music Assistant did not respond'));
+    }, 30_000);
+    browseWaiters.set(id, { resolve, reject, timer });
+  });
 }
 
 /** Request the next batch of slideshow photos. Resolves empty on timeout. */

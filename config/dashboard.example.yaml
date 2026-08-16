@@ -245,6 +245,11 @@ home:
 
 
 # ─── Media players ─────────────────────────────────────────────────────────
+#
+# Browsing your music library needs no configuration at all. If the Music
+# Assistant integration is set up in Home Assistant, the Browse button on the
+# Media screen finds it and offers Recent, Favorites, Albums, Artists,
+# Playlists, Radio and Search. Nothing about your library is copied here.
 media:
   # Headings for the player list, in order. Which speaker goes under which
   # heading is chosen by tapping Organize on the Media screen and is stored in

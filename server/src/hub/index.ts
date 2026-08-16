@@ -6,6 +6,8 @@ import type { PanelAuth } from '~/http/auth.ts';
 import type { ConfigStore } from '~/config/load.ts';
 import type {
   BackendHealth,
+  BrowseRequest,
+  BrowseResult,
   PanelPrefs,
   ClientMessage,
   EntityState,
@@ -45,6 +47,8 @@ export interface HubDeps {
   onCall?: (msg: Extract<ClientMessage, { t: 'call' }>) => Promise<string | null>;
   /** Supply the next batch of slideshow photos (phase 6). */
   onPhotos?: (count: number) => Promise<ServerMessage | null>;
+  /** Answer a music browse request, or throw with a user-visible reason. */
+  onBrowse?: (req: BrowseRequest) => Promise<BrowseResult>;
   /** Current panel preferences, sent in `hello`. */
   getPrefs: () => PanelPrefs;
   /** Apply a preference change. Returns an error string, or null. */
@@ -197,6 +201,28 @@ export class Hub {
         }
         const reply = await this.#deps.onPhotos(msg.count);
         if (reply) this.#send(panel, reply);
+        break;
+      }
+
+      case 'browse': {
+        if (!this.#deps.onBrowse) {
+          this.#send(panel, {
+            t: 'error',
+            ref: msg.id,
+            code: 'browse_failed',
+            message: 'Music browsing is not available',
+          });
+          return;
+        }
+        try {
+          const result = await this.#deps.onBrowse(msg.req);
+          this.#send(panel, { t: 'browse', ref: msg.id, result });
+        } catch (err) {
+          // A browse always gets an answer of some kind: the panel is showing
+          // a spinner and has no other way to learn the request died.
+          const message = err instanceof Error ? err.message : 'Could not load';
+          this.#send(panel, { t: 'error', ref: msg.id, code: 'browse_failed', message });
+        }
         break;
       }
     }

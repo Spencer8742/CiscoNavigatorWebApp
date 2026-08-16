@@ -96,6 +96,118 @@ export interface PhotoRef {
   country?: string;
 }
 
+/* ── Music browsing ────────────────────────────────────────────────────── */
+
+/** The media types Music Assistant's library and search understand. */
+export type MediaKind =
+  | 'artist'
+  | 'album'
+  | 'track'
+  | 'playlist'
+  | 'radio'
+  | 'podcast'
+  | 'audiobook';
+
+export const MEDIA_KINDS: readonly MediaKind[] = [
+  'artist',
+  'album',
+  'track',
+  'playlist',
+  'radio',
+  'podcast',
+  'audiobook',
+];
+
+/**
+ * One browsable thing.
+ *
+ * Short keys, and only the four fields a list row actually draws. A library
+ * page is sixty of these and Music Assistant's own item shape carries a dozen
+ * fields per entry — sending that raw would triple the frame for data the
+ * panel would immediately discard, on a device with a hard memory ceiling.
+ */
+export interface MediaItem {
+  /** Music Assistant URI. The only thing needed to play it. */
+  u: string;
+  /** Name. */
+  n: string;
+  /** Kind. */
+  k: MediaKind;
+  /** Second line — artist, or "artist · album". */
+  s?: string;
+  /** Artwork path on THIS origin, already proxied. See http/media-art.ts. */
+  a?: string;
+}
+
+/**
+ * What the panel is asking to see.
+ *
+ * `library` is the workhorse: Favorites, Recently Played and each of the
+ * category tabs are all the same call with different sort and filter, which is
+ * why there is one request kind rather than six.
+ */
+export type BrowseRequest =
+  | {
+      kind: 'library';
+      media: MediaKind;
+      /** Only items marked favourite in Music Assistant. */
+      favorite?: boolean;
+      /** Sort by last played rather than by name. */
+      recent?: boolean;
+      /**
+       * How many items to skip — an ITEM offset, as Music Assistant itself
+       * uses, not a page number. Page size is fixed by the backend at
+       * `BROWSE_PAGE`, so a caller pages by adding that.
+       */
+      offset?: number;
+    }
+  | { kind: 'search'; text: string }
+  | { kind: 'queue'; entity: string };
+
+/** A single flat list — a library page, or one section of search results. */
+export interface BrowseList {
+  kind: 'list';
+  items: MediaItem[];
+  offset: number;
+  /** Whether another page exists. */
+  more: boolean;
+}
+
+/** Search results, grouped by media type in the order they should be shown. */
+export interface BrowseGroups {
+  kind: 'groups';
+  groups: { name: string; items: MediaItem[] }[];
+}
+
+/**
+ * What Music Assistant will tell us about a player's queue.
+ *
+ * Note what is NOT here: the queue's contents. `music_assistant.get_queue`
+ * returns the current item, the next item and a COUNT — the list itself, and
+ * the commands to reorder or remove from it, exist only on Music Assistant's
+ * own WebSocket API and are not exposed through Home Assistant. Showing "up
+ * next" honestly beats faking a queue we cannot edit.
+ */
+export interface QueueInfo {
+  kind: 'queue';
+  name: string;
+  /** Number of items in the queue. */
+  items: number;
+  index: number | null;
+  shuffle: boolean;
+  repeat: string;
+  current: MediaItem | null;
+  next: MediaItem | null;
+}
+
+export type BrowseResult = BrowseList | BrowseGroups | QueueInfo;
+
+/** How many items one library page holds. Fixed here so a panel cannot ask
+ *  for five hundred rows and then be killed for the memory it took. */
+export const BROWSE_PAGE = 60;
+/** Per-type cap on search results. */
+export const SEARCH_LIMIT = 12;
+
 /* ── Server → panel ────────────────────────────────────────────────────── */
 
 export type ServerMessage =
@@ -119,6 +231,8 @@ export type ServerMessage =
   | { t: 'prefs'; prefs: PanelPrefs }
   /** A batch of photos for the slideshow to preload. */
   | { t: 'photos'; photos: PhotoRef[] }
+  /** Answer to a `browse` request. `ref` matches the request's id. */
+  | { t: 'browse'; ref: number; result: BrowseResult }
   /** A command the panel sent failed. `ref` matches the command's id. */
   | { t: 'error'; ref?: number; code: string; message: string }
   /** Heartbeat response. */
@@ -142,6 +256,15 @@ export type ClientMessage =
     }
   /** Ask for the next N slideshow photos. */
   | { t: 'photos'; id: number; count: number }
+  /**
+   * Ask Music Assistant for something to look at.
+   *
+   * The only request/reply pair besides photos. Everything else in this
+   * protocol is either a push or fire-and-forget, because a wall panel that
+   * waits on a round trip feels broken — but "list my albums" has no answer
+   * until the answer arrives, so this one waits, with a spinner.
+   */
+  | { t: 'browse'; id: number; req: BrowseRequest }
   /** Heartbeat. Detects half-open sockets that TCP will not report. */
   | { t: 'ping'; id: number }
   /**

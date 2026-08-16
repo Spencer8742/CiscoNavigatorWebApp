@@ -1,5 +1,8 @@
 import { WebSocketServer } from 'ws';
 
+/** Music Assistant services registered with SupportsResponse.ONLY. */
+const RESPONSE_SERVICES = new Set(['search', 'get_library', 'get_queue']);
+
 /**
  * A mock Home Assistant WebSocket server.
  *
@@ -31,6 +34,25 @@ export class MockHomeAssistant {
 
   /** Set false to send messages individually even when coalescing is on. */
   coalesce = true;
+
+  /** entity_id → registry entry, as `config/entity_registry/get` returns it. */
+  registry = new Map();
+
+  /** The config entry id that `music_assistant.search` will accept. */
+  maConfigEntry = 'ma01entry';
+
+  /**
+   * Music Assistant's library, by media type.
+   *
+   * Items are in MA's OWN response shape — `uri`, `name`, `media_type`,
+   * `image`, nested `artists` — not the app's. Normalising in the mock would
+   * mean the test never exercises the code that does the normalising, which is
+   * where the bugs are.
+   */
+  maLibrary = new Map();
+
+  /** What `music_assistant.get_queue` reports, by entity id. */
+  maQueues = new Map();
 
   constructor(port) {
     this.#port = port;
@@ -93,8 +115,51 @@ export class MockHomeAssistant {
         ws.send(JSON.stringify({ id: msg.id, type: 'pong' }));
         break;
 
+      case 'config/entity_registry/get': {
+        const entry = this.registry.get(msg.entity_id);
+        if (!entry) {
+          ws.send(
+            JSON.stringify({
+              id: msg.id,
+              type: 'result',
+              success: false,
+              error: { code: 'not_found', message: 'Entity not found' },
+            }),
+          );
+          break;
+        }
+        ws.send(JSON.stringify({ id: msg.id, type: 'result', success: true, result: entry }));
+        break;
+      }
+
       case 'call_service':
         this.serviceCalls.push(msg);
+
+        // Services that RETURN something. Home Assistant only includes the
+        // response when the caller sets return_response, and refuses the call
+        // when a response-only service is asked without it — both of which the
+        // mock reproduces, because getting that wrong is exactly the mistake
+        // this half of the protocol invites.
+        if (msg.domain === 'music_assistant' && RESPONSE_SERVICES.has(msg.service)) {
+          if (!msg.return_response) {
+            ws.send(
+              JSON.stringify({
+                id: msg.id,
+                type: 'result',
+                success: false,
+                error: {
+                  code: 'service_validation_error',
+                  message: 'The service requires the response to be returned',
+                },
+              }),
+            );
+            break;
+          }
+          const answer = this.#musicAssistant(msg);
+          ws.send(JSON.stringify({ id: msg.id, type: 'result', success: answer.ok, ...(answer.ok ? { result: { context: {}, response: answer.response } } : { error: answer.error }) }));
+          break;
+        }
+
         // Behave like Music Assistant for grouping, so a test exercises the
         // whole round trip — tap, service call, state change, UI update —
         // rather than only asserting that a call went out.
@@ -174,6 +239,111 @@ export class MockHomeAssistant {
     for (const id of members) {
       if (this.states.has(id)) this.change(id, { attributes: { group_members: members } });
     }
+  }
+
+  /* ── Music Assistant browsing ───────────────────────────────────────────*/
+
+  /**
+   * Seed the library.
+   *
+   * `count` items of `media` are generated with artwork URLs pointing at
+   * `artBase`, so a test can assert those URLs never reach the panel.
+   */
+  seedLibrary(media, count, { artBase = 'http://music-assistant.local:8095/img' } = {}) {
+    const items = [];
+    for (let i = 0; i < count; i += 1) {
+      const item = {
+        media_type: media,
+        uri: `library://${media}/${i}`,
+        name: `${media} ${String(i).padStart(3, '0')}`,
+        version: '',
+        image: `${artBase}/${media}-${i}.jpg`,
+        favorite: i % 4 === 0,
+        explicit: false,
+      };
+      if (media === 'track' || media === 'album') {
+        item.artists = [{ media_type: 'artist', uri: `library://artist/${i}`, name: `Artist ${i}` }];
+      }
+      if (media === 'track') {
+        item.album = { media_type: 'album', uri: `library://album/${i}`, name: `Album ${i}` };
+      }
+      items.push(item);
+    }
+    this.maLibrary.set(media, items);
+  }
+
+  /** Register an entity with the entity registry, owned by a config entry. */
+  seedRegistry(entityId, configEntryId = this.maConfigEntry) {
+    this.registry.set(entityId, {
+      entity_id: entityId,
+      config_entry_id: configEntryId,
+      platform: 'music_assistant',
+      unique_id: `${entityId}-uid`,
+    });
+  }
+
+  /** Answer one of Music Assistant's response-only services. */
+  #musicAssistant(msg) {
+    const data = msg.service_data ?? {};
+
+    if (msg.service === 'get_queue') {
+      const target = msg.target?.entity_id;
+      const id = Array.isArray(target) ? target[0] : target;
+      const queue = this.maQueues.get(id);
+      if (!queue) {
+        return { ok: false, error: { code: 'not_found', message: 'No queue for that player' } };
+      }
+      // A platform entity service answers keyed by entity id.
+      return { ok: true, response: { [id]: queue } };
+    }
+
+    // Both library services are config-entry targeted, and HA rejects an
+    // unknown entry — which is what makes the discovery step load-bearing.
+    if (data.config_entry_id !== this.maConfigEntry) {
+      return {
+        ok: false,
+        error: { code: 'not_found', message: 'Config entry not found or not loaded' },
+      };
+    }
+
+    if (msg.service === 'get_library') {
+      const all = this.maLibrary.get(data.media_type) ?? [];
+      const filtered = data.favorite ? all.filter((x) => x.favorite) : all;
+      const ordered =
+        data.order_by === 'last_played_desc' ? [...filtered].reverse() : filtered;
+      const offset = data.offset ?? 0;
+      const limit = data.limit ?? 25;
+      return {
+        ok: true,
+        response: {
+          items: ordered.slice(offset, offset + limit),
+          limit,
+          offset,
+          order_by: data.order_by ?? 'name',
+          media_type: data.media_type,
+        },
+      };
+    }
+
+    // search
+    const needle = String(data.name ?? '').toLowerCase();
+    const limit = data.limit ?? 5;
+    const matching = (media) =>
+      (this.maLibrary.get(media) ?? [])
+        .filter((x) => x.name.toLowerCase().includes(needle))
+        .slice(0, limit);
+    return {
+      ok: true,
+      response: {
+        artists: matching('artist'),
+        albums: matching('album'),
+        tracks: matching('track'),
+        playlists: matching('playlist'),
+        radio: matching('radio'),
+        audiobooks: [],
+        podcasts: [],
+      },
+    };
   }
 
   /** Seed an entity before any client subscribes. */
