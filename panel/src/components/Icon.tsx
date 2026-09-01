@@ -113,6 +113,59 @@ const ICONS: Record<string, PathSpec> = {
   },
   bolt: { d: ['M13 3 6 13.5h4.6L11 21l7-10.5h-4.6z'] },
 
+  /* ── Macro-page variants ────────────────────────────────────────────────
+     A control surface is read by SHAPE, not by label — you are mid-call and
+     not looking straight at the key you are reaching for. So no two keys in
+     the same group may share a glyph, which is what these exist to fix.
+
+     Each is the base glyph plus one distinguishing mark, so the pair still
+     reads as a pair: `cameraOff` is `camera` with the same slash `micOff`
+     uses, `volumeUp`/`volumeDown` are `volume`'s cone with a + and a -. */
+  cameraOff: {
+    d: [
+      'M3.5 8.2A1.7 1.7 0 0 1 5.2 6.5h7.6a1.7 1.7 0 0 1 1.7 1.7v7.6a1.7 1.7 0 0 1-1.7 1.7H5.2a1.7 1.7 0 0 1-1.7-1.7z',
+      'M14.5 10.8l4.4-2.9a.7.7 0 0 1 1.1.6v7a.7.7 0 0 1-1.1.6l-4.4-2.9z',
+      'M4 4l16 16',
+    ],
+  },
+  /* No sound arc on these two: the arc lives where the +/- has to go, and
+     the pair rendered as an unreadable blob. Cone plus one sign, exactly as
+     `mute` is cone plus a cross. */
+  volumeUp: {
+    f: ['M3 9.5h3.4L11 5.4v13.2L6.4 14.5H3z'],
+    d: ['M14.8 12h5.8', 'M17.7 9.1v5.8'],
+  },
+  volumeDown: {
+    f: ['M3 9.5h3.4L11 5.4v13.2L6.4 14.5H3z'],
+    d: ['M14.8 12h5.8'],
+  },
+  /* A display with an arrow going IN, against `share`'s arrow going out —
+     the two are opposites and should look like opposites. */
+  input: {
+    d: [
+      'M3.5 6.5A1.5 1.5 0 0 1 5 5h14a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 19 16H5a1.5 1.5 0 0 1-1.5-1.5z',
+      'M12 7.5v5',
+      'M9.5 10 12 12.5 14.5 10',
+      'M8 20h8',
+    ],
+  },
+  bulbOff: {
+    d: [
+      'M9.2 18h5.6', 'M10.2 20.8h3.6',
+      'M12 3.2a6 6 0 0 0-3.4 10.9c.6.5 1 1.2 1 2h4.8c0-.8.4-1.5 1-2A6 6 0 0 0 12 3.2z',
+      'M4 4l16 16',
+    ],
+  },
+  /* Shut Down, against Start Room's `power`. A second power symbol — even
+     tinted red — reads as the same key twice; a moon does not. */
+  moon: { d: ['M20.2 14.8A8.6 8.6 0 0 1 9.2 3.8a8.6 8.6 0 1 0 11 11z'] },
+  /* Dim, against Full's `sun`: same core, half the rays and shorter. */
+  sunDim: {
+    c: [[12, 12, 4]],
+    d: ['M12 3.4v1.4', 'M12 19.2v1.4', 'M3.4 12h1.4', 'M19.2 12h1.4'],
+  },
+  hexagon: { d: ['M12 3.2 19.5 7.6v8.8L12 20.8 4.5 16.4V7.6z'] },
+
   /* ── Rooms ──────────────────────────────────────────────────────────── */
   sofa: {
     // The arms have to rise ABOVE the seat line or the whole thing reads as a
