@@ -367,3 +367,134 @@ cast:
   # is ALSO a Music Assistant speaker it may interrupt playback on that
   # speaker. Only turn it on if the session is being dropped without it.
   audioKeepAlive: false
+
+
+# ─── Controls: the macro pages ─────────────────────────────────────────────
+#
+# This section replaces a RoomOS macro.
+#
+# A Room Bar with a paired Navigator used to run `companion_bridge.js`, a
+# JavaScript macro that mapped UI Extension widget taps onto HTTP calls:
+# Bitfocus Companion button presses, Home Assistant webhooks, and Elgato Key
+# Lights. All of it — the macro, the panel XML, the HttpClient config — lived
+# ON THE DEVICE, and a factory reset destroyed it with no single artefact to
+# put back.
+#
+# So the buttons live here now. The device holds one URL (see
+# scripts/provision-roombar.sh) and everything else is this file. A factory
+# reset costs one script run.
+#
+# What the buttons can reach, and how:
+#
+#   companion:  a Bitfocus Companion button, by its grid location.
+#               Needs COMPANION_URL in .env.
+#   webhook:    a Home Assistant webhook — POST /api/webhook/<id>.
+#               Uses HA_URL; no extra credentials, the id is the secret.
+#   entity:     an ordinary Home Assistant service call, exactly as a tile
+#               makes. Subject to the same allow-list as everything else in
+#               this file.
+#   keylight:   an Elgato Key Light, listed under `keylights:` below.
+#   light:      not a button — the FULL key light control, with power,
+#               brightness and colour temperature.
+#
+# The panel never sends a URL, a Companion coordinate or a webhook id. It
+# sends the button's id and the backend looks it up here, for the same reason
+# service calls are checked against the entity list above: a screen on a wall
+# is trusted to drive the dashboard, not to compose requests to your LAN.
+controls:
+  # Elgato Key Lights, by address.
+  #
+  # Use IP ADDRESSES with a DHCP reservation, not .local names — the same
+  # mDNS-across-a-bridge-network problem as cast displays. Port defaults to
+  # 9123 and there is no such thing as an authenticated Key Light, which is
+  # exactly why these are driven from the backend: an HTTPS page cannot fetch
+  # http://192.168.1.201 (RoomOS blocks mixed content), and the lights send no
+  # CORS headers even if it could.
+  keylights: []
+  #  - id: key_left
+  #    name: Key Left
+  #    host: 192.168.1.201
+  #  - id: key_right
+  #    name: Key Right
+  #    host: 192.168.1.148
+
+  # Seconds between key light state polls. 0 stops polling.
+  #
+  # Elgato lights push nothing, so this is the only way to notice one that was
+  # switched off at the light itself. Commands from the panel adopt the
+  # light's own reply, so this is not what makes the sliders feel responsive.
+  # Polling pauses entirely while no panel is connected.
+  pollSeconds: 15
+
+  # The pages. Each is a tab on the Controls screen.
+  pages: []
+  #  - id: deskpro
+  #    name: Desk Pro
+  #    icon: phone
+  #    items:
+  #      # Companion, written the way a config export shows it: page/row/column.
+  #      # {page: 1, row: 0, column: 0} and [1, 0, 0] are also accepted.
+  #      #
+  #      # These coordinates are Companion's own and they MOVE when you
+  #      # rearrange a Companion page. Re-derive them from a fresh Companion
+  #      # config export rather than from memory.
+  #      - name: Join
+  #        icon: phone
+  #        tone: accent
+  #        wide: true          # spans two columns
+  #        companion: 1/0/0
+  #      - name: Hang Up
+  #        icon: phoneDown
+  #        tone: danger        # outlined, not filled — see screens.css
+  #        companion: 1/0/1
+  #      - name: Mute
+  #        icon: micOff
+  #        companion: 1/1/0
+  #      - name: Share
+  #        icon: share
+  #        companion: 1/1/1
+  #
+  #  - id: lights
+  #    name: Lights
+  #    icon: bulb
+  #    items:
+  #      # A button that drives the key lights. op is one of
+  #      # toggle | on | off | brightness | temperature.
+  #      - name: Key Lights
+  #        icon: power
+  #        keylight: { light: all, op: toggle }
+  #      - name: Full
+  #        icon: sun
+  #        keylight: { light: all, op: brightness, value: 100 }
+  #      - name: Dim
+  #        icon: bulb
+  #        keylight: { light: all, op: brightness, value: 20 }
+  #      # An ordinary Home Assistant entity. Scenes and scripts need no
+  #      # `service:` — turn_on is assumed.
+  #      - name: Office Off
+  #        icon: power
+  #        tone: danger
+  #        entity: scene.office_off
+  #      # `light:` on its own is the full control: power, brightness, colour
+  #      # temperature, with live state. `all` addresses every light above as
+  #      # one, so a pair either side of a desk cannot drift apart.
+  #      - light: all
+  #        name: Key Lights
+  #
+  #  - id: scenes
+  #    name: Scenes
+  #    icon: scene
+  #    items:
+  #      - name: Meeting
+  #        entity: scene.office_meeting
+  #      - name: Movie Night
+  #        entity: scene.movie_night
+  #      # A Home Assistant webhook. This is what the old macro's page-less
+  #      # `voice_pe` action button did.
+  #      #
+  #      # Home Assistant answers 200 for a webhook that does not exist, on
+  #      # purpose, so a button that appears to do nothing is a missing
+  #      # automation rather than a broken panel.
+  #      - name: Listen
+  #        icon: mic
+  #        webhook: office_voice_listen

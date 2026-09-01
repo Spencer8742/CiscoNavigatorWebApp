@@ -8,6 +8,7 @@ import type {
   BackendHealth,
   BrowseRequest,
   BrowseResult,
+  KeyLightState,
   MassPlayer,
   MassQueue,
   PanelPrefs,
@@ -16,6 +17,7 @@ import type {
   ServerMessage,
   StatePatch,
 } from '@shared/protocol.ts';
+import type { KeyLightOp } from '@shared/config.ts';
 
 const log = logger('hub');
 
@@ -61,6 +63,12 @@ export interface HubDeps {
   onPref?: (key: string, value: string) => string | null;
   /** Apply a player-layout change. Returns an error string, or null. */
   onLayout?: (layout: unknown) => string | null;
+  /** Current Elgato Key Light states, sent in `hello`. */
+  getKeyLights: () => KeyLightState[];
+  /** Run a macro button by id. Returns an error string, or null. */
+  onControl?: (button: string) => Promise<string | null>;
+  /** Drive a key light. Returns an error string, or null. */
+  onKeyLight?: (light: string, op: KeyLightOp, value?: number) => Promise<string | null>;
 }
 
 interface Panel {
@@ -147,6 +155,7 @@ export class Hub {
       prefs: this.#deps.getPrefs(),
       players: music.players,
       queues: music.queues,
+      keylights: this.#deps.getKeyLights(),
     });
   }
 
@@ -220,6 +229,24 @@ export class Hub {
         break;
       }
 
+      case 'control': {
+        if (!this.#deps.onControl) return;
+        const problem = await this.#deps.onControl(msg.button);
+        if (problem) {
+          this.#send(panel, { t: 'error', ref: msg.id, code: 'control_failed', message: problem });
+        }
+        break;
+      }
+
+      case 'keylight': {
+        if (!this.#deps.onKeyLight) return;
+        const problem = await this.#deps.onKeyLight(msg.light, msg.op, msg.value);
+        if (problem) {
+          this.#send(panel, { t: 'error', ref: msg.id, code: 'keylight_failed', message: problem });
+        }
+        break;
+      }
+
       case 'photos': {
         if (!this.#deps.onPhotos) {
           this.#send(panel, { t: 'photos', photos: [] });
@@ -280,6 +307,10 @@ export class Hub {
 
   broadcastPlayers(players: MassPlayer[], queues: MassQueue[]): void {
     this.broadcast({ t: 'players', players, queues });
+  }
+
+  broadcastKeyLights(lights: KeyLightState[]): void {
+    this.broadcast({ t: 'keylights', lights });
   }
 
   #send(panel: Panel, msg: ServerMessage): void {

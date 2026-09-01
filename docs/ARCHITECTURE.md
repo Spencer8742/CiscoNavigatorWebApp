@@ -219,6 +219,9 @@ CiscoNavigatorWebApp/
 │   ├── dashboard.yaml         # YOUR config — rooms, favourites, albums
 │   └── dashboard.example.yaml # documented reference
 │
+├── scripts/
+│   └── provision-roombar.sh   # reapply the device side after a factory reset
+│
 ├── panel/                     # frontend — everything the Navigator runs
 │   ├── index.html
 │   ├── vite.config.ts         # target: chrome102
@@ -247,7 +250,7 @@ CiscoNavigatorWebApp/
 │       │   └── media_player.tsx
 │       ├── components/        # Card, Slider, Toggle, Sheet, Icon, …
 │       ├── screens/
-│       │   ├── Home/  Rooms/  Media/  Photos/  Settings/
+│       │   ├── Home/  Rooms/  Controls/  Media/  Photos/  Settings/
 │       │   └── Screensaver/
 │       ├── lib/               # lru.ts, thumbhash.ts, format.ts, raf.ts
 │       └── styles/
@@ -265,6 +268,7 @@ CiscoNavigatorWebApp/
 │       ├── mass/              # client.ts, store.ts, commands.ts, browse.ts
 │       ├── immich/            # client.ts, images.ts
 │       ├── cast/              # protocol.ts, device.ts, keeper.ts
+│       ├── controls/          # companion.ts, keylight.ts — the macro pages
 │       └── lib/               # backoff.ts, log.ts, lru.ts
 │
 ├── Dockerfile                 # multi-stage: build panel → run server
@@ -411,6 +415,32 @@ is the whole point.
 **Without `MASS_URL` the panel still runs.** Home Assistant, photos and the
 clock are unaffected; the Media screen explains what is missing rather than
 sitting empty.
+
+### Companion, key lights and webhooks are the same shape as everything else
+
+The Controls screen replaces a RoomOS macro (`companion_bridge.js`) that used
+to run on the Room Bar and map Navigator widget taps onto HTTP calls. Its
+three upstreams — Bitfocus Companion, Elgato Key Lights, Home Assistant
+webhooks — are reached from the backend, and none of that is a preference:
+
+| | Why it cannot be done from the page |
+|---|---|
+| Companion | HTTP-only, no auth. An HTTPS page may not fetch `http://192.168.1.x` — mixed content, blocked before CORS is consulted |
+| Elgato Key Light | Same, and it sends no CORS headers either |
+| HA webhook | Would put the Home Assistant origin in the page's reach |
+
+So the panel sends a **button id** and the backend resolves it against
+`controls:` in `dashboard.yaml`. This is the same rule as `call_service`: a
+screen on a wall may drive the dashboard, not compose requests to the LAN. An
+`entity:` button goes through the existing `ServiceGuard` unchanged, and its
+entity joins the allow-list by virtue of being written in that file.
+
+Key lights are the only upstream in the whole app that is **polled**. They
+push nothing, so a light switched off at the light itself is invisible until
+asked; the poll is slow (15s), it stops entirely while no panel is connected,
+and every command adopts the light's own reply — so it is about noticing
+changes made elsewhere, never about the panel's own controls feeling
+responsive.
 
 ### Reconnection
 

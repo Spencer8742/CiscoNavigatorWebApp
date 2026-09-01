@@ -9,7 +9,7 @@ state over a single WebSocket, and a photo screensaver that takes over when the
 room goes quiet.
 
 ```
-Home  ·  Rooms  ·  Media  ·  Photos  ·  Settings
+Home  ·  Rooms  ·  Controls  ·  Media  ·  Photos  ·  Settings
 ```
 
 ---
@@ -39,8 +39,17 @@ Full detail, with citations: **[`docs/ROOMOS.md`](docs/ROOMOS.md)**.
 Room Navigator ──── one origin, HTTPS ────▶ navigator-panel (Node)
   Preact + signals                            │  holds ALL credentials
   ~17 KB gz                                   ├──▶ Home Assistant  (WebSocket)
-  no credentials                              └──▶ Immich          (REST)
+  no credentials                              ├──▶ Immich          (REST)
+                                              ├──▶ Bitfocus Companion
+                                              └──▶ Elgato Key Lights
 ```
+
+Everything reaches its upstream **through the backend**, and on a RoomOS
+device that is not a preference. The page is served over HTTPS, so it may not
+fetch `http://192.168.1.x` at all — mixed content is blocked before CORS is
+even consulted, and an Elgato Key Light sends no CORS headers either way.
+One origin makes both problems disappear and keeps every address in a config file
+rather than in the page.
 
 The panel is a renderer. The backend is the system of record: it holds the
 tokens, keeps one warm WebSocket to Home Assistant, absorbs upstream outages,
@@ -137,8 +146,78 @@ It is also a **security allow-list**: the backend refuses any service call
 targeting an entity this file does not name, so a tampered panel cannot reach
 a door that was never on the dashboard.
 
+The same file holds the **Controls** pages — see below — under `controls:`.
+
 See [`config/dashboard.example.yaml`](config/dashboard.example.yaml) for the
 fully documented reference.
+
+## Controls: the macro pages
+
+The Room Bar this was built alongside used to run a RoomOS macro,
+`companion_bridge.js`, that mapped Navigator UI Extension widget taps onto HTTP
+calls — Bitfocus Companion, Home Assistant webhooks, Elgato Key Lights. The
+macro, the panel XML and the `HttpClient` configuration all lived **on the
+device**, and a factory reset destroyed every one of them with no single
+artefact to put back.
+
+The Controls screen is that macro, inverted. The device holds one URL; the
+buttons live in `config/dashboard.yaml`:
+
+```yaml
+controls:
+  keylights:
+    - { id: key_left,  name: Key Left,  host: 192.168.1.201 }
+    - { id: key_right, name: Key Right, host: 192.168.1.148 }
+
+  pages:
+    - id: deskpro
+      name: Desk Pro
+      icon: phone
+      items:
+        - { name: Join,     icon: phone,     tone: accent, wide: true, companion: 1/0/0 }
+        - { name: Hang Up,  icon: phoneDown, tone: danger, companion: 1/0/1 }
+        - { name: Listen,   icon: mic,       webhook: office_voice_listen }
+        - { name: Meeting,  entity: scene.office_meeting }
+        - { light: all, name: Key Lights }   # power + brightness + temperature
+```
+
+A button reaches Companion (`POST /api/location/<page>/<row>/<column>/press`),
+a Home Assistant webhook, an ordinary service call, or an Elgato Key Light. A
+bare `light:` item is not a button at all — it is the full light control, with
+live state.
+
+Two properties are worth stating explicitly:
+
+- **The panel names a button, never a request.** It sends `deskpro.hangup`;
+  the backend resolves that against this file. A screen on a wall that anyone
+  in the room can touch is trusted to drive the dashboard, not to compose HTTP
+  requests to your LAN — the same reasoning as the entity allow-list above,
+  and `entity:` buttons go through that guard unchanged.
+- **A macro button does not pretend to have state.** Companion sends no
+  feedback here and Home Assistant answers `200` for a webhook that does not
+  exist, so a tap confirms that the request went and nothing more. Key lights
+  are the exception, and the only thing on the screen drawn as a control
+  rather than a key.
+
+What this screen **cannot** do is read the Room Bar itself. RoomOS does inject
+a bound `xapi` object in Persistent Web App mode, but its supported surface is
+small — bookings, LED control, room analytics, system identity — and call
+state, mic mute and driving a paired codec are not in it
+([`docs/ROOMOS.md`](docs/ROOMOS.md) §8). Those need a device-side macro or an
+authenticated jsxapi socket, which is precisely the thing this replaced. Start
+without them; add one only if a specific button demands it.
+
+### Recovering from a factory reset
+
+```bash
+scripts/provision-roombar.sh --host 192.168.1.243 \
+  --url 'https://panel.example.com/?t=<PANEL_TOKEN>'
+```
+
+Idempotent, so it also answers "is this device configured the way the repo
+says?". It sets the web engine on, turns off RoomOS's nightly storage wipe,
+sets the standby delay and points the device at the panel. Everything else is
+already in this repository. `--dry-run` prints the XML without sending it.
 
 ## Status
 
@@ -153,9 +232,10 @@ fully documented reference.
 | 6 | Immich gallery | ✅ |
 | 7 | Photo slideshow | ✅ |
 | 8 | Idle and screensaver | ✅ |
-| 9 | Failure hardening | ⬜ |
-| 10 | Performance pass on-device | ⬜ |
-| 11 | Deployment polish | 🟡 CI, GHCR images and Unraid template done |
+| 9 | Controls: Companion, webhooks and key lights — replaces the RoomOS macro | ✅ |
+| 10 | Failure hardening | ⬜ |
+| 11 | Performance pass on-device | ⬜ |
+| 12 | Deployment polish | 🟡 CI, GHCR images, Unraid template and the device provisioning script done |
 
 Each phase is verified working before the next begins.
 
@@ -165,8 +245,8 @@ Enforced, not aspirational.
 
 | Metric | Budget | Now |
 |---|---|---|
-| Shell JS (gzip) | < 50 KB | **27.9 KB** |
-| CSS (gzip) | < 12 KB | **5.4 KB** |
+| Shell JS (gzip) | < 50 KB | **37.8 KB** |
+| CSS (gzip) | < 12 KB | **7.5 KB** |
 | HA state change → DOM update | — | **5–34 ms** |
 | Cold load → interactive | < 1.5 s | — |
 | Touch → visual feedback | < 100 ms | one frame |
@@ -179,7 +259,8 @@ Enforced, not aspirational.
 .github/    CI (typecheck, tests, bundle budget) + GHCR image publish
 docs/       ROOMOS.md · ARCHITECTURE.md · DEPLOYMENT.md
 unraid/     Unraid container template
-config/     dashboard.yaml — rooms, favourites, scenes, albums
+config/     dashboard.yaml — rooms, favourites, scenes, albums, control pages
+scripts/    provision-roombar.sh — reapply the device side after a reset
 shared/     types and helpers used verbatim by both ends
 panel/      frontend (Preact + signals, Vite, target chrome102)
   domains/    ← add a Home Assistant domain here, nowhere else
@@ -189,6 +270,7 @@ server/     backend  (Node 22, deps: ws + yaml)
   mass/       Music Assistant · players, queues, library browsing
   immich/     REST client · playlist · image proxy (originals unreachable)
   cast/       Cast v2 — keeps Google Nest Hubs showing the dashboard
+  controls/   Companion presses · Elgato Key Lights · HA webhooks
   test/       integration tests + mock Home Assistant and Immich
 ```
 

@@ -50,6 +50,68 @@ const ICONS: Record<string, PathSpec> = {
     d: ['M4 7h9', 'M17.5 7H20', 'M4 12h3.5', 'M12 12h8', 'M4 17h9', 'M17.5 17H20'],
     c: [[15.2, 7, 2.2], [9.7, 12, 2.2], [15.2, 17, 2.2]],
   },
+  // A control surface — a bezel with six keys — rather than the 2x2 grid
+  // `rooms` already uses. Two nav items that differ only in the number of
+  // squares are two nav items nobody can tell apart at a glance.
+  grid: {
+    d: ['M3.5 5.5A2 2 0 0 1 5.5 3.5h13a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z'],
+    c: [
+      [8, 9, 1.15], [12, 9, 1.15], [16, 9, 1.15],
+      [8, 15, 1.15], [12, 15, 1.15], [16, 15, 1.15],
+    ],
+  },
+
+  /* ── Macro pages ────────────────────────────────────────────────────────
+     Call control, because that is what the Room Bar's macro pages were for.
+     `phoneDown` is the handset rotated 135 degrees, which is the universal
+     hang-up glyph and costs nothing beyond the `rot` the fan already uses. */
+  phone: {
+    d: [
+      'M6.5 3.5h3l1.5 4-2 1.5a12 12 0 0 0 6 6l1.5-2 4 1.5v3a2 2 0 0 1-2 2C10.6 19.5 4.5 13.4 4.5 5.5a2 2 0 0 1 2-2z',
+    ],
+  },
+  phoneDown: {
+    d: [
+      'M6.5 3.5h3l1.5 4-2 1.5a12 12 0 0 0 6 6l1.5-2 4 1.5v3a2 2 0 0 1-2 2C10.6 19.5 4.5 13.4 4.5 5.5a2 2 0 0 1 2-2z',
+    ],
+    rot: [135],
+  },
+  mic: {
+    d: [
+      'M12 3.5a2.6 2.6 0 0 1 2.6 2.6v5a2.6 2.6 0 0 1-5.2 0v-5A2.6 2.6 0 0 1 12 3.5z',
+      'M5.5 11a6.5 6.5 0 0 0 13 0',
+      'M12 17.5v3',
+    ],
+  },
+  micOff: {
+    d: [
+      'M12 3.5a2.6 2.6 0 0 1 2.6 2.6v5a2.6 2.6 0 0 1-5.2 0v-5A2.6 2.6 0 0 1 12 3.5z',
+      'M5.5 11a6.5 6.5 0 0 0 13 0',
+      'M12 17.5v3',
+      'M4 4l16 16',
+    ],
+  },
+  tv: {
+    d: [
+      'M3.5 6.5A1.5 1.5 0 0 1 5 5h14a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 19 16H5a1.5 1.5 0 0 1-1.5-1.5z',
+      'M8 20h8',
+    ],
+  },
+  camera: {
+    d: [
+      'M3.5 8.2A1.7 1.7 0 0 1 5.2 6.5h7.6a1.7 1.7 0 0 1 1.7 1.7v7.6a1.7 1.7 0 0 1-1.7 1.7H5.2a1.7 1.7 0 0 1-1.7-1.7z',
+      'M14.5 10.8l4.4-2.9a.7.7 0 0 1 1.1.6v7a.7.7 0 0 1-1.1.6l-4.4-2.9z',
+    ],
+  },
+  share: {
+    d: [
+      'M3.5 6.5A1.5 1.5 0 0 1 5 5h14a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 19 16H5a1.5 1.5 0 0 1-1.5-1.5z',
+      'M12 13V8',
+      'M9.5 10.5 12 8l2.5 2.5',
+      'M8 20h8',
+    ],
+  },
+  bolt: { d: ['M13 3 6 13.5h4.6L11 21l7-10.5h-4.6z'] },
 
   /* ── Rooms ──────────────────────────────────────────────────────────── */
   sofa: {

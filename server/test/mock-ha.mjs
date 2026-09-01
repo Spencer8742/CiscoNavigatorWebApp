@@ -1,4 +1,5 @@
 import { WebSocketServer } from 'ws';
+import { createServer } from 'node:http';
 
 /**
  * A mock Home Assistant WebSocket server.
@@ -17,6 +18,7 @@ import { WebSocketServer } from 'ws';
  */
 export class MockHomeAssistant {
   #wss;
+  #http;
   #port;
   #sockets = new Set();
 
@@ -25,6 +27,14 @@ export class MockHomeAssistant {
 
   /** Every call_service message received, for assertions. */
   serviceCalls = [];
+
+  /**
+   * Every webhook POST received, as { id, body }.
+   *
+   * Webhooks are plain HTTP rather than WebSocket, which is why this mock
+   * owns its HTTP server explicitly instead of letting `ws` create one.
+   */
+  webhooks = [];
 
   /** Set to true to reject the token instead of accepting it. */
   rejectAuth = false;
@@ -38,8 +48,9 @@ export class MockHomeAssistant {
 
   /** Restartable, so tests can simulate a full outage and a recovery. */
   async start() {
-    this.#wss = new WebSocketServer({ port: this.#port });
-    await new Promise((resolve) => this.#wss.once('listening', resolve));
+    this.#http = createServer((req, res) => this.#onRequest(req, res));
+    this.#wss = new WebSocketServer({ server: this.#http });
+    await new Promise((resolve) => this.#http.listen(this.#port, '127.0.0.1', resolve));
 
     this.#wss.on('connection', (ws) => {
       this.#sockets.add(ws);
@@ -49,6 +60,31 @@ export class MockHomeAssistant {
       ws.on('message', (data) => this.#onMessage(ws, session, data));
 
       ws.send(JSON.stringify({ type: 'auth_required', ha_version: '2026.8.0' }));
+    });
+  }
+
+  /**
+   * Home Assistant's REST surface, to the extent anything here uses it.
+   *
+   * Only webhooks so far. Note the 200 for an unknown id: that is what Home
+   * Assistant really does — deliberately, so a webhook id cannot be probed —
+   * which is why a webhook button that appears to do nothing means a missing
+   * automation rather than a broken panel.
+   */
+  #onRequest(req, res) {
+    const match = /^\/api\/webhook\/([^/?]+)/.exec(req.url ?? '');
+    if (!match || req.method !== 'POST') {
+      res.writeHead(404).end();
+      return;
+    }
+
+    let body = '';
+    req.on('data', (chunk) => {
+      body += chunk;
+    });
+    req.on('end', () => {
+      this.webhooks.push({ id: match[1], body });
+      res.writeHead(200).end();
     });
   }
 
@@ -281,5 +317,9 @@ export class MockHomeAssistant {
     this.#sockets.clear();
     await new Promise((resolve) => this.#wss.close(resolve));
     this.#wss = null;
+    if (this.#http) {
+      await new Promise((resolve) => this.#http.close(resolve));
+      this.#http = null;
+    }
   }
 }

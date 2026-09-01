@@ -1359,3 +1359,199 @@
   object-fit: cover;
   display: block;
 }
+
+/* ── Controls (macro pages) ────────────────────────────────────────────────
+
+   The old RoomOS macro's UI Extension panels. Sized as a control surface
+   rather than a list: on a 10.1" panel these are pressed by someone standing
+   up, often mid-call, often without looking directly at the button they are
+   reaching for. So the tap targets are the largest in the app — 8rem against
+   the 4rem of a nav item — and they are square, because a square is what the
+   hand remembers the position of.
+
+   No :has(), no container queries, no nesting: Chromium 102. */
+
+.control-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  padding: 0 var(--s-6) var(--s-4);
+}
+
+.control-tab {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: var(--touch-min);
+  padding: 0 var(--s-4);
+  border-radius: var(--r-full);
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  color: var(--text-dim);
+  font-size: 0.9375rem;
+  font-weight: 540;
+  max-width: 14rem;
+}
+
+.control-tab.is-active {
+  background: var(--surface-4);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+/* auto-fill, not auto-fit: a page with two buttons should show two buttons,
+   not two buttons stretched across the whole panel. */
+.macro-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr));
+  gap: var(--s-3);
+  margin-bottom: var(--s-5);
+}
+
+.macro-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.macro-btn.is-wide {
+  grid-column: span 2;
+}
+
+/* The face is a separate element from the button so the label sits OUTSIDE
+   the coloured surface. A caption inside the key would have to shrink to fit
+   "Presentation", and a key whose label wraps to three lines is a key you
+   cannot find by shape. */
+.macro-btn-face {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 4.75rem;
+  border-radius: var(--r-lg);
+  background: var(--surface-3);
+  border: 1px solid var(--border-subtle);
+  color: var(--text);
+}
+
+.macro-btn.is-wide .macro-btn-face {
+  /* A wide key would otherwise be a letterbox; keeping the height means it
+     reads as a bigger version of the same thing. */
+  height: 4.75rem;
+}
+
+.macro-btn-face[data-tone='accent'] {
+  background: var(--accent-soft);
+  border-color: var(--accent-dim);
+  color: var(--accent);
+}
+
+.macro-btn-face[data-tone='danger'] {
+  /* Not a filled red key. A hang-up button that is the brightest thing on the
+     page invites the mis-tap it is most important to avoid; an outline says
+     "this one is different" without drawing the finger to it. */
+  background: rgba(248, 113, 113, 0.12);
+  border-color: rgba(248, 113, 113, 0.32);
+  color: var(--danger);
+}
+
+/* ── Press confirmation ────────────────────────────────────────────────────
+   A macro button has nothing to toggle: Companion sends no feedback here and
+   a Home Assistant webhook answers 200 whether or not anything was listening.
+   So the honest acknowledgement is "the request went", shown by swapping the
+   icon for a tick for ~900 ms — the smallest thing that distinguishes a tap
+   that registered from a tap that missed.
+
+   Both icons are always in the DOM and cross-faded with opacity, which is
+   compositor-only. Toggling `display` would relayout the key on every press
+   (docs/ROOMOS.md §2). */
+
+.macro-btn-icon,
+.macro-btn-tick {
+  transition: opacity var(--t-fast) var(--ease);
+}
+
+.macro-btn-tick {
+  position: absolute;
+  opacity: 0;
+  color: var(--ok);
+}
+
+.macro-btn-face[data-confirm] .macro-btn-icon {
+  opacity: 0;
+}
+
+.macro-btn-face[data-confirm] .macro-btn-tick {
+  opacity: 1;
+}
+
+.macro-btn-face[data-confirm] {
+  border-color: rgba(52, 211, 153, 0.4);
+}
+
+.macro-btn-name {
+  max-width: 100%;
+  font-size: 0.9375rem;
+  font-weight: 540;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+/* ── Key lights ────────────────────────────────────────────────────────────
+   The one thing on this screen with state, so the one thing that looks like a
+   card rather than a key. */
+
+.keylight {
+  margin-bottom: var(--s-4);
+}
+
+.keylight-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  margin-bottom: var(--s-4);
+}
+
+.keylight-power {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--touch-min);
+  height: var(--touch-min);
+  border-radius: var(--r-full);
+  background: var(--light-on-soft);
+  color: var(--light-on);
+}
+
+/* Off is the quiet state, not the alarming one. */
+.keylight[data-off] .keylight-power {
+  background: var(--surface-3);
+  color: var(--text-faint);
+}
+
+.keylight-titles {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.keylight-name {
+  font-size: 1.0625rem;
+  font-weight: 580;
+}
+
+.keylight-state {
+  font-size: 0.875rem;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The two sliders in a light card need air between them; without this the
+   temperature ramp reads as part of the brightness control. */
+.keylight .slider + .slider {
+  margin-top: var(--s-4);
+}

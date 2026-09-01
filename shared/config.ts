@@ -262,6 +262,145 @@ export interface CastDisplay {
   pane?: CastTarget;
 }
 
+/* ── Controls ──────────────────────────────────────────────────────────────
+
+   The old Room Navigator macro's UI Extension panels, rebuilt as config.
+
+   A Room Bar previously ran a JavaScript macro that mapped Navigator widget
+   taps onto HTTP calls: Bitfocus Companion button presses, Home Assistant
+   webhooks, and Elgato Key Lights. A factory reset destroyed all of it —
+   macro, panel XML and HttpClient config all live on the device and none of
+   it has a single artefact to reapply.
+
+   So the buttons live here instead. The device holds one URL; this file holds
+   the button map; and a reset costs a re-provision rather than an evening.
+
+   The important structural rule: a button is identified to the backend by
+   ITS ID, never by the request it makes. The panel cannot ask the backend to
+   press Companion page 3 button 7 — it can only ask it to run
+   `deskpro.hangup`, which the backend then looks up here. Same reasoning as
+   the Home Assistant entity allow-list in allReferencedEntities() below: a
+   panel on a wall is trusted to drive the dashboard, not to compose
+   arbitrary requests to things on the LAN. */
+
+/**
+ * What a button does when tapped.
+ *
+ * Deliberately small. Each variant is one HTTP call whose shape is fixed by
+ * the far end, so there is nothing to configure beyond which one.
+ */
+export type ControlAction =
+  /**
+   * Press a Bitfocus Companion button by its grid location.
+   *
+   * `POST /api/location/<page>/<row>/<column>/press` — Companion 4.x. The
+   * coordinates are Companion's own and are re-derived from a config export;
+   * they are not stable across a Companion page rearrangement.
+   */
+  | { kind: 'companion'; page: number; row: number; column: number }
+  /**
+   * Fire a Home Assistant webhook: `POST /api/webhook/<id>`.
+   *
+   * Webhooks are unauthenticated by design — the id IS the secret — so this
+   * needs no token beyond the HA base URL the backend already holds. It is
+   * also the only way to reach an automation that has no entity to call.
+   */
+  | { kind: 'webhook'; id: string }
+  /** Drive an Elgato Key Light listed in `controls.keylights`. */
+  | { kind: 'keylight'; light: string; op: KeyLightOp; value?: number }
+  /**
+   * Call a Home Assistant service, exactly as a dashboard tile does.
+   *
+   * Goes through the same ServiceGuard as everything else, and the entity is
+   * added to the allow-list by allReferencedEntities(), so putting a scene on
+   * a macro page grants no more than putting it on Home does.
+   */
+  | { kind: 'entity'; entity: string; service: string; data?: Record<string, unknown> };
+
+export type KeyLightOp = 'toggle' | 'on' | 'off' | 'brightness' | 'temperature';
+
+export const KEY_LIGHT_OPS: readonly KeyLightOp[] = [
+  'toggle',
+  'on',
+  'off',
+  'brightness',
+  'temperature',
+];
+
+/** Colour weight of a button. `danger` is for hang-up and all-off. */
+export type ControlTone = 'default' | 'accent' | 'danger';
+
+export const CONTROL_TONES: readonly ControlTone[] = ['default', 'accent', 'danger'];
+
+export interface ControlButton {
+  type: 'button';
+  /**
+   * Stable within the whole config. Generated from the page id and position
+   * when not written by hand — but write one for any button you might later
+   * reorder, because the generated form moves with the button.
+   */
+  id: string;
+  name: string;
+  icon: string;
+  tone: ControlTone;
+  /** Twice the width in the grid, for a primary action like Join. */
+  wide: boolean;
+  action: ControlAction;
+}
+
+/**
+ * A full Elgato Key Light control: power, brightness, colour temperature.
+ *
+ * Not expressible as buttons, because it shows state. The old macro's slider
+ * sent a 0–255 widget value that the macro rescaled; here brightness is 0–100
+ * end to end, which is what the light actually speaks.
+ */
+export interface ControlLight {
+  type: 'light';
+  id: string;
+  /** A key light id from `controls.keylights`, or `all` for every one. */
+  light: string;
+  name: string;
+}
+
+export type ControlItem = ControlButton | ControlLight;
+
+export interface ControlPage {
+  id: string;
+  name: string;
+  icon: string;
+  items: ControlItem[];
+}
+
+/**
+ * One Elgato Key Light on the LAN.
+ *
+ * Addressed rather than discovered, for the same reason cast displays are:
+ * these are found by mDNS, mDNS does not cross a Docker bridge network, and
+ * an IP needs no discovery at all.
+ */
+export interface KeyLightConfig {
+  id: string;
+  name: string;
+  /** `192.168.1.201` or `192.168.1.201:9123`. Port defaults to 9123. */
+  host: string;
+}
+
+export interface ControlsConfig {
+  pages: ControlPage[];
+  keylights: KeyLightConfig[];
+  /**
+   * Seconds between key light state polls. 0 stops polling.
+   *
+   * Elgato lights push nothing, so the only way to know a light was turned
+   * off at the light is to ask. Polling only runs while a panel is connected,
+   * and every command refreshes immediately regardless of this — so this is
+   * about noticing changes made elsewhere, not about the panel's own
+   * controls feeling responsive.
+   */
+  pollSeconds: number;
+}
+
 export interface DashboardConfig {
   version: 1;
   ui: UiConfig;
@@ -271,6 +410,7 @@ export interface DashboardConfig {
   home: HomeConfig;
   media: MediaConfig;
   cast: CastConfig;
+  controls: ControlsConfig;
 }
 
 /**
@@ -294,6 +434,15 @@ export function allReferencedEntities(cfg: DashboardConfig): Set<string> {
   cfg.home.alerts.forEach((a) => add(a.entity));
   add(cfg.home.weather);
   cfg.media.players.forEach((p) => add(p.entity));
+
+  // A macro button that calls a service is subject to the same allow-list as
+  // a tile — putting a scene on a Scenes page is what grants the panel
+  // permission to fire it, and nothing else does.
+  for (const page of cfg.controls.pages) {
+    for (const item of page.items) {
+      if (item.type === 'button' && item.action.kind === 'entity') add(item.action.entity);
+    }
+  }
 
   return out;
 }

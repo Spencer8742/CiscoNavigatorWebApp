@@ -20,7 +20,7 @@
  * See docs/ARCHITECTURE.md §6.
  */
 
-import type { DashboardConfig } from './config.ts';
+import type { DashboardConfig, KeyLightOp } from './config.ts';
 
 /* ── Entity state ──────────────────────────────────────────────────────── */
 
@@ -303,6 +303,32 @@ export const SEARCH_LIMIT = 12;
 
 /* ── Server → panel ────────────────────────────────────────────────────── */
 
+/* ── Elgato Key Lights ─────────────────────────────────────────────────── */
+
+/**
+ * One Key Light, as the panel sees it.
+ *
+ * Normalised away from Elgato's wire format on the backend: `on` is a
+ * boolean rather than 0/1, and `temperature` is KELVIN rather than the mired
+ * value the light actually speaks. The panel should never have to know that
+ * 213 means 4700 K, and the conversion has exactly one home.
+ */
+export interface KeyLightState {
+  id: string;
+  name: string;
+  /** False when the light did not answer. Its last known values are kept. */
+  reachable: boolean;
+  on: boolean;
+  /** 0–100, the light's own scale. */
+  brightness: number;
+  /** Kelvin, 2900–7000. */
+  temperature: number;
+}
+
+/** The range every Elgato Key Light supports, in Kelvin. */
+export const KEY_LIGHT_MIN_KELVIN = 2900;
+export const KEY_LIGHT_MAX_KELVIN = 7000;
+
 export type ServerMessage =
   /** Always first. Complete snapshot; the panel can render immediately. */
   | {
@@ -317,6 +343,8 @@ export type ServerMessage =
       players: MassPlayer[];
       /** Queue state for each of those players, keyed by queue id. */
       queues: MassQueue[];
+      /** Every Elgato Key Light named in `controls.keylights`. */
+      keylights: KeyLightState[];
     }
   /** Incremental entity state. */
   | { t: 'patch'; patch: StatePatch }
@@ -329,6 +357,13 @@ export type ServerMessage =
    * as a unit anyway when the track does.
    */
   | { t: 'players'; players: MassPlayer[]; queues: MassQueue[] }
+  /**
+   * Elgato Key Light state changed.
+   *
+   * Sent whole, like `players`: there are two or three of these and each one
+   * is four fields. A diff would be larger than the thing it describes.
+   */
+  | { t: 'keylights'; lights: KeyLightState[] }
   /** Config file changed on disk and revalidated. */
   | { t: 'config'; config: DashboardConfig }
   /** Backend link health changed. */
@@ -380,6 +415,24 @@ export type ClientMessage =
    * until the answer arrives, so this one waits, with a spinner.
    */
   | { t: 'browse'; id: number; req: BrowseRequest }
+  /**
+   * Run a macro button from `controls.pages`.
+   *
+   * Carries the button's ID and nothing else — no URL, no Companion
+   * coordinates, no webhook name. The backend looks the button up in the
+   * config it already holds and performs whatever that says, so the set of
+   * requests a panel can cause is exactly the set written in dashboard.yaml.
+   * See shared/config.ts for why that is not merely tidier.
+   */
+  | { t: 'control'; id: number; button: string }
+  /**
+   * Drive an Elgato Key Light.
+   *
+   * Separate from `control` because a light is a control rather than a
+   * button: it carries a value and it has state to come back. `light` is
+   * checked against `controls.keylights` — `all` addresses every one.
+   */
+  | { t: 'keylight'; id: number; light: string; op: KeyLightOp; value?: number }
   /** Heartbeat. Detects half-open sockets that TCP will not report. */
   | { t: 'ping'; id: number }
   /**

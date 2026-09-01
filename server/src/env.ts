@@ -59,6 +59,20 @@ export interface Env {
     insecureTls: boolean;
     enabled: boolean;
   };
+
+  /**
+   * Bitfocus Companion, for the macro pages on the Controls screen.
+   *
+   * Base URL only — there is no token, because Companion's HTTP API has no
+   * authentication. That is exactly why it belongs behind this backend rather
+   * than being called from the page: the browser would need to reach
+   * Companion directly, over HTTP, from an HTTPS origin, which RoomOS blocks
+   * as mixed content even before CORS gets a say.
+   */
+  companion: {
+    url: string;
+    enabled: boolean;
+  };
 }
 
 function str(name: string, fallback = ''): string {
@@ -107,6 +121,7 @@ export function loadEnv(): Env {
   const immichUrl = normalizeUrl(str('IMMICH_URL'));
   const immichKey = str('IMMICH_API_KEY');
   const massUrl = normalizeUrl(str('MASS_URL'));
+  const companionUrl = normalizeUrl(str('COMPANION_URL'));
 
   const env: Env = {
     port: int('PORT', 8099),
@@ -140,6 +155,11 @@ export function loadEnv(): Env {
       insecureTls: bool('IMMICH_INSECURE_TLS'),
       enabled: Boolean(immichUrl && immichKey),
     },
+
+    companion: {
+      url: companionUrl,
+      enabled: Boolean(companionUrl),
+    },
   };
 
   if (!env.panelToken) {
@@ -155,6 +175,13 @@ export function loadEnv(): Env {
 
   if (!env.immich.enabled) {
     log.warn('IMMICH_URL / IMMICH_API_KEY not set — photo features are disabled.');
+  }
+
+  if (!env.companion.enabled) {
+    log.info(
+      'COMPANION_URL not set — Controls pages can still drive Home Assistant, ' +
+        'webhooks and key lights; Companion buttons will report it is not configured.',
+    );
   }
 
   if (!env.mass.enabled) {

@@ -123,6 +123,17 @@
     Mask="true"/>
 
   <Config
+    Name="Companion URL"
+    Target="COMPANION_URL"
+    Default=""
+    Mode=""
+    Description="Base URL of your Bitfocus Companion, no trailing slash - for example http://192.168.1.93:8000. Powers the Companion buttons on the Controls screen. Leave empty and the rest of that screen still works: key lights, Home Assistant webhooks and scenes need nothing from this."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false"/>
+
+  <Config
     Name="PUID"
     Target="PUID"
     Default="99"

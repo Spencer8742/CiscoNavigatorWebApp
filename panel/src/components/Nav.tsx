@@ -23,6 +23,7 @@ import { linkStatus, navigate, route, ROUTES, type Route } from '~/state/ui.ts';
 const LABELS: Record<Route, string> = {
   home: 'Home',
   rooms: 'Rooms',
+  controls: 'Controls',
   media: 'Media',
   photos: 'Photos',
   settings: 'Settings',
@@ -31,6 +32,7 @@ const LABELS: Record<Route, string> = {
 const ICONS: Record<Route, string> = {
   home: 'home',
   rooms: 'rooms',
+  controls: 'grid',
   media: 'media',
   photos: 'photos',
   settings: 'settings',
