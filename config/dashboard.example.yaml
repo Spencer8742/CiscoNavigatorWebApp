@@ -62,6 +62,25 @@ idle:
   # screen (happens before the screensaver). 0 disables.
   returnHomeSeconds: 90
 
+  # How long the CONTROLS screen holds both of the above off. 0 disables the
+  # hold, so Controls idles like every other screen.
+  #
+  # Controls is the one screen that is doing its job while nobody touches it:
+  # you are in a call, hang up and mute are on screen, and going to photos
+  # after three minutes is the panel being wrong about what it is for.
+  #
+  # Note this holds the return to Home as well, not just the screensaver.
+  # With the defaults above, returnHomeSeconds (90) is well short of
+  # timeoutSeconds (180), so holding only the screensaver would change
+  # nothing you could see — the panel would leave Controls at 90s and
+  # screensave from Home at 180s.
+  #
+  # It expires rather than lasting forever because the panel has no way to
+  # know when you are done: RoomOS gives a web page no call state, and a panel
+  # parked on a static grid of keys indefinitely risks burn-in and never shows
+  # a photo again. Raise it if your meetings run long.
+  controlsHoldSeconds: 1800
+
   # What the screensaver shows overlaid on the photos.
   overlays:
     clock: true

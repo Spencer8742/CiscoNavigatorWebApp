@@ -61,6 +61,7 @@ export const FALLBACK_CONFIG: DashboardConfig = {
   idle: {
     timeoutSeconds: 180,
     returnHomeSeconds: 90,
+    controlsHoldSeconds: 1800,
     overlays: { clock: true, date: true, weather: true, nowPlaying: true, photoInfo: true },
     burnInProtection: true,
   },
@@ -251,6 +252,15 @@ function validate(raw: unknown): DashboardConfig {
         d.idle.returnHomeSeconds,
         'idle.returnHomeSeconds',
         0,
+      ),
+      // Thirty minutes: longer than a meeting's quiet stretch, short enough
+      // that a panel left on Controls is back to photos within the hour.
+      controlsHoldSeconds: num(
+        idleRaw['controlsHoldSeconds'],
+        d.idle.controlsHoldSeconds,
+        'idle.controlsHoldSeconds',
+        0,
+        86_400,
       ),
       overlays: {
         clock: bool(overlaysRaw['clock'], true, 'idle.overlays.clock'),

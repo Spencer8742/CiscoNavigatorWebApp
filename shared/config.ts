@@ -36,6 +36,23 @@ export interface IdleConfig {
   timeoutSeconds: number;
   /** Seconds of inactivity before returning to Home. 0 disables. */
   returnHomeSeconds: number;
+  /**
+   * How long the Controls screen holds BOTH of the above off. 0 disables the
+   * hold, so Controls idles like any other screen.
+   *
+   * The Controls screen is the one place on the panel that is useful while
+   * nobody is touching it: you are in a call, the hang-up and mute keys are
+   * on screen, and the panel wandering off to a photo of a beach is the panel
+   * being wrong. Everywhere else, going quiet is correct.
+   *
+   * It is a HOLD rather than an exemption because the panel cannot know when
+   * you are finished. RoomOS gives a web page no call state (docs/ROOMOS.md
+   * §8), so "stay awake until the call ends" is not available — and a panel
+   * left showing a static grid of keys forever is a burn-in risk on a device
+   * that runs for months, and never shows photos again. So it holds
+   * generously, then resumes normal behaviour.
+   */
+  controlsHoldSeconds: number;
   overlays: IdleOverlays;
   burnInProtection: boolean;
 }
