@@ -450,6 +450,18 @@ controls:
   #  - id: deskpro
   #    name: Desk Pro
   #    icon: phone
+  #    # Keys across. Omit (or 0) to fit as many as the panel holds.
+  #    #
+  #    # Worth setting whenever the keys come in pairs. Auto-fitting packs as
+  #    # many 8rem keys per row as fit and wraps wherever it runs out — on an
+  #    # eight-key page that left seven on one row and one stranded below, and
+  #    # put Camera Off beside Vol +, which have nothing to do with each other.
+  #    # Naming the count puts the wrap where the meaning is.
+  #    columns: 4
+  #    # md | lg. `lg` roughly doubles the key height. A page of eight keys has
+  #    # room to spare on a 10.1" panel, and a bigger target is a better target
+  #    # on a screen someone stabs at mid-call without looking straight at it.
+  #    size: lg
   #    items:
   #      # Companion, written the way a config export shows it: page/row/column.
   #      # {page: 1, row: 0, column: 0} and [1, 0, 0] are also accepted.

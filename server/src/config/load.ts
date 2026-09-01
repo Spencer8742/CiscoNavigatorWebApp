@@ -3,7 +3,13 @@ import { watch, type FSWatcher } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { logger } from '~/lib/log.ts';
-import { CAST_PANES, CAST_TARGETS, CONTROL_TONES, KEY_LIGHT_OPS } from '@shared/config.ts';
+import {
+  CAST_PANES,
+  CAST_TARGETS,
+  CONTROL_SIZES,
+  CONTROL_TONES,
+  KEY_LIGHT_OPS,
+} from '@shared/config.ts';
 import type {
   AlertRule,
   CastDisplay,
@@ -504,6 +510,9 @@ function controlPages(v: unknown): ControlPage[] {
       id,
       name: str(raw['name'], id, `${path}.name`),
       icon: str(raw['icon'], 'grid', `${path}.icon`),
+      // 12 is past the point where a key is too small to hit; 0 means auto.
+      columns: num(raw['columns'], 0, `${path}.columns`, 0, 12),
+      size: oneOf(raw['size'], CONTROL_SIZES, 'md', `${path}.size`),
       items: controlItems(raw['items'], id, `${path}.items`, seenItems),
     });
   });
