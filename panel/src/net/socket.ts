@@ -2,9 +2,11 @@ import { Backoff } from '@shared/backoff.ts';
 import { socketUrl } from '~/net/auth.ts';
 import { applyPatch, applySnapshot } from '~/state/entities.ts';
 import { setPlayers } from '~/state/players.ts';
+import { clearPressed, keyLights, markPressed } from '~/state/controls.ts';
 import { setConfig } from '~/config/index.ts';
 import { connectionProblem, health, prefs, ready, showToast, socketState } from '~/state/ui.ts';
 import { diagnose } from '~/net/diagnose.ts';
+import type { KeyLightOp } from '@shared/config.ts';
 import {
   HEARTBEAT_MS,
   HEARTBEAT_TIMEOUT_MS,
@@ -178,6 +180,7 @@ function handle(msg: ServerMessage): void {
       health.value = msg.health;
       prefs.value = msg.prefs;
       setPlayers(msg.players, msg.queues);
+      keyLights.value = msg.keylights;
       socketState.value = 'connected';
       ready.value = true;
       // Clear any diagnosis: whatever was wrong is now demonstrably fixed.
@@ -196,6 +199,10 @@ function handle(msg: ServerMessage): void {
 
     case 'players':
       setPlayers(msg.players, msg.queues);
+      break;
+
+    case 'keylights':
+      keyLights.value = msg.lights;
       break;
 
     case 'config':
@@ -249,6 +256,12 @@ function handle(msg: ServerMessage): void {
         clearTimeout(waiter.timer);
         waiter.reject(new Error(msg.message));
         break;
+      }
+      // A macro button that failed must not keep showing its confirmation
+      // tick while the toast says the far end was unreachable.
+      if (msg.ref !== undefined) {
+        const button = pendingControls.get(msg.ref);
+        if (button !== undefined) clearPressed(button);
       }
       // Everything else: a transient toast, never a blocking dialog.
       showToast(msg.message, 'error');
@@ -334,6 +347,45 @@ export function callService(
  */
 export function massCommand(command: string, args?: Record<string, unknown>): boolean {
   return send({ t: 'mass', id: nextId(), command, args });
+}
+
+/* ── Macro pages ──────────────────────────────────────────────────────────
+   Which button each in-flight control message belongs to, so a failure can
+   withdraw that button's confirmation. Bounded by the fact that entries are
+   only added on a successful send and dropped when the confirmation ends,
+   which is at most a second later. */
+
+const pendingControls = new Map<number, string>();
+
+/**
+ * Run a macro button.
+ *
+ * Sends the button's ID and nothing else — the backend resolves it against
+ * dashboard.yaml. A panel cannot ask for a Companion coordinate or a webhook
+ * it was not configured with; see server/src/controls/index.ts.
+ *
+ * Fire-and-forget, like every other command here: an error comes back as a
+ * toast, and silence means the request was made.
+ */
+export function pressControl(button: string): boolean {
+  const id = nextId();
+  if (!send({ t: 'control', id, button })) return false;
+  pendingControls.set(id, button);
+  markPressed(button);
+  setTimeout(() => pendingControls.delete(id), 5000);
+  return true;
+}
+
+/**
+ * Drive an Elgato Key Light.
+ *
+ * Not optimistic, unlike a Home Assistant light. The authoritative state
+ * comes from the light's own reply to the command — about as fast as an HA
+ * state change — and a key light that is switched off at the wall would
+ * otherwise show as on for as long as the optimistic value survived.
+ */
+export function setKeyLight(light: string, op: KeyLightOp, value?: number): boolean {
+  return send({ t: 'keylight', id: nextId(), light, op, value });
 }
 
 /**

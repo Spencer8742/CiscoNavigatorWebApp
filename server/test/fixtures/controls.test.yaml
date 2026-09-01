@@ -1,0 +1,79 @@
+# Fixture for server/test/controls.test.mjs.
+#
+# The key lights' ports are the mock's, not 9123, which is the only reason the
+# `host:port` form exists — real lights are all on 9123.
+
+version: 1
+
+ui:
+  title: Controls Test
+  timezone: UTC
+
+home:
+  scenes:
+    - scene.movie_night
+
+controls:
+  keylights:
+    - id: key_left
+      name: Key Left
+      host: 127.0.0.1:19201
+    - id: key_right
+      name: Key Right
+      host: 127.0.0.1:19202
+
+  # Off. The tests drive state explicitly; a background poll racing them would
+  # make failures depend on timing rather than on behaviour.
+  pollSeconds: 0
+
+  pages:
+    - id: deskpro
+      name: Desk Pro
+      icon: phone
+      items:
+        - id: deskpro.join
+          name: Join
+          icon: phone
+          tone: accent
+          wide: true
+          companion: 1/0/0
+        - id: deskpro.hangup
+          name: Hang Up
+          icon: phoneDown
+          tone: danger
+          companion: { page: 1, row: 0, column: 1 }
+        # A location the mock Companion has no button at — a rearranged
+        # Companion page, from this end.
+        - id: deskpro.missing
+          name: Gone
+          companion: [9, 9, 9]
+
+    - id: scenes
+      name: Scenes
+      icon: scene
+      items:
+        - id: scenes.movie
+          name: Movie Night
+          entity: scene.movie_night
+        - id: scenes.listen
+          name: Listen
+          icon: mic
+          webhook: office_voice_listen
+        # Not on the dashboard anywhere else: proves a control entity is added
+        # to the service allow-list by being written here.
+        - id: scenes.goodnight
+          name: Goodnight
+          entity: script.goodnight
+
+    - id: lights
+      name: Lights
+      icon: bulb
+      items:
+        - id: lights.toggle
+          name: Key Lights
+          keylight: { light: all, op: toggle }
+        - id: lights.dim
+          name: Dim
+          keylight: { light: key_left, op: brightness, value: 20 }
+        - light: all
+          name: Key Lights

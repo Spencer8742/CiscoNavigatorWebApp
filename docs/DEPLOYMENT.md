@@ -187,7 +187,10 @@ each row:
 | Variable | PUID | `PUID` | `99` |
 | Variable | PGID | `PGID` | `100` |
 
-`IMMICH_URL` and `IMMICH_API_KEY` are optional.
+`IMMICH_URL` and `IMMICH_API_KEY` are optional, as is `COMPANION_URL` — set
+that one to your Bitfocus Companion (`http://192.168.1.x:8000`) if you want
+the `companion:` buttons on the Controls screen. Key lights are configured in
+`dashboard.yaml`, not here.
 
 </details>
 
@@ -338,6 +341,34 @@ later means re-provisioning the device.
 ---
 
 ## 3. Provisioning the Room Navigator
+
+### The short way
+
+```bash
+scripts/provision-roombar.sh --host 192.168.1.243 \
+  --url 'https://panel.example.com/?t=<PANEL_TOKEN>'
+```
+
+This applies everything in this section that can be applied remotely — the web
+engine, the nightly storage wipe, the standby delay, and the URL — by POSTing
+xConfiguration and xCommand XML to the device's `/putxml` with basic auth. It
+prompts for the device password rather than taking it as a flag, so it does
+not end up in your shell history.
+
+It is **idempotent**: every step sets a value rather than changing one, so
+running it against a working device changes nothing and tells you whether the
+device still matches what this repository says it should be. `--dry-run`
+prints the XML without sending it; `--insecure` accepts the device's own
+self-signed certificate.
+
+This is the artefact that makes a factory reset cheap. A RoomOS device holds
+macros, UI Extension panel XML and `HttpClient` configuration *on the device*,
+and a reset destroys all of it with nothing to reapply — which is exactly why
+this dashboard puts only a URL there. The rest of this section is the same
+thing done by hand.
+
+One thing the script cannot do is the next heading: Persistent Web App mode is
+chosen during onboarding and there is no configuration path for it.
 
 ### Put the Navigator into Persistent Web App mode
 

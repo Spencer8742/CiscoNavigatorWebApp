@@ -3,15 +3,20 @@ import { watch, type FSWatcher } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { logger } from '~/lib/log.ts';
-import { CAST_PANES, CAST_TARGETS } from '@shared/config.ts';
+import { CAST_PANES, CAST_TARGETS, CONTROL_TONES, KEY_LIGHT_OPS } from '@shared/config.ts';
 import type {
   AlertRule,
   CastDisplay,
   CastPane,
   CastTarget,
+  ControlAction,
+  ControlItem,
+  ControlPage,
   DashboardConfig,
   EntityRef,
   ImmichSource,
+  KeyLightConfig,
+  KeyLightOp,
   MediaPlayerConfig,
   RoomConfig,
   StatusItem,
@@ -81,6 +86,7 @@ export const FALLBACK_CONFIG: DashboardConfig = {
     followMusic: true,
     audioKeepAlive: false,
   },
+  controls: { pages: [], keylights: [], pollSeconds: 15 },
 };
 
 /* ── Coercion helpers ──────────────────────────────────────────────────────
@@ -219,6 +225,7 @@ function validate(raw: unknown): DashboardConfig {
   const homeRaw = obj(root['home']);
   const mediaRaw = obj(root['media']);
   const castRaw = obj(root['cast']);
+  const controlsRaw = obj(root['controls']);
 
   const version = num(root['version'], 1, 'version', 1, 1);
   if (version !== 1) log.warn(`Unknown config version ${version}; treating as 1`);
@@ -303,6 +310,15 @@ function validate(raw: unknown): DashboardConfig {
       rotateSeconds: num(castRaw['rotateSeconds'], 30, 'cast.rotateSeconds', 0, 3600),
       followMusic: bool(castRaw['followMusic'], true, 'cast.followMusic'),
       audioKeepAlive: bool(castRaw['audioKeepAlive'], false, 'cast.audioKeepAlive'),
+    },
+
+    controls: {
+      keylights: keyLightList(controlsRaw['keylights']),
+      pages: controlPages(controlsRaw['pages']),
+      // 15s is a compromise: fast enough that turning a light off at the
+      // light is reflected before anyone reaches the panel, slow enough that
+      // two lights cost four requests a minute.
+      pollSeconds: num(controlsRaw['pollSeconds'], 15, 'controls.pollSeconds', 0, 3600),
     },
   };
 }
@@ -395,6 +411,253 @@ function displayList(v: unknown): CastDisplay[] {
     out.push(display);
   });
   return out;
+}
+
+/* ── Controls ──────────────────────────────────────────────────────────────
+   The macro-button pages. Parsed strictly: an item whose action cannot be
+   understood is DROPPED with a warning rather than defaulted, because there
+   is no sensible default for "what should this button do" and a button that
+   silently does the wrong thing is worse than one that is missing. */
+
+function keyLightList(v: unknown): KeyLightConfig[] {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v)) {
+    warn('controls.keylights', 'list', v);
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const out: KeyLightConfig[] = [];
+
+  v.forEach((item, i) => {
+    const path = `controls.keylights[${i}]`;
+    const raw = typeof item === 'string' ? { host: item } : obj(item);
+
+    const host = str(raw['host'] ?? raw['ip'], '', `${path}.host`);
+    if (!host) {
+      warn(path, 'an address like 192.168.1.201', item);
+      return;
+    }
+    // Same trap as cast displays: a URL here connects to a host called
+    // "http" and fails in a way that reads like the light being offline.
+    if (host.includes('/') || /\s/.test(host)) {
+      warn(`${path}.host`, 'a bare address, not a URL', host);
+      return;
+    }
+
+    // `all` is reserved as the address of every light at once.
+    const id = str(raw['id'], `key${i + 1}`, `${path}.id`);
+    if (id === 'all') {
+      log.warn(`${path}.id: "all" is reserved for every light — skipping`);
+      return;
+    }
+    if (seen.has(id)) {
+      log.warn(`${path}: duplicate id "${id}" — skipping`);
+      return;
+    }
+    seen.add(id);
+
+    out.push({ id, name: str(raw['name'], id, `${path}.name`), host });
+  });
+
+  return out;
+}
+
+function controlPages(v: unknown): ControlPage[] {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v)) {
+    warn('controls.pages', 'list', v);
+    return [];
+  }
+
+  const seenPages = new Set<string>();
+  /* Button ids are addressed by the panel and looked up by the backend, so
+     they have to be unique across the WHOLE config, not just within a page. */
+  const seenItems = new Set<string>();
+  const out: ControlPage[] = [];
+
+  v.forEach((item, i) => {
+    const raw = obj(item);
+    const path = `controls.pages[${i}]`;
+    const id = str(raw['id'], '', `${path}.id`);
+    if (!id) {
+      log.warn(`${path}: missing "id" — skipping this page`);
+      return;
+    }
+    if (seenPages.has(id)) {
+      log.warn(`${path}: duplicate id "${id}" — skipping`);
+      return;
+    }
+    seenPages.add(id);
+
+    out.push({
+      id,
+      name: str(raw['name'], id, `${path}.name`),
+      icon: str(raw['icon'], 'grid', `${path}.icon`),
+      items: controlItems(raw['items'], id, `${path}.items`, seenItems),
+    });
+  });
+
+  return out;
+}
+
+function controlItems(
+  v: unknown,
+  pageId: string,
+  path: string,
+  seen: Set<string>,
+): ControlItem[] {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v)) {
+    warn(path, 'list', v);
+    return [];
+  }
+
+  const out: ControlItem[] = [];
+
+  v.forEach((entry, i) => {
+    const raw = obj(entry);
+    const itemPath = `${path}[${i}]`;
+
+    /* The generated id encodes the position, so reordering a page renames
+       its buttons. That is only ever a cosmetic problem — nothing persists a
+       button id — but it is why `id:` is worth writing by hand on a page you
+       expect to rearrange. */
+    const id = str(raw['id'], `${pageId}.${i}`, `${itemPath}.id`);
+    if (seen.has(id)) {
+      log.warn(`${itemPath}: duplicate control id "${id}" — skipping`);
+      return;
+    }
+
+    // `light:` (with no op) means the full light control rather than a button.
+    const light = raw['light'];
+    if (typeof light === 'string' && light.trim() && raw['keylight'] === undefined) {
+      seen.add(id);
+      out.push({
+        type: 'light',
+        id,
+        light: light.trim(),
+        name: str(raw['name'], 'Key Light', `${itemPath}.name`),
+      });
+      return;
+    }
+
+    const action = controlAction(raw, itemPath);
+    if (!action) return;
+
+    seen.add(id);
+    out.push({
+      type: 'button',
+      id,
+      name: str(raw['name'], id, `${itemPath}.name`),
+      icon: str(raw['icon'], defaultIcon(action), `${itemPath}.icon`),
+      tone: oneOf(raw['tone'], CONTROL_TONES, 'default', `${itemPath}.tone`),
+      wide: bool(raw['wide'], false, `${itemPath}.wide`),
+      action,
+    });
+  });
+
+  return out;
+}
+
+/** So a page of buttons is legible without an `icon:` on every line. */
+function defaultIcon(action: ControlAction): string {
+  switch (action.kind) {
+    case 'companion':
+      return 'grid';
+    case 'webhook':
+      return 'bolt';
+    case 'keylight':
+      return 'bulb';
+    case 'entity':
+      return action.entity.startsWith('scene.') ? 'scene' : 'script';
+  }
+}
+
+function controlAction(raw: Raw, path: string): ControlAction | null {
+  /* Companion: accepted as "1/0/2", [1, 0, 2] or {page, row, column}. The
+     slash form is what a Companion config export shows and what anyone
+     reading their button grid will type. */
+  const companion = raw['companion'];
+  if (companion !== undefined && companion !== null) {
+    const coords = companionCoords(companion);
+    if (!coords) {
+      warn(`${path}.companion`, 'page/row/column, e.g. "1/0/2"', companion);
+      return null;
+    }
+    return { kind: 'companion', ...coords };
+  }
+
+  const webhook = raw['webhook'];
+  if (typeof webhook === 'string' && webhook.trim()) {
+    const id = webhook.trim();
+    // The id goes straight into a path segment, so anything that could
+    // escape it is refused rather than encoded — a webhook id with a slash
+    // in it is a typo, not a request to reach a different endpoint.
+    if (!/^[A-Za-z0-9_-]+$/.test(id)) {
+      warn(`${path}.webhook`, 'a webhook id (letters, digits, _ and -)', webhook);
+      return null;
+    }
+    return { kind: 'webhook', id };
+  }
+
+  const keylight = raw['keylight'];
+  if (keylight !== undefined && keylight !== null) {
+    const spec = typeof keylight === 'string' ? { op: keylight } : obj(keylight);
+    const op = typeof spec['op'] === 'string' ? spec['op'].trim() : '';
+    if (!(KEY_LIGHT_OPS as readonly string[]).includes(op)) {
+      warn(`${path}.keylight.op`, KEY_LIGHT_OPS.join(' | '), keylight);
+      return null;
+    }
+    const action: ControlAction = {
+      kind: 'keylight',
+      light: str(spec['light'] ?? raw['light'], 'all', `${path}.keylight.light`),
+      op: op as KeyLightOp,
+    };
+    if (op === 'brightness') action.value = num(spec['value'], 100, `${path}.keylight.value`, 0, 100);
+    if (op === 'temperature') {
+      action.value = num(spec['value'], 4500, `${path}.keylight.value`, 2900, 7000);
+    }
+    return action;
+  }
+
+  const entity = raw['entity'];
+  if (typeof entity === 'string' && entity.includes('.')) {
+    const id = entity.trim();
+    // Scenes and scripts are what a macro page is mostly made of, and both
+    // are activated by turn_on — so the common case needs no `service:`.
+    // Anything else (`toggle`, `turn_off`) is written out, and is checked by
+    // the same ServiceGuard a dashboard tile goes through.
+    const service = str(raw['service'], 'turn_on', `${path}.service`);
+    const action: ControlAction = { kind: 'entity', entity: id, service };
+    const data = raw['data'];
+    if (data !== null && typeof data === 'object' && !Array.isArray(data)) {
+      action.data = data as Record<string, unknown>;
+    }
+    return action;
+  }
+
+  log.warn(`${path}: no action (companion, webhook, keylight, entity or light) — skipping`);
+  return null;
+}
+
+function companionCoords(v: unknown): { page: number; row: number; column: number } | null {
+  let parts: unknown[];
+
+  if (typeof v === 'string') {
+    parts = v.split('/').map((p) => Number.parseInt(p.trim(), 10));
+  } else if (Array.isArray(v)) {
+    parts = v;
+  } else {
+    const o = obj(v);
+    parts = [o['page'], o['row'], o['column'] ?? o['col']];
+  }
+
+  if (parts.length !== 3) return null;
+  const nums = parts.map((p) => (typeof p === 'number' && Number.isInteger(p) && p >= 0 ? p : -1));
+  if (nums.some((n) => n < 0)) return null;
+
+  return { page: nums[0]!, row: nums[1]!, column: nums[2]! };
 }
 
 function roomList(v: unknown): RoomConfig[] {

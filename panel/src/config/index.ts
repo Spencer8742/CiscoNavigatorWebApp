@@ -51,6 +51,9 @@ const DEFAULTS: DashboardConfig = {
   cast: { baseUrl: '', displays: [], checkSeconds: 300, screensaver: true,
     panes: ['clock', 'media', 'photos'], rotateSeconds: 30, followMusic: true,
     audioKeepAlive: false },
+  // keylights/pollSeconds drive the backend's key light poll and are never
+  // read by the panel; they are here to satisfy the shared type.
+  controls: { pages: [], keylights: [], pollSeconds: 15 },
 };
 
 export const config = signal<DashboardConfig>(DEFAULTS);
@@ -63,6 +66,7 @@ export const rooms = computed(() => config.value.rooms);
 export const homeConfig = computed(() => config.value.home);
 export const mediaConfig = computed(() => config.value.media);
 export const castConfig = computed(() => config.value.cast);
+export const controlPages = computed(() => config.value.controls.pages);
 
 /** Options bundle for lib/format.ts, derived once instead of at each call site. */
 export const timeOpts = computed(() => ({

@@ -1,0 +1,445 @@
+import { test, before, after, describe } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { WebSocket } from 'ws';
+import { fileURLToPath, URL } from 'node:url';
+import { MockHomeAssistant } from './mock-ha.mjs';
+import { MockCompanion, MockKeyLight } from './mock-controls.mjs';
+
+/**
+ * End-to-end tests for the macro pages — the Controls screen.
+ *
+ * Black box, like the bridge tests: a real backend process, a mock Companion
+ * and two mock Elgato Key Lights speaking their real wire formats, and a
+ * WebSocket client standing in for the panel.
+ *
+ * What this suite exists to protect, in order:
+ *
+ *  1. **The panel cannot name a request.** It sends a button id and the
+ *     backend resolves it against dashboard.yaml. If that ever inverts, a
+ *     screen on a wall becomes a way to POST anywhere on the LAN, and no
+ *     type checker would notice.
+ *  2. **Mireds are not Kelvin.** A Key Light's temperature gets SMALLER as it
+ *     gets warmer. Every conversion here is checked against a number written
+ *     out by hand, because a helper used in both directions agrees with
+ *     itself while being wrong.
+ *  3. **`all` decides once.** A toggle across two lights that have drifted
+ *     apart must converge them, not swap them.
+ *
+ *   node --test server/test/controls.test.mjs
+ */
+
+const HA_PORT = 19123;
+const PANEL_PORT = 19099;
+const COMPANION_PORT = 19800;
+const LEFT_PORT = 19201;
+const RIGHT_PORT = 19202;
+const TOKEN = 'controls-test-token';
+
+const SERVER = fileURLToPath(new URL('../dist/server.js', import.meta.url));
+const CONFIG = fileURLToPath(new URL('./fixtures/controls.test.yaml', import.meta.url));
+
+let ha;
+let companion;
+let left;
+let right;
+let backend;
+let panel;
+
+/* ── Harness ──────────────────────────────────────────────────────────────*/
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitFor(check, description, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  let last;
+  while (Date.now() < deadline) {
+    last = await check();
+    if (last) return last;
+    await sleep(20);
+  }
+  assert.fail(`Timed out waiting for: ${description}`);
+}
+
+/** A panel: connects, records key light pushes and errors. */
+class TestPanel {
+  constructor() {
+    this.config = null;
+    this.errors = [];
+    this.lights = [];
+    this.lightPushes = 0;
+    this.seq = 0;
+  }
+
+  async connect() {
+    this.ws = new WebSocket(`ws://127.0.0.1:${PANEL_PORT}/ws?t=${TOKEN}`);
+
+    this.ws.on('message', (data) => {
+      const msg = JSON.parse(data.toString());
+      if (msg.t === 'hello') {
+        this.config = msg.config;
+        this.lights = msg.keylights;
+      } else if (msg.t === 'keylights') {
+        this.lights = msg.lights;
+        this.lightPushes += 1;
+      } else if (msg.t === 'error') {
+        this.errors.push(msg);
+      }
+    });
+
+    await new Promise((resolve, reject) => {
+      this.ws.once('open', resolve);
+      this.ws.once('error', reject);
+    });
+
+    await waitFor(() => this.config !== null, 'hello message');
+  }
+
+  #next() {
+    this.seq += 1;
+    return this.seq;
+  }
+
+  press(button) {
+    const id = this.#next();
+    this.ws.send(JSON.stringify({ t: 'control', id, button }));
+    return id;
+  }
+
+  keylight(light, op, value) {
+    const id = this.#next();
+    this.ws.send(JSON.stringify({ t: 'keylight', id, light, op, value }));
+    return id;
+  }
+
+  /** The error carrying this ref, once it arrives. */
+  errorFor(ref) {
+    return waitFor(
+      () => this.errors.find((e) => e.ref === ref),
+      `an error for message ${ref}`,
+    );
+  }
+
+  light(id) {
+    return this.lights.find((l) => l.id === id);
+  }
+
+  close() {
+    this.ws?.close();
+  }
+}
+
+/* ── Setup ────────────────────────────────────────────────────────────────*/
+
+before(async () => {
+  ha = new MockHomeAssistant(HA_PORT);
+  ha.seed('scene.movie_night', 'scening', { friendly_name: 'Movie Night' });
+  ha.seed('script.goodnight', 'off', { friendly_name: 'Goodnight' });
+  await ha.start();
+
+  companion = new MockCompanion(COMPANION_PORT);
+  await companion.start();
+
+  left = new MockKeyLight(LEFT_PORT);
+  // 213 mireds is 4700 K; 20% brightness. Written as the light would send it.
+  left.light = { on: 0, brightness: 20, temperature: 213 };
+  await left.start();
+
+  right = new MockKeyLight(RIGHT_PORT);
+  right.light = { on: 1, brightness: 60, temperature: 344 };
+  await right.start();
+
+  backend = spawn(process.execPath, [SERVER], {
+    env: {
+      ...process.env,
+      PORT: String(PANEL_PORT),
+      HOST: '127.0.0.1',
+      PANEL_TOKEN: TOKEN,
+      CONFIG_PATH: CONFIG,
+      HA_URL: `http://127.0.0.1:${HA_PORT}`,
+      HA_TOKEN: 'mock-ha-token',
+      COMPANION_URL: `http://127.0.0.1:${COMPANION_PORT}`,
+      IMMICH_URL: '',
+      IMMICH_API_KEY: '',
+      MASS_URL: '',
+      LOG_LEVEL: 'warn',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  backend.stdout.on('data', (d) => process.stderr.write(`[backend] ${d}`));
+  backend.stderr.on('data', (d) => process.stderr.write(`[backend] ${d}`));
+
+  await waitFor(async () => {
+    try {
+      const res = await fetch(`http://127.0.0.1:${PANEL_PORT}/api/health`);
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }, 'backend to listen');
+
+  panel = new TestPanel();
+  await panel.connect();
+});
+
+after(async () => {
+  panel?.close();
+  if (backend && backend.exitCode === null) {
+    backend.kill('SIGTERM');
+    await new Promise((resolve) => {
+      backend.once('exit', resolve);
+      setTimeout(() => {
+        backend.kill('SIGKILL');
+        resolve();
+      }, 3000);
+    });
+  }
+  await Promise.all([ha?.stop(), companion?.stop(), left?.stop(), right?.stop()]);
+});
+
+/* ── Config ───────────────────────────────────────────────────────────────*/
+
+describe('control pages', () => {
+  test('reach the panel, normalised', () => {
+    const pages = panel.config.controls.pages;
+    assert.deepEqual(
+      pages.map((p) => p.id),
+      ['deskpro', 'scenes', 'lights'],
+    );
+
+    const join = pages[0].items[0];
+    assert.equal(join.type, 'button');
+    assert.equal(join.wide, true);
+    assert.equal(join.tone, 'accent');
+    assert.deepEqual(join.action, { kind: 'companion', page: 1, row: 0, column: 0 });
+  });
+
+  test('accept all three Companion coordinate spellings', () => {
+    const [slashes, object, array] = panel.config.controls.pages[0].items;
+    assert.deepEqual(slashes.action, { kind: 'companion', page: 1, row: 0, column: 0 });
+    assert.deepEqual(object.action, { kind: 'companion', page: 1, row: 0, column: 1 });
+    assert.deepEqual(array.action, { kind: 'companion', page: 9, row: 9, column: 9 });
+  });
+
+  test('a bare `light:` item is a control, not a button', () => {
+    const items = panel.config.controls.pages[2].items;
+    const control = items.find((i) => i.type === 'light');
+    assert.ok(control, 'expected a light item');
+    assert.equal(control.light, 'all');
+    // Generated from its position, because the fixture gives it no id.
+    assert.equal(control.id, 'lights.2');
+  });
+
+  test('a scene button defaults to turn_on without a `service:`', () => {
+    const movie = panel.config.controls.pages[1].items[0];
+    assert.deepEqual(movie.action, {
+      kind: 'entity',
+      entity: 'scene.movie_night',
+      service: 'turn_on',
+    });
+  });
+});
+
+/* ── Companion ────────────────────────────────────────────────────────────*/
+
+describe('Companion buttons', () => {
+  test('press the configured location', async () => {
+    companion.presses.length = 0;
+    panel.press('deskpro.join');
+
+    const press = await waitFor(() => companion.presses[0], 'a Companion press');
+    assert.deepEqual(press, { page: 1, row: 0, column: 0 });
+  });
+
+  test('report a location Companion has no button at', async () => {
+    const ref = panel.press('deskpro.missing');
+    const error = await panel.errorFor(ref);
+
+    assert.equal(error.code, 'control_failed');
+    // The message names the coordinates, because the fix is in Companion.
+    assert.match(error.message, /9\/9\/9/);
+  });
+
+  test('refuse a button id that is not in the config', async () => {
+    companion.presses.length = 0;
+    const ref = panel.press('deskpro.nonexistent');
+    const error = await panel.errorFor(ref);
+
+    assert.equal(error.message, 'Unknown button');
+    assert.equal(companion.presses.length, 0, 'nothing may be sent for an unknown id');
+  });
+
+  test('the panel cannot name a location directly', async () => {
+    companion.presses.length = 0;
+
+    // The shape a compromised panel would reach for: coordinates, not an id.
+    // There is no message that carries them, so this is simply ignored.
+    panel.ws.send(
+      JSON.stringify({ t: 'control', id: 900, button: '2/1/3', page: 2, row: 1, column: 3 }),
+    );
+
+    await waitFor(
+      () => panel.errors.find((e) => e.ref === 900),
+      'the press to be refused',
+    );
+    assert.equal(companion.presses.length, 0, '2/1/3 exists in Companion but was never pressed');
+  });
+});
+
+/* ── Home Assistant ───────────────────────────────────────────────────────*/
+
+describe('Home Assistant buttons', () => {
+  test('fire a webhook', async () => {
+    ha.webhooks.length = 0;
+    panel.press('scenes.listen');
+
+    const hook = await waitFor(() => ha.webhooks[0], 'a webhook POST');
+    assert.equal(hook.id, 'office_voice_listen');
+  });
+
+  test('call a service through the same guard as a tile', async () => {
+    ha.serviceCalls.length = 0;
+    panel.press('scenes.movie');
+
+    const call = await waitFor(() => ha.serviceCalls[0], 'a call_service');
+    assert.equal(call.domain, 'scene');
+    assert.equal(call.service, 'turn_on');
+    assert.equal(call.target.entity_id, 'scene.movie_night');
+  });
+
+  test('a control-only entity is on the allow-list because it is configured', async () => {
+    // script.goodnight appears nowhere but a controls page. If controls were
+    // left out of allReferencedEntities() the guard would refuse this.
+    ha.serviceCalls.length = 0;
+    panel.press('scenes.goodnight');
+
+    const call = await waitFor(() => ha.serviceCalls[0], 'a call_service');
+    assert.equal(call.target.entity_id, 'script.goodnight');
+  });
+});
+
+/* ── Key lights ───────────────────────────────────────────────────────────*/
+
+describe('key lights', () => {
+  test('arrive in `hello` with mireds converted to Kelvin', () => {
+    const left = panel.light('key_left');
+    assert.ok(left, 'key_left should be in hello');
+    assert.equal(left.name, 'Key Left');
+    assert.equal(left.reachable, true);
+    assert.equal(left.on, false);
+    assert.equal(left.brightness, 20);
+    // 213 mireds -> 4694 K, rounded to the nearest 50.
+    assert.equal(left.temperature, 4700);
+
+    const right = panel.light('key_right');
+    assert.equal(right.on, true);
+    // 344 mireds is the warm end of the range.
+    assert.equal(right.temperature, 2900);
+  });
+
+  test('a brightness change is sent to the light and pushed back', async () => {
+    left.writes.length = 0;
+    panel.keylight('key_left', 'brightness', 65);
+
+    const write = await waitFor(() => left.writes[0], 'a PUT to the left light');
+    assert.equal(write.lights[0].brightness, 65);
+    // Setting brightness on a light that is off turns it on — otherwise the
+    // slider moves and the room stays dark.
+    assert.equal(write.lights[0].on, 1);
+
+    await waitFor(() => panel.light('key_left')?.brightness === 65, 'the push back');
+    assert.equal(panel.light('key_left').on, true);
+  });
+
+  test('a colour temperature is converted back to mireds', async () => {
+    left.writes.length = 0;
+    panel.keylight('key_left', 'temperature', 2900);
+
+    const write = await waitFor(() => left.writes[0], 'a PUT to the left light');
+    // The WARM end of the scale is the LARGEST mired value. Getting this
+    // backwards makes every "warmer" tap go colder.
+    assert.equal(write.lights[0].temperature, 344);
+    // Temperature must not disturb brightness.
+    assert.equal(write.lights[0].brightness, undefined);
+
+    await waitFor(() => panel.light('key_left')?.temperature === 2900, 'the push back');
+  });
+
+  test('`all` fans out and decides its direction once', async () => {
+    // Left on (from the brightness test), right on: a toggle turns BOTH off.
+    await waitFor(
+      () => panel.light('key_left')?.on && panel.light('key_right')?.on,
+      'both lights on before the toggle',
+    );
+
+    left.writes.length = 0;
+    right.writes.length = 0;
+    panel.keylight('all', 'toggle');
+
+    await waitFor(() => left.writes[0] && right.writes[0], 'a PUT to both lights');
+    assert.equal(left.writes[0].lights[0].on, 0);
+    assert.equal(right.writes[0].lights[0].on, 0);
+
+    // Now both off: the next toggle turns both on, rather than swapping them.
+    left.writes.length = 0;
+    right.writes.length = 0;
+    panel.keylight('all', 'toggle');
+
+    await waitFor(() => left.writes[0] && right.writes[0], 'a second PUT to both');
+    assert.equal(left.writes[0].lights[0].on, 1);
+    assert.equal(right.writes[0].lights[0].on, 1);
+  });
+
+  test('a toggle converges a pair that has drifted apart', async () => {
+    // One on, one off — which is exactly what a failed command leaves behind.
+    panel.keylight('key_left', 'off');
+    await waitFor(() => panel.light('key_left')?.on === false, 'left off');
+    await waitFor(() => panel.light('key_right')?.on === true, 'right still on');
+
+    left.writes.length = 0;
+    right.writes.length = 0;
+    panel.keylight('all', 'toggle');
+
+    await waitFor(() => left.writes[0] && right.writes[0], 'a PUT to both lights');
+    // "Any on" means off, so they end up agreeing rather than swapping.
+    assert.equal(left.writes[0].lights[0].on, 0);
+    assert.equal(right.writes[0].lights[0].on, 0);
+  });
+
+  test('a keylight button drives the light it names', async () => {
+    left.writes.length = 0;
+    right.writes.length = 0;
+    panel.press('lights.dim');
+
+    const write = await waitFor(() => left.writes[0], 'a PUT to the left light');
+    assert.equal(write.lights[0].brightness, 20);
+    assert.equal(right.writes.length, 0, 'the right light was not addressed');
+  });
+
+  test('refuse a light that is not in the config', async () => {
+    const ref = panel.keylight('key_middle', 'toggle');
+    const error = await panel.errorFor(ref);
+    assert.equal(error.code, 'keylight_failed');
+    assert.equal(error.message, 'Unknown light');
+  });
+
+  test('report an unreachable light without losing its last known state', async () => {
+    await right.stop();
+
+    const before = panel.light('key_right');
+    const ref = panel.keylight('key_right', 'toggle');
+    const error = await panel.errorFor(ref);
+    assert.equal(error.message, 'Light unreachable');
+
+    const after = await waitFor(
+      () => (panel.light('key_right')?.reachable === false ? panel.light('key_right') : null),
+      'the light to be marked unreachable',
+    );
+    // Greyed out, not zeroed: the control keeps its position.
+    assert.equal(after.brightness, before.brightness);
+    assert.equal(after.temperature, before.temperature);
+  });
+});

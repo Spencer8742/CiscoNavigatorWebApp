@@ -19,6 +19,7 @@ import { MassStore } from '~/mass/store.ts';
 import { MassCommands } from '~/mass/commands.ts';
 import { MassBrowser } from '~/mass/browse.ts';
 import { CastKeeper } from '~/cast/keeper.ts';
+import { Controls } from '~/controls/index.ts';
 import { PrefsStore } from '~/config/prefs.ts';
 import { ImmichClient } from '~/immich/client.ts';
 import { ImmichImages } from '~/immich/images.ts';
@@ -242,7 +243,7 @@ async function main(): Promise<void> {
   const massCommands = new MassCommands(massClient, massStore);
   const massBrowser = new MassBrowser(massClient, massStore, mediaArt);
 
-  const hub = new Hub(server, {
+  const hub: Hub = new Hub(server, {
     auth,
     config,
     getStates: () => store.snapshot(),
@@ -263,6 +264,10 @@ async function main(): Promise<void> {
     onMassCommand: (command, args) => massCommands.run(command, args),
     onBrowse: (req) => massBrowser.browse(req),
 
+    getKeyLights: () => controls.snapshot(),
+    onControl: (button) => controls.press(button),
+    onKeyLight: (light, op, value) => controls.keyLight(light, op, value),
+
     onPhotos: async (count) => {
       const photos = await playlist.take(count);
       // The refill that just ran is the most authoritative signal we have
@@ -270,6 +275,29 @@ async function main(): Promise<void> {
       if (env.immich.enabled) noteImmichStatus(immich.lastError === null);
       return { t: 'photos', photos };
     },
+  });
+
+  /* ── Macro pages ─────────────────────────────────────────────────────────
+     The Controls screen: Companion button presses, Home Assistant webhooks
+     and Elgato Key Lights, driven from dashboard.yaml. This is what replaced
+     the on-device RoomOS macro — see controls/index.ts.
+
+     Declared AFTER the hub because its first reload can already broadcast a
+     key light list, and because the two reference each other the annotations
+     on both are load-bearing rather than decorative. */
+
+  const controls: Controls = new Controls({
+    getConfig: () => config.current,
+    companionUrl: env.companion.url,
+    haUrl: env.ha.url,
+    // The same guard the dashboard tiles go through: a macro button that
+    // calls a service gets no more reach than a tile that calls the same one.
+    callService: (call) => services.call(call),
+    onLights: (lights) => hub.broadcastKeyLights(lights),
+    // Nothing is polled while no panel is connected. A wall panel that has
+    // gone to sleep, or a container running before the device is provisioned,
+    // should not be talking to the lights every fifteen seconds.
+    hasPanels: () => hub.panelCount > 0,
   });
 
   /* ── Google Nest Hubs ────────────────────────────────────────────────────
@@ -293,6 +321,7 @@ async function main(): Promise<void> {
     if (!isEmptyPatch(patch)) hub.broadcastPatch(patch);
     playlist.setConfig(cfg);
     castKeeper.reload();
+    controls.reload();
   });
 
   haClient.start();
@@ -484,6 +513,7 @@ async function main(): Promise<void> {
     massClient.stop();
     massStore.dispose();
     castKeeper.stop();
+    controls.stop();
     hub.close();
     config.close();
     server.close(() => process.exit(0));

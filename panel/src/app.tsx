@@ -3,6 +3,7 @@ import { Toast } from '~/components/Toast.tsx';
 import { ErrorBoundary } from '~/components/ErrorBoundary.tsx';
 import { Home } from '~/screens/Home.tsx';
 import { Rooms } from '~/screens/Rooms.tsx';
+import { Controls } from '~/screens/Controls.tsx';
 import { Media } from '~/screens/Media.tsx';
 import { Photos } from '~/screens/Photos.tsx';
 import { Settings } from '~/screens/Settings.tsx';
@@ -136,6 +137,8 @@ function Screen() {
       return <Home />;
     case 'rooms':
       return <Rooms />;
+    case 'controls':
+      return <Controls />;
     case 'media':
       return <Media />;
     case 'photos':

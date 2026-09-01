@@ -10,9 +10,9 @@ import type { ConnectionProblem } from '~/net/diagnose.ts';
  * `route.value` updates exactly the subscribers that read it.
  */
 
-export type Route = 'home' | 'rooms' | 'media' | 'photos' | 'settings';
+export type Route = 'home' | 'rooms' | 'controls' | 'media' | 'photos' | 'settings';
 
-export const ROUTES: Route[] = ['home', 'rooms', 'media', 'photos', 'settings'];
+export const ROUTES: Route[] = ['home', 'rooms', 'controls', 'media', 'photos', 'settings'];
 
 /* ── Navigation ──────────────────────────────────────────────────────────
    No History API and no hash routing. RoomOS runs this in a kiosk web view
@@ -27,6 +27,17 @@ export const activeRoom = signal<string | null>(null);
 
 /** Entity whose detail sheet is open. null = closed. */
 export const openEntity = signal<string | null>(null);
+
+/**
+ * Which macro page the Controls screen is showing. null = the first one.
+ *
+ * A signal rather than screen-local state so the page survives the screen
+ * being unmounted — which happens on every trip to Home and back, because
+ * only the active screen is mounted (see app.tsx). Coming back to the
+ * Controls screen on a different page than you left it is exactly the kind of
+ * small wrongness that makes a panel feel like a web page.
+ */
+export const controlPage = signal<string | null>(null);
 
 export function navigate(to: Route): void {
   if (route.value === to) return;
