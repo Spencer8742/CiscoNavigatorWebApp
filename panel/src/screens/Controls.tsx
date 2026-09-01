@@ -124,7 +124,17 @@ function Page({ page }: { page: ControlPage }) {
   return (
     <>
       {buttons.length > 0 ? (
-        <div class="macro-grid">
+        <div
+          class="macro-grid"
+          data-size={page.size === 'lg' ? 'lg' : undefined}
+          /*
+           * The column count is set inline rather than through a CSS custom
+           * property, because `repeat()` needs a literal integer and pushing
+           * a variable into it is the kind of thing that works until it
+           * quietly does not on Chromium 102.
+           */
+          style={page.columns > 0 ? { gridTemplateColumns: `repeat(${page.columns}, 1fr)` } : undefined}
+        >
           {buttons.map((item) => (
             <MacroButton key={item.id} button={item} />
           ))}

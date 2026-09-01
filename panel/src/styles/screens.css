@@ -1401,12 +1401,33 @@
 }
 
 /* auto-fill, not auto-fit: a page with two buttons should show two buttons,
-   not two buttons stretched across the whole panel. */
+   not two buttons stretched across the whole panel.
+   `columns:` in dashboard.yaml overrides this inline — see Controls.tsx. */
 .macro-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr));
   gap: var(--s-3);
   margin-bottom: var(--s-5);
+}
+
+/* `size: lg`. A page of eight keys has room to spare on a 10.1" panel, and
+   the whole point of a control surface is that it is hit without looking
+   straight at it. Height only — the width comes from the column count, so a
+   large key on a four-column page is genuinely large in both directions. */
+.macro-grid[data-size='lg'] .macro-btn-face {
+  height: 11rem;
+}
+
+.macro-grid[data-size='lg'] .macro-btn-name {
+  font-size: 1.0625rem;
+}
+
+/* The glyph is sized by an SVG width/height attribute, which CSS outranks.
+   A 1.75rem icon centred in a 9rem key reads as a mistake. */
+.macro-grid[data-size='lg'] .macro-btn-icon,
+.macro-grid[data-size='lg'] .macro-btn-tick {
+  width: 2.5rem;
+  height: 2.5rem;
 }
 
 .macro-btn {
