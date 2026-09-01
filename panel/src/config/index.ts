@@ -31,6 +31,7 @@ const DEFAULTS: DashboardConfig = {
   idle: {
     timeoutSeconds: 180,
     returnHomeSeconds: 90,
+    controlsHoldSeconds: 1800,
     overlays: { clock: true, date: true, weather: true, nowPlaying: true, photoInfo: true },
     burnInProtection: true,
   },
