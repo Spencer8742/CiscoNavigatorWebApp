@@ -39,6 +39,16 @@ export const openEntity = signal<string | null>(null);
  */
 export const controlPage = signal<string | null>(null);
 
+/**
+ * The media player whose input picker is open on the Controls screen.
+ * null = closed.
+ *
+ * Separate from `openEntity` because that opens the full entity sheet, which
+ * for a TV is transport controls and volume — the whole point of this key is
+ * that it goes straight to the input list.
+ */
+export const openSources = signal<string | null>(null);
+
 export function navigate(to: Route): void {
   if (route.value === to) return;
   // Leaving Rooms always resets the drill-down, so coming back lands on the

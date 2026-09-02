@@ -86,6 +86,10 @@ const ALLOWED: Record<string, ReadonlySet<string>> = {
     'repeat_set',
     'turn_on',
     'turn_off',
+    // One key that turns a TV on OR off. The alternative is two keys on a
+    // control surface where the device's real state is what you are trying
+    // not to have to think about.
+    'toggle',
     // Grouping. Music Assistant implements the standard Home Assistant
     // services, so this is all the app needs to join and separate speakers —
     // no second connection to Music Assistant, no grouping state of our own.

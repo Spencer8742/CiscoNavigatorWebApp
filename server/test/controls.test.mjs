@@ -71,6 +71,8 @@ class TestPanel {
     this.lights = [];
     this.lightPushes = 0;
     this.seq = 0;
+    /** Entity snapshot from `hello`. Only what these tests assert on. */
+    this.states = new Map();
   }
 
   async connect() {
@@ -81,6 +83,7 @@ class TestPanel {
       if (msg.t === 'hello') {
         this.config = msg.config;
         this.lights = msg.keylights;
+        for (const id in msg.states) this.states.set(id, msg.states[id]);
       } else if (msg.t === 'keylights') {
         this.lights = msg.lights;
         this.lightPushes += 1;
@@ -137,6 +140,11 @@ before(async () => {
   ha = new MockHomeAssistant(HA_PORT);
   ha.seed('scene.movie_night', 'scening', { friendly_name: 'Movie Night' });
   ha.seed('script.goodnight', 'off', { friendly_name: 'Goodnight' });
+  ha.seed('media_player.tv', 'on', {
+    friendly_name: 'Test TV',
+    source: 'HDMI 2',
+    source_list: ['HDMI 1', 'HDMI 2', 'Live TV'],
+  });
   await ha.start();
 
   companion = new MockCompanion(COMPANION_PORT);
@@ -200,17 +208,23 @@ after(async () => {
   await Promise.all([ha?.stop(), companion?.stop(), left?.stop(), right?.stop()]);
 });
 
+/** A page by id, so a fixture edit does not renumber every assertion. */
+function page(id) {
+  const found = panel.config.controls.pages.find((p) => p.id === id);
+  assert.ok(found, `no page "${id}" in the config`);
+  return found;
+}
+
 /* ── Config ───────────────────────────────────────────────────────────────*/
 
 describe('control pages', () => {
   test('reach the panel, normalised', () => {
     const pages = panel.config.controls.pages;
-    assert.deepEqual(
-      pages.map((p) => p.id),
-      ['deskpro', 'scenes', 'lights'],
-    );
+    // Order is preserved from the file; membership is checked loosely so
+    // adding a page to the fixture does not fail a test about button shape.
+    assert.deepEqual(pages.map((p) => p.id), ['deskpro', 'scenes', 'av', 'lights']);
 
-    const join = pages[0].items[0];
+    const join = page('deskpro').items[0];
     assert.equal(join.type, 'button');
     assert.equal(join.wide, true);
     assert.equal(join.tone, 'accent');
@@ -218,14 +232,14 @@ describe('control pages', () => {
   });
 
   test('accept all three Companion coordinate spellings', () => {
-    const [slashes, object, array] = panel.config.controls.pages[0].items;
+    const [slashes, object, array] = page('deskpro').items;
     assert.deepEqual(slashes.action, { kind: 'companion', page: 1, row: 0, column: 0 });
     assert.deepEqual(object.action, { kind: 'companion', page: 1, row: 0, column: 1 });
     assert.deepEqual(array.action, { kind: 'companion', page: 9, row: 9, column: 9 });
   });
 
   test('a bare `light:` item is a control, not a button', () => {
-    const items = panel.config.controls.pages[2].items;
+    const items = page('lights').items;
     const control = items.find((i) => i.type === 'light');
     assert.ok(control, 'expected a light item');
     assert.equal(control.light, 'all');
@@ -234,7 +248,7 @@ describe('control pages', () => {
   });
 
   test('a scene button defaults to turn_on without a `service:`', () => {
-    const movie = panel.config.controls.pages[1].items[0];
+    const movie = page('scenes').items[0];
     assert.deepEqual(movie.action, {
       kind: 'entity',
       entity: 'scene.movie_night',
@@ -318,6 +332,66 @@ describe('Home Assistant buttons', () => {
 
     const call = await waitFor(() => ha.serviceCalls[0], 'a call_service');
     assert.equal(call.target.entity_id, 'script.goodnight');
+  });
+});
+
+/* ── Source pickers ───────────────────────────────────────────────────────*/
+
+describe('media player keys', () => {
+  test('a `sources:` item is a picker, not a button', () => {
+    const input = page('av').items.find((i) => i.id === 'av.input');
+    assert.equal(input.type, 'sources');
+    assert.equal(input.entity, 'media_player.tv');
+    // No action: the panel opens a sheet, it does not send anything on tap.
+    assert.equal(input.action, undefined);
+  });
+
+  test('a `sources:` item aimed at a non-media_player is dropped', () => {
+    assert.equal(
+      page('av').items.find((i) => i.id === 'av.bad'),
+      undefined,
+      'light.living_room has no source_list and must not become a picker',
+    );
+  });
+
+  test('the picker entity reaches the panel with its source_list', () => {
+    // Referenced ONLY by the picker — so this also proves a `sources:` item
+    // puts its entity in allReferencedEntities, without which the panel
+    // would have nothing to populate the sheet from.
+    const tv = panel.states.get('media_player.tv');
+    assert.ok(tv, 'media_player.tv should be in the snapshot');
+    assert.deepEqual(tv.a.source_list, ['HDMI 1', 'HDMI 2', 'Live TV']);
+    assert.equal(tv.a.source, 'HDMI 2');
+  });
+
+  test('select_source is permitted on it', async () => {
+    ha.serviceCalls.length = 0;
+    panel.ws.send(JSON.stringify({
+      t: 'call', id: 700, domain: 'media_player', service: 'select_source',
+      entity: 'media_player.tv', data: { source: 'HDMI 1' },
+    }));
+    const call = await waitFor(() => ha.serviceCalls[0], 'a select_source');
+    assert.equal(call.service_data.source, 'HDMI 1');
+  });
+
+  test('media_player.toggle is permitted', async () => {
+    ha.serviceCalls.length = 0;
+    panel.press('av.power');
+    const call = await waitFor(() => ha.serviceCalls[0], 'a call_service');
+    assert.equal(call.domain, 'media_player');
+    assert.equal(call.service, 'toggle');
+    assert.equal(call.target.entity_id, 'media_player.tv');
+  });
+
+  test('a service still outside the allow-list is refused', async () => {
+    ha.serviceCalls.length = 0;
+    panel.ws.send(JSON.stringify({
+      t: 'call', id: 701, domain: 'media_player', service: 'shell_command',
+      entity: 'media_player.tv',
+    }));
+    const error = await panel.errorFor(701);
+    assert.equal(error.message, 'Not permitted');
+    assert.equal(ha.serviceCalls.length, 0);
   });
 });
 

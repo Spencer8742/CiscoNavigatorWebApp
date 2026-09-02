@@ -3,11 +3,17 @@ import { Empty } from '~/components/Empty.tsx';
 import { Icon, hasIcon } from '~/components/Icon.tsx';
 import { Pressable } from '~/components/Pressable.tsx';
 import { Slider } from '~/components/Slider.tsx';
-import { controlPage, markActivity } from '~/state/ui.ts';
+import { controlPage, markActivity, openSources } from '~/state/ui.ts';
+import { entity } from '~/state/entities.ts';
 import { keyLightFor, pressed } from '~/state/controls.ts';
 import { pressControl, setKeyLight } from '~/net/socket.ts';
 import { KEY_LIGHT_MAX_KELVIN, KEY_LIGHT_MIN_KELVIN } from '@shared/protocol.ts';
-import type { ControlButton, ControlLight, ControlPage } from '@shared/config.ts';
+import type {
+  ControlButton,
+  ControlLight,
+  ControlPage,
+  ControlSources,
+} from '@shared/config.ts';
 import type { KeyLightState } from '@shared/protocol.ts';
 
 /**
@@ -118,12 +124,16 @@ function Page({ page }: { page: ControlPage }) {
    * the height of the tallest thing in it. Grouping is what keeps a page of
    * six buttons and one light from looking like a form.
    */
-  const buttons = page.items.filter(isButton);
+  // Source pickers sit in the key grid: they look like keys and are pressed
+  // like keys. Only what happens next differs.
+  const keys = page.items.filter((i): i is ControlButton | ControlSources =>
+    i.type === 'button' || i.type === 'sources',
+  );
   const lights = page.items.filter(isLight);
 
   return (
     <>
-      {buttons.length > 0 ? (
+      {keys.length > 0 ? (
         <div
           class="macro-grid"
           data-size={page.size === 'lg' ? 'lg' : undefined}
@@ -135,9 +145,13 @@ function Page({ page }: { page: ControlPage }) {
            */
           style={page.columns > 0 ? { gridTemplateColumns: `repeat(${page.columns}, 1fr)` } : undefined}
         >
-          {buttons.map((item) => (
-            <MacroButton key={item.id} button={item} />
-          ))}
+          {keys.map((item) =>
+            item.type === 'sources' ? (
+              <SourcesButton key={item.id} item={item} />
+            ) : (
+              <MacroButton key={item.id} button={item} />
+            ),
+          )}
         </div>
       ) : null}
 
@@ -270,14 +284,48 @@ function KeyLightCard({ item }: { item: ControlLight }) {
   );
 }
 
+/**
+ * A key that opens the input picker.
+ *
+ * Deliberately NOT a confirmation-tick key: opening a menu is its own
+ * feedback, and a tick would claim a request went somewhere when nothing has
+ * been sent yet.
+ */
+function SourcesButton({ item }: { item: ControlSources }) {
+  const state = entity(item.entity).value;
+  const unavailable = !state || state.s === 'unavailable';
+
+  return (
+    <Pressable
+      class="macro-btn p-lg"
+      onPress={() => {
+        openSources.value = item.entity;
+        markActivity();
+      }}
+      ariaLabel={`${item.name}: choose input`}
+      disabled={unavailable}
+    >
+      <span class="macro-btn-face">
+        <Icon
+          name={hasIcon(item.icon) ? item.icon : 'input'}
+          size="1.75rem"
+          weight={1.6}
+          class="macro-btn-icon"
+        />
+      </span>
+      {/* The key keeps its configured name. Showing the current input here
+          instead was tried and is worse: the label stops saying what the key
+          IS, and it changes identity when the TV reports nothing. The live
+          value belongs in the sheet, which has room for it. */}
+      <span class="macro-btn-name truncate">{item.name}</span>
+    </Pressable>
+  );
+}
+
 function describe(light: KeyLightState): string {
   if (!light.reachable) return 'Unreachable';
   if (!light.on) return 'Off';
   return `${light.brightness}% · ${light.temperature}K`;
-}
-
-function isButton(item: ControlPage['items'][number]): item is ControlButton {
-  return item.type === 'button';
 }
 
 function isLight(item: ControlPage['items'][number]): item is ControlLight {

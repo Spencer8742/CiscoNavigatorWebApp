@@ -11,6 +11,7 @@ import { ConnectionHelp } from '~/screens/ConnectionHelp.tsx';
 import { Screensaver } from '~/screens/Screensaver.tsx';
 import { Cast } from '~/screens/Cast.tsx';
 import { EntitySheet } from '~/components/EntitySheet.tsx';
+import { SourcesSheet } from '~/components/SourcesSheet.tsx';
 import { castConfig, ui } from '~/config/index.ts';
 import { connectionProblem, ready, route, screensaverActive } from '~/state/ui.ts';
 import { isCastDashboard, isCastMode, startCastReceiver } from '~/lib/cast.ts';
@@ -110,6 +111,11 @@ export function App() {
           Mounted here so any screen can open one by writing a value, and so
           only one can ever be open. */}
       <EntitySheet />
+      {/* Same reasoning as the entity sheet, and the same reason it is HERE:
+          `.shell-main` is `position: relative; overflow: hidden`, so a sheet
+          mounted inside a screen is laid out against that box rather than the
+          viewport and ends up fighting the nav. */}
+      <SourcesSheet />
       <Toast />
     </ErrorBoundary>
   );
