@@ -380,7 +380,25 @@ export interface ControlLight {
   name: string;
 }
 
-export type ControlItem = ControlButton | ControlLight;
+/**
+ * A key that opens a picker of a media player's inputs.
+ *
+ * The list is NOT configured. It comes from the entity's own `source_list`,
+ * so it is whatever Home Assistant currently believes the device offers —
+ * rename an input on the TV and the panel follows without an edit here. A
+ * hand-written list would be a second copy of something the device already
+ * knows, and second copies go stale.
+ */
+export interface ControlSources {
+  type: 'sources';
+  id: string;
+  name: string;
+  icon: string;
+  /** A `media_player` entity that publishes `source_list`. */
+  entity: string;
+}
+
+export type ControlItem = ControlButton | ControlLight | ControlSources;
 
 export interface ControlPage {
   id: string;
@@ -480,6 +498,9 @@ export function allReferencedEntities(cfg: DashboardConfig): Set<string> {
   for (const page of cfg.controls.pages) {
     for (const item of page.items) {
       if (item.type === 'button' && item.action.kind === 'entity') add(item.action.entity);
+      // A source picker both READS the entity (for source_list) and calls
+      // select_source on it, so it needs the same allow-listing as a tile.
+      if (item.type === 'sources') add(item.entity);
     }
   }
 

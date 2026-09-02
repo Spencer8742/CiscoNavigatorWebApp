@@ -548,6 +548,29 @@ function controlItems(
       return;
     }
 
+    /*
+     * `sources:` names a media player and makes this key a picker rather
+     * than a button. Checked before the action forms because it is the same
+     * shape as one and would otherwise be read as an `entity:` key.
+     */
+    const sources = raw['sources'];
+    if (typeof sources === 'string' && sources.includes('.')) {
+      const target = sources.trim();
+      if (!target.startsWith('media_player.')) {
+        warn(`${itemPath}.sources`, 'a media_player entity', sources);
+        return;
+      }
+      seen.add(id);
+      out.push({
+        type: 'sources',
+        id,
+        entity: target,
+        name: str(raw['name'], 'Input', `${itemPath}.name`),
+        icon: str(raw['icon'], 'input', `${itemPath}.icon`),
+      });
+      return;
+    }
+
     // `light:` (with no op) means the full light control rather than a button.
     const light = raw['light'];
     if (typeof light === 'string' && light.trim() && raw['keylight'] === undefined) {

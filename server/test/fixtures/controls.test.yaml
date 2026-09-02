@@ -65,6 +65,25 @@ controls:
           name: Goodnight
           entity: script.goodnight
 
+    - id: av
+      name: A/V
+      icon: tv
+      items:
+        # A media_player key that toggles — `toggle` had to be added to the
+        # service allow-list for this, so the test is really about that.
+        - id: av.power
+          name: TV Power
+          entity: media_player.tv
+          service: toggle
+        # Not a button: a picker of the entity's own source_list.
+        - id: av.input
+          name: TV Input
+          sources: media_player.tv
+        # Refused: sources only makes sense for a media_player.
+        - id: av.bad
+          name: Nope
+          sources: light.living_room
+
     - id: lights
       name: Lights
       icon: bulb
