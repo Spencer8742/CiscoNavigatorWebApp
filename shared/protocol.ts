@@ -433,6 +433,15 @@ export type ClientMessage =
    * checked against `controls.keylights` — `all` addresses every one.
    */
   | { t: 'keylight'; id: number; light: string; op: KeyLightOp; value?: number }
+  /**
+   * Choose an input on a `sources:` control key.
+   *
+   * Names the CONTROL ITEM, not the entity or the service — the same rule as
+   * `control` above, for the same reason. The backend resolves the item in
+   * dashboard.yaml, so a panel cannot aim select_source at a media player
+   * that no page put there.
+   */
+  | { t: 'source'; id: number; item: string; value: string }
   /** Heartbeat. Detects half-open sockets that TCP will not report. */
   | { t: 'ping'; id: number }
   /**

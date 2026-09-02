@@ -84,6 +84,23 @@ class TestPanel {
         this.config = msg.config;
         this.lights = msg.keylights;
         for (const id in msg.states) this.states.set(id, msg.states[id]);
+      } else if (msg.t === 'patch') {
+        /*
+         * `hello` carries whatever the store held the instant this panel
+         * connected, which is NOT necessarily everything: the backend accepts
+         * panels before Home Assistant has finished sending its first
+         * snapshot. Anything that lands after arrives as a patch, so a test
+         * that reads only `hello` is a test that passes on a fast machine.
+         */
+        const { add, chg, del } = msg.patch;
+        if (add) for (const id in add) this.states.set(id, add[id]);
+        if (chg) {
+          for (const id in chg) {
+            const prev = this.states.get(id);
+            if (prev) this.states.set(id, { ...prev, ...chg[id], a: { ...prev.a, ...chg[id].a } });
+          }
+        }
+        if (del) for (const id of del) this.states.delete(id);
       } else if (msg.t === 'keylights') {
         this.lights = msg.lights;
         this.lightPushes += 1;
@@ -108,6 +125,13 @@ class TestPanel {
   press(button) {
     const id = this.#next();
     this.ws.send(JSON.stringify({ t: 'control', id, button }));
+    return id;
+  }
+
+  /** Mirrors selectControlSource() in panel/src/net/socket.ts. */
+  source(item, value) {
+    const id = this.#next();
+    this.ws.send(JSON.stringify({ t: 'source', id, item, value }));
     return id;
   }
 
@@ -354,24 +378,86 @@ describe('media player keys', () => {
     );
   });
 
-  test('the picker entity reaches the panel with its source_list', () => {
+  test('the picker entity reaches the panel with its source_list', async () => {
     // Referenced ONLY by the picker — so this also proves a `sources:` item
     // puts its entity in allReferencedEntities, without which the panel
     // would have nothing to populate the sheet from.
-    const tv = panel.states.get('media_player.tv');
-    assert.ok(tv, 'media_player.tv should be in the snapshot');
+    //
+    // Waited for rather than read straight out of `hello`: whether it is in
+    // that first frame depends on whether Home Assistant's snapshot beat the
+    // panel's connection, which is a race this test has no business caring
+    // about. It failed roughly one run in three on a loaded machine.
+    const tv = await waitFor(
+      () => panel.states.get('media_player.tv'),
+      'media_player.tv to reach the panel',
+    );
     assert.deepEqual(tv.a.source_list, ['HDMI 1', 'HDMI 2', 'Live TV']);
     assert.equal(tv.a.source, 'HDMI 2');
   });
 
-  test('select_source is permitted on it', async () => {
+  /*
+   * These go through the SAME message the panel sends, not a hand-written
+   * call_service. The first version of this test hand-wrote the service call
+   * and passed while the panel was sending `input_select.select_option` — it
+   * proved the backend would accept the right request without checking that
+   * anything sends it. Choosing an input answered "Not permitted" on a real
+   * device with a green test suite.
+   */
+  test('choosing an input issues select_source for the configured entity', async () => {
     ha.serviceCalls.length = 0;
-    panel.ws.send(JSON.stringify({
-      t: 'call', id: 700, domain: 'media_player', service: 'select_source',
-      entity: 'media_player.tv', data: { source: 'HDMI 1' },
-    }));
+    panel.source('av.input', 'HDMI 1');
+
     const call = await waitFor(() => ha.serviceCalls[0], 'a select_source');
+    assert.equal(call.domain, 'media_player');
+    assert.equal(call.service, 'select_source');
+    assert.equal(call.target.entity_id, 'media_player.tv');
     assert.equal(call.service_data.source, 'HDMI 1');
+  });
+
+  test('a value the device never published is refused', async () => {
+    ha.serviceCalls.length = 0;
+    const ref = panel.source('av.input', 'HDMI 99');
+    const error = await panel.errorFor(ref);
+    assert.equal(error.code, 'source_failed');
+    assert.equal(error.message, 'Unknown input');
+    assert.equal(ha.serviceCalls.length, 0, 'nothing may reach Home Assistant');
+  });
+
+  test('a control id that is not a sources key is refused', async () => {
+    ha.serviceCalls.length = 0;
+    // A real key, but a Companion one — it has no entity to select on.
+    const ref = panel.source('deskpro.join', 'HDMI 1');
+    const error = await panel.errorFor(ref);
+    assert.equal(error.message, 'Unknown control');
+    assert.equal(ha.serviceCalls.length, 0);
+  });
+
+  test('a curated `inputs:` list is parsed, in order, with renames', () => {
+    const curated = page('av').items.find((i) => i.id === 'av.curated');
+    assert.deepEqual(curated.inputs, [
+      { source: 'HDMI 1' },
+      { source: 'HDMI 2', name: 'Laptop' },
+    ]);
+  });
+
+  test('a curated list is the allow-list, not the device source_list', async () => {
+    ha.serviceCalls.length = 0;
+    // In the device's source_list, deliberately absent from `inputs:`.
+    const ref = panel.source('av.curated', 'Live TV');
+    const error = await panel.errorFor(ref);
+    assert.equal(error.message, 'Unknown input');
+    assert.equal(ha.serviceCalls.length, 0);
+
+    // And one that IS curated still goes through.
+    panel.source('av.curated', 'HDMI 2');
+    const call = await waitFor(() => ha.serviceCalls[0], 'a select_source');
+    assert.equal(call.service_data.source, 'HDMI 2');
+  });
+
+  test('an unknown control id is refused', async () => {
+    const ref = panel.source('av.nonexistent', 'HDMI 1');
+    const error = await panel.errorFor(ref);
+    assert.equal(error.message, 'Unknown control');
   });
 
   test('media_player.toggle is permitted', async () => {

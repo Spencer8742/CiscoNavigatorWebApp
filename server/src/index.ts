@@ -267,6 +267,7 @@ async function main(): Promise<void> {
     getKeyLights: () => controls.snapshot(),
     onControl: (button) => controls.press(button),
     onKeyLight: (light, op, value) => controls.keyLight(light, op, value),
+    onSource: (item, value) => controls.selectSource(item, value),
 
     onPhotos: async (count) => {
       const photos = await playlist.take(count);
@@ -293,6 +294,7 @@ async function main(): Promise<void> {
     // The same guard the dashboard tiles go through: a macro button that
     // calls a service gets no more reach than a tile that calls the same one.
     callService: (call) => services.call(call),
+    getEntity: (entityId) => store.get(entityId),
     onLights: (lights) => hub.broadcastKeyLights(lights),
     // Nothing is polled while no panel is connected. A wall panel that has
     // gone to sleep, or a container running before the device is provisioned,

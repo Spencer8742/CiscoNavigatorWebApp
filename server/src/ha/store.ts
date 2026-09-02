@@ -57,6 +57,12 @@ export class HaStore {
     return out;
   }
 
+  /** One entity, if the config references it. Null otherwise. */
+  get(entityId: string): EntityState | null {
+    if (!this.#allowed.has(entityId)) return null;
+    return this.#states.get(entityId) ?? null;
+  }
+
   /** True if the config references this entity. Used by the service guard. */
   isAllowed(entityId: string): boolean {
     return this.#allowed.has(entityId);

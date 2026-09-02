@@ -576,6 +576,24 @@
   max-width: 14rem;
 }
 
+/* The input picker. A curated list is two or three entries, so they can be
+   real targets rather than chips — this is pressed mid-call, at arm's length,
+   by someone looking at the TV rather than the panel. Scoped so every other
+   OptionRow (hvac modes, fan presets) keeps its compact form. */
+.source-picker .option-row {
+  gap: var(--s-3);
+}
+
+.source-picker .option {
+  flex: 1 1 10rem;
+  justify-content: center;
+  min-height: 5.5rem;
+  max-width: none;
+  border-radius: var(--r-lg);
+  font-size: 1.25rem;
+  font-weight: 580;
+}
+
 .option.is-selected {
   background: var(--accent-soft);
   border-color: var(--accent-dim);

@@ -396,6 +396,38 @@ export interface ControlSources {
   icon: string;
   /** A `media_player` entity that publishes `source_list`. */
   entity: string;
+  /**
+   * The inputs to offer, in order, optionally renamed. Empty = offer
+   * whatever the device currently reports.
+   *
+   * Two things a raw `source_list` cannot do. It lists everything the TV
+   * knows about — Live TV, every streaming app — when the question being
+   * asked is "which box am I looking at". And it names them the way the
+   * HDMI spec does rather than the way the room does: "HDMI 3" is only
+   * meaningful if you remember what is plugged into it.
+   *
+   * Curating also makes the picker work while the TV is OFF, which is
+   * exactly when you want it: source_list is usually empty then, but a list
+   * written here is an assertion that does not depend on the device
+   * answering.
+   */
+  inputs: SourceRef[];
+}
+
+/**
+ * One input, optionally renamed for the room rather than the cable.
+ *
+ * In YAML, either form, mixed freely — the same shape as `EntityRef`:
+ *
+ *   inputs:
+ *     - HDMI 1                              # shown as-is
+ *     - { source: HDMI 3, name: Mac Studio }
+ */
+export interface SourceRef {
+  /** Must match the device's own source name exactly. */
+  source: string;
+  /** What the key says. Defaults to `source`. */
+  name?: string;
 }
 
 export type ControlItem = ControlButton | ControlLight | ControlSources;

@@ -299,7 +299,7 @@ function SourcesButton({ item }: { item: ControlSources }) {
     <Pressable
       class="macro-btn p-lg"
       onPress={() => {
-        openSources.value = item.entity;
+        openSources.value = item.id;
         markActivity();
       }}
       ariaLabel={`${item.name}: choose input`}
