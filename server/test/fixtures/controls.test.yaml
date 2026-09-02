@@ -79,6 +79,14 @@ controls:
         - id: av.input
           name: TV Input
           sources: media_player.tv
+        # Curated and renamed. `Live TV` is in the device's source_list but
+        # not here, so it must be refused.
+        - id: av.curated
+          name: Box
+          sources: media_player.tv
+          inputs:
+            - HDMI 1
+            - { source: HDMI 2, name: Laptop }
         # Refused: sources only makes sense for a media_player.
         - id: av.bad
           name: Nope

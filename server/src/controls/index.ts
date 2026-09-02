@@ -155,11 +155,23 @@ export class Controls {
       return 'Unknown control';
     }
 
-    const state = this.#deps.getEntity(item.entity);
-    const list = state?.a['source_list'];
-    if (Array.isArray(list) && list.length > 0 && !list.includes(value)) {
-      log.warn(`Refused source "${value}" for ${item.entity}: not in its source_list`);
-      return 'Unknown input';
+    /*
+     * A curated `inputs:` list is the allow-list, and a better one than the
+     * device's: it is written down, so it holds while the TV is off and
+     * source_list is empty. Only when nothing is curated do we fall back to
+     * what the device reports.
+     */
+    if (item.inputs.length > 0) {
+      if (!item.inputs.some((i) => i.source === value)) {
+        log.warn(`Refused source "${value}" for ${item.entity}: not in its configured inputs`);
+        return 'Unknown input';
+      }
+    } else {
+      const list = this.#deps.getEntity(item.entity)?.a['source_list'];
+      if (Array.isArray(list) && list.length > 0 && !list.includes(value)) {
+        log.warn(`Refused source "${value}" for ${item.entity}: not in its source_list`);
+        return 'Unknown input';
+      }
     }
 
     return this.#deps.callService({

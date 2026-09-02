@@ -25,6 +25,7 @@ import type {
   KeyLightOp,
   MediaPlayerConfig,
   RoomConfig,
+  SourceRef,
   StatusItem,
 } from '@shared/config.ts';
 
@@ -567,6 +568,7 @@ function controlItems(
         entity: target,
         name: str(raw['name'], 'Input', `${itemPath}.name`),
         icon: str(raw['icon'], 'input', `${itemPath}.icon`),
+        inputs: sourceRefList(raw['inputs'], `${itemPath}.inputs`),
       });
       return;
     }
@@ -681,6 +683,41 @@ function controlAction(raw: Raw, path: string): ControlAction | null {
 
   log.warn(`${path}: no action (companion, webhook, keylight, entity or light) — skipping`);
   return null;
+}
+
+/**
+ * The inputs a `sources:` key offers. Same two spellings as an entity list:
+ * a bare string, or an object with a display-name override.
+ */
+function sourceRefList(v: unknown, path: string): SourceRef[] {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v)) {
+    warn(path, 'list of input names', v);
+    return [];
+  }
+
+  const out: SourceRef[] = [];
+  const seen = new Set<string>();
+
+  v.forEach((item, i) => {
+    const at = `${path}[${i}]`;
+    const raw = typeof item === 'string' ? { source: item } : obj(item);
+    const source = str(raw['source'], '', `${at}.source`);
+    if (!source) {
+      warn(at, 'an input name, e.g. "HDMI 2"', item);
+      return;
+    }
+    if (seen.has(source)) {
+      log.warn(`${at}: duplicate input "${source}" — skipping`);
+      return;
+    }
+    seen.add(source);
+
+    const name = str(raw['name'], '', `${at}.name`);
+    out.push(name && name !== source ? { source, name } : { source });
+  });
+
+  return out;
 }
 
 function companionCoords(v: unknown): { page: number; row: number; column: number } | null {

@@ -37,27 +37,52 @@ export function SourcesSheet() {
   }
 
   const state = entity(item.entity).value;
-  const list = state?.a['source_list'];
-  const sources = Array.isArray(list) ? list.filter((s): s is string => typeof s === 'string') : [];
   const current = typeof state?.a['source'] === 'string' ? (state.a['source'] as string) : undefined;
+
+  /*
+   * A curated list wins over the device's, and does not depend on the device
+   * answering — which is the point: source_list is usually empty while a TV
+   * is off, and off is exactly when you reach for the input picker.
+   */
+  const reported = state?.a['source_list'];
+  const options =
+    item.inputs.length > 0
+      ? item.inputs.map((i) => ({ value: i.source, label: i.name ?? i.source }))
+      : Array.isArray(reported)
+        ? reported
+            .filter((s): s is string => typeof s === 'string')
+            .map((s) => ({ value: s, label: s }))
+        : [];
+
+  // Say "Currently Laptop", not "Currently HDMI 2". Renaming an input and
+  // then reporting it by its cable name undoes the rename in the one place
+  // the two sit side by side.
+  const currentLabel = current
+    ? (options.find((o) => o.value === current)?.label ?? current)
+    : undefined;
 
   return (
     <Sheet
       title={item.name}
-      subtitle={current ? `Currently ${current}` : undefined}
+      subtitle={currentLabel ? `Currently ${currentLabel}` : undefined}
       onClose={close}
     >
       <SheetSection>
-        {sources.length > 0 ? (
-          <OptionRow
-            options={sources.map((s) => ({ value: s, label: s }))}
-            value={current}
-            ariaLabel="Input"
-            onSelect={(value) => {
-              selectControlSource(item.id, value);
-              close();
-            }}
-          />
+        {options.length > 0 ? (
+          /* Bigger targets than the shared option row: a short, curated list
+             has the room, and this is pressed mid-call at arm's length. The
+             class scopes it so hvac modes and the rest are untouched. */
+          <div class="source-picker">
+            <OptionRow
+              options={options}
+              value={current}
+              ariaLabel="Input"
+              onSelect={(value) => {
+                selectControlSource(item.id, value);
+                close();
+              }}
+            />
+          </div>
         ) : (
           /* An empty list is not the same as a broken panel, and on a kiosk
              the difference has to be written down or nobody can tell. */

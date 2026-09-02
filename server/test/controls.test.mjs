@@ -408,6 +408,28 @@ describe('media player keys', () => {
     assert.equal(ha.serviceCalls.length, 0);
   });
 
+  test('a curated `inputs:` list is parsed, in order, with renames', () => {
+    const curated = page('av').items.find((i) => i.id === 'av.curated');
+    assert.deepEqual(curated.inputs, [
+      { source: 'HDMI 1' },
+      { source: 'HDMI 2', name: 'Laptop' },
+    ]);
+  });
+
+  test('a curated list is the allow-list, not the device source_list', async () => {
+    ha.serviceCalls.length = 0;
+    // In the device's source_list, deliberately absent from `inputs:`.
+    const ref = panel.source('av.curated', 'Live TV');
+    const error = await panel.errorFor(ref);
+    assert.equal(error.message, 'Unknown input');
+    assert.equal(ha.serviceCalls.length, 0);
+
+    // And one that IS curated still goes through.
+    panel.source('av.curated', 'HDMI 2');
+    const call = await waitFor(() => ha.serviceCalls[0], 'a select_source');
+    assert.equal(call.service_data.source, 'HDMI 2');
+  });
+
   test('an unknown control id is refused', async () => {
     const ref = panel.source('av.nonexistent', 'HDMI 1');
     const error = await panel.errorFor(ref);
