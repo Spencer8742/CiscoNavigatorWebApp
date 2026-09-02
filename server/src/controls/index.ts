@@ -2,7 +2,7 @@ import { logger } from '~/lib/log.ts';
 import { CompanionClient } from '~/controls/companion.ts';
 import { KeyLight } from '~/controls/keylight.ts';
 import type { ControlAction, ControlItem, DashboardConfig, KeyLightOp } from '@shared/config.ts';
-import type { KeyLightState } from '@shared/protocol.ts';
+import type { EntityState, KeyLightState } from '@shared/protocol.ts';
 
 const log = logger('controls');
 
@@ -41,6 +41,8 @@ export interface ControlsDeps {
     entity: string;
     data?: Record<string, unknown>;
   }) => Promise<string | null>;
+  /** One entity's current state, for validating a chosen input. */
+  getEntity: (entityId: string) => EntityState | null;
   /** Called whenever any key light's state changes. */
   onLights: (lights: KeyLightState[]) => void;
   /** Whether any panel is connected. Polling is pointless when none is. */
@@ -132,6 +134,40 @@ export class Controls {
     }
     if (item.type !== 'button') return 'Not a button';
     return this.#run(item.action, item.name);
+  }
+
+  /**
+   * Choose an input on a `sources:` key.
+   *
+   * The entity comes from the config, never from the panel. The VALUE is
+   * checked against the device's own `source_list` where it has published
+   * one — a panel should not be able to push an arbitrary string at a TV,
+   * and "HDMI 2" is only meaningful because the device said so.
+   *
+   * When the device has published no list, the value is forwarded anyway: an
+   * empty source_list is normal while a TV is off, and refusing then would
+   * make the control stop working exactly when it looks most broken.
+   */
+  async selectSource(itemId: string, value: string): Promise<string | null> {
+    const item = this.#find(itemId);
+    if (!item || item.type !== 'sources') {
+      log.warn(`Refused source "${itemId}": not a sources key in dashboard.yaml`);
+      return 'Unknown control';
+    }
+
+    const state = this.#deps.getEntity(item.entity);
+    const list = state?.a['source_list'];
+    if (Array.isArray(list) && list.length > 0 && !list.includes(value)) {
+      log.warn(`Refused source "${value}" for ${item.entity}: not in its source_list`);
+      return 'Unknown input';
+    }
+
+    return this.#deps.callService({
+      domain: 'media_player',
+      service: 'select_source',
+      entity: item.entity,
+      data: { source: value },
+    });
   }
 
   async #run(action: ControlAction, label: string): Promise<string | null> {

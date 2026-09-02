@@ -389,6 +389,19 @@ export function setKeyLight(light: string, op: KeyLightOp, value?: number): bool
 }
 
 /**
+ * Choose an input on a `sources:` control key.
+ *
+ * Sends the control item's id and the chosen value — NOT a service call. The
+ * backend resolves the entity from dashboard.yaml and checks the value
+ * against the device's own source_list. Composing `media_player.select_source`
+ * here is what the first version did, and it was both a rule violation and a
+ * bug: it went through a generic helper wired to `input_select`.
+ */
+export function selectControlSource(item: string, value: string): boolean {
+  return send({ t: 'source', id: nextId(), item, value });
+}
+
+/**
  * Change a panel preference.
  *
  * Applied optimistically so the setting responds to the tap immediately; the

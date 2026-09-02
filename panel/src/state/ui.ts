@@ -40,12 +40,12 @@ export const openEntity = signal<string | null>(null);
 export const controlPage = signal<string | null>(null);
 
 /**
- * The media player whose input picker is open on the Controls screen.
- * null = closed.
+ * The `sources:` CONTROL ITEM whose input picker is open. null = closed.
  *
- * Separate from `openEntity` because that opens the full entity sheet, which
- * for a TV is transport controls and volume — the whole point of this key is
- * that it goes straight to the input list.
+ * The item id, not the entity id: the panel names controls, and the backend
+ * resolves what they point at. Separate from `openEntity` because that opens
+ * the full entity sheet, which for a TV is transport and volume — the whole
+ * point of this key is that it goes straight to the input list.
  */
 export const openSources = signal<string | null>(null);
 

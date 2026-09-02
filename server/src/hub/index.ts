@@ -69,6 +69,8 @@ export interface HubDeps {
   onControl?: (button: string) => Promise<string | null>;
   /** Drive a key light. Returns an error string, or null. */
   onKeyLight?: (light: string, op: KeyLightOp, value?: number) => Promise<string | null>;
+  /** Choose an input on a `sources:` key. Returns an error string, or null. */
+  onSource?: (item: string, value: string) => Promise<string | null>;
 }
 
 interface Panel {
@@ -243,6 +245,15 @@ export class Hub {
         const problem = await this.#deps.onKeyLight(msg.light, msg.op, msg.value);
         if (problem) {
           this.#send(panel, { t: 'error', ref: msg.id, code: 'keylight_failed', message: problem });
+        }
+        break;
+      }
+
+      case 'source': {
+        if (!this.#deps.onSource) return;
+        const problem = await this.#deps.onSource(msg.item, msg.value);
+        if (problem) {
+          this.#send(panel, { t: 'error', ref: msg.id, code: 'source_failed', message: problem });
         }
         break;
       }

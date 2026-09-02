@@ -111,6 +111,13 @@ class TestPanel {
     return id;
   }
 
+  /** Mirrors selectControlSource() in panel/src/net/socket.ts. */
+  source(item, value) {
+    const id = this.#next();
+    this.ws.send(JSON.stringify({ t: 'source', id, item, value }));
+    return id;
+  }
+
   keylight(light, op, value) {
     const id = this.#next();
     this.ws.send(JSON.stringify({ t: 'keylight', id, light, op, value }));
@@ -364,14 +371,47 @@ describe('media player keys', () => {
     assert.equal(tv.a.source, 'HDMI 2');
   });
 
-  test('select_source is permitted on it', async () => {
+  /*
+   * These go through the SAME message the panel sends, not a hand-written
+   * call_service. The first version of this test hand-wrote the service call
+   * and passed while the panel was sending `input_select.select_option` — it
+   * proved the backend would accept the right request without checking that
+   * anything sends it. Choosing an input answered "Not permitted" on a real
+   * device with a green test suite.
+   */
+  test('choosing an input issues select_source for the configured entity', async () => {
     ha.serviceCalls.length = 0;
-    panel.ws.send(JSON.stringify({
-      t: 'call', id: 700, domain: 'media_player', service: 'select_source',
-      entity: 'media_player.tv', data: { source: 'HDMI 1' },
-    }));
+    panel.source('av.input', 'HDMI 1');
+
     const call = await waitFor(() => ha.serviceCalls[0], 'a select_source');
+    assert.equal(call.domain, 'media_player');
+    assert.equal(call.service, 'select_source');
+    assert.equal(call.target.entity_id, 'media_player.tv');
     assert.equal(call.service_data.source, 'HDMI 1');
+  });
+
+  test('a value the device never published is refused', async () => {
+    ha.serviceCalls.length = 0;
+    const ref = panel.source('av.input', 'HDMI 99');
+    const error = await panel.errorFor(ref);
+    assert.equal(error.code, 'source_failed');
+    assert.equal(error.message, 'Unknown input');
+    assert.equal(ha.serviceCalls.length, 0, 'nothing may reach Home Assistant');
+  });
+
+  test('a control id that is not a sources key is refused', async () => {
+    ha.serviceCalls.length = 0;
+    // A real key, but a Companion one — it has no entity to select on.
+    const ref = panel.source('deskpro.join', 'HDMI 1');
+    const error = await panel.errorFor(ref);
+    assert.equal(error.message, 'Unknown control');
+    assert.equal(ha.serviceCalls.length, 0);
+  });
+
+  test('an unknown control id is refused', async () => {
+    const ref = panel.source('av.nonexistent', 'HDMI 1');
+    const error = await panel.errorFor(ref);
+    assert.equal(error.message, 'Unknown control');
   });
 
   test('media_player.toggle is permitted', async () => {
