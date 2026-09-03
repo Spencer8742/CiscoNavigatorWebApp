@@ -319,7 +319,15 @@ export class Controls {
 
   #find(id: string): ControlItem | null {
     for (const page of this.#deps.getConfig().controls.pages) {
-      for (const item of page.items) if (item.id === id) return item;
+      for (const item of page.items) {
+        if (item.id === id) return item;
+        // A device tile's own keys are real controls the panel can press, so
+        // they have to be resolvable here too. Without this they parse, they
+        // render, and every tap is refused as "not in dashboard.yaml".
+        if (item.type === 'device') {
+          for (const key of item.keys) if (key.id === id) return key;
+        }
+      }
     }
     return null;
   }

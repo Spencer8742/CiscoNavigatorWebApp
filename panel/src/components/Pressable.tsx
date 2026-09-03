@@ -46,6 +46,16 @@ export interface PressableProps {
   ariaLabel?: string;
   ariaPressed?: boolean;
   style?: JSX.CSSProperties | string;
+  /**
+   * Styling hook, rendered as `data-tone`.
+   *
+   * A real prop rather than a `data-tone` attribute written at the call site:
+   * this is a component, not an intrinsic element, so an unknown attribute is
+   * not forwarded to the DOM — it is silently dropped. Answer and Hang up
+   * were written that way and rendered as two identical grey keys, which on a
+   * call control is the one place you cannot afford a guess.
+   */
+  tone?: 'accent' | 'danger' | 'ok';
 }
 
 export function Pressable({
@@ -58,6 +68,7 @@ export function Pressable({
   ariaLabel,
   ariaPressed,
   style,
+  tone,
 }: PressableProps) {
   const el = useRef<HTMLElement | null>(null);
   const start = useRef<{ x: number; y: number; id: number } | null>(null);
@@ -140,6 +151,7 @@ export function Pressable({
     onPointerUp,
     onPointerCancel: end,
     'aria-label': ariaLabel,
+    'data-tone': tone,
     /*
      * Styling hook, on BOTH element types.
      *

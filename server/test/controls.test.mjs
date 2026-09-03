@@ -581,6 +581,39 @@ describe('device tiles', () => {
   });
 });
 
+describe('a device tile\'s own keys', () => {
+  /*
+   * `keys:` inside a `device:` block — for the things the integration does
+   * not expose, like camera on/off, which have to go through Companion
+   * instead. Parsed by the same controlItems() as any other key, so it needs
+   * to be resolvable by press() the same way. Without the lookup added to
+   * ControlRunner#find, a nested key would parse fine, render fine, and every
+   * tap would be refused as "not in dashboard.yaml" — which is exactly the
+   * shape of bug that only shows up by actually pressing one.
+   */
+
+  test('is a real button the panel can press', async () => {
+    companion.presses.length = 0;
+    panel.press('desk.cam_on');
+
+    const press = await waitFor(() => companion.presses[0], 'a Companion press');
+    assert.deepEqual(press, { page: 1, row: 0, column: 1 });
+  });
+
+  test('is on the tile, not on the page grid', () => {
+    const tile = page('desk').items.find((i) => i.type === 'device');
+    assert.equal(tile.keys.length, 2);
+    assert.equal(tile.keys[0].name, 'Camera On');
+    assert.equal(tile.keys[1].name, 'Camera Off');
+
+    // Not ALSO a top-level page item — it belongs in exactly one place.
+    assert.equal(
+      page('desk').items.find((i) => i.id === 'desk.cam_on'),
+      undefined,
+    );
+  });
+});
+
 /* ── Key lights ───────────────────────────────────────────────────────────*/
 
 describe('key lights', () => {

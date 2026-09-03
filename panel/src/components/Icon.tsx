@@ -97,6 +97,20 @@ const ICONS: Record<string, PathSpec> = {
       'M8 20h8',
     ],
   },
+  /*
+   * Selfview — the local preview, drawn as picture-in-picture.
+   *
+   * It cannot be the `camera` glyph: with camera on/off keys sitting in the
+   * same row, Selfview and Camera On rendered as the identical icon, and the
+   * two mean very different things — one is what you see, the other is what
+   * the far end sees.
+   */
+  pip: {
+    d: [
+      'M3.5 6.5h17a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-17a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z',
+      'M13 11.5h6v4h-6z',
+    ],
+  },
   camera: {
     d: [
       'M3.5 8.2A1.7 1.7 0 0 1 5.2 6.5h7.6a1.7 1.7 0 0 1 1.7 1.7v7.6a1.7 1.7 0 0 1-1.7 1.7H5.2a1.7 1.7 0 0 1-1.7-1.7z',

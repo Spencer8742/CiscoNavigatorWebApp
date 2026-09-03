@@ -102,6 +102,11 @@ controls:
             volume: number.dp_speaker_volume
             # Drops a slot the derivation would otherwise invent.
             selfview: null
+            # Keys drawn in the tile's own toggle row — a Companion press
+            # for something the integration does not expose.
+            keys:
+              - { id: desk.cam_on, name: Camera On, companion: 1/0/1 }
+              - { id: desk.cam_off, name: Camera Off, companion: 2/1/3 }
         # A device block naming nothing at all is not a device.
         - id: dp.empty
           device:
