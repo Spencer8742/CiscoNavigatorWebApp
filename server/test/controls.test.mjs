@@ -44,6 +44,8 @@ let companion;
 let left;
 let right;
 let backend;
+/** Everything the backend has written, for the assertions that read it. */
+const backendLog = [];
 let panel;
 
 /* ── Harness ──────────────────────────────────────────────────────────────*/
@@ -204,8 +206,17 @@ before(async () => {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
-  backend.stdout.on('data', (d) => process.stderr.write(`[backend] ${d}`));
-  backend.stderr.on('data', (d) => process.stderr.write(`[backend] ${d}`));
+  // Kept as well as echoed: some of what this backend does is only observable
+  // as a log line, and a warning nobody can assert on is a warning that can
+  // quietly stop being emitted.
+  backend.stdout.on('data', (d) => {
+    backendLog.push(String(d));
+    process.stderr.write(`[backend] ${d}`);
+  });
+  backend.stderr.on('data', (d) => {
+    backendLog.push(String(d));
+    process.stderr.write(`[backend] ${d}`);
+  });
 
   await waitFor(async () => {
     try {
@@ -690,5 +701,47 @@ describe('key lights', () => {
     // Greyed out, not zeroed: the control keeps its position.
     assert.equal(after.brightness, before.brightness);
     assert.equal(after.temperature, before.temperature);
+  });
+});
+
+describe('entities the config names but Home Assistant does not have', () => {
+  /*
+   * The bug: a device tile written as `prefix: desk_pro` against a device
+   * whose entities were registered under a different name produced twenty-five
+   * wrong ids, a tile with no state in it, and not one word anywhere saying
+   * so. On screen it was indistinguishable from a tile still loading.
+   *
+   * The `desk` fixture page reproduces it — `prefix: dp` derives a full set,
+   * and the mock only publishes three of them.
+   */
+
+  test('are named individually in the log, not swallowed', async () => {
+    await waitFor(
+      () => backendLog.join('').includes('do not exist in Home Assistant'),
+      'the missing-entity report',
+    );
+
+    const text = backendLog.join('');
+    // The count alone would not be actionable: the whole point is being able
+    // to compare an id against Developer Tools -> States.
+    assert.match(
+      text,
+      /button\.dp_wake_up/,
+      'the report names the specific derived id that does not exist',
+    );
+  });
+
+  test('do not drag down the ones that do exist', async () => {
+    // The failure mode worth guarding: treating a partly-wrong entity set as
+    // wholly unusable. Three of the `dp` ids are real and must still arrive.
+    await waitFor(
+      () => panel.states.get('switch.dp_microphone_mute') !== undefined,
+      'a real entity from a partly-missing set',
+    );
+    assert.equal(
+      panel.states.get('button.dp_wake_up'),
+      undefined,
+      'and the absent one stays absent',
+    );
   });
 });

@@ -38,6 +38,9 @@ export class HaStore {
   /** Entity ids the config references. Only these are sent to panels. */
   #allowed = new Set<string>();
 
+  /** Entity ids reported missing last time, so we log a change, not a tick. */
+  #reportedMissing = new Set<string>();
+
   /** True between a resubscribe and the snapshot that follows it. */
   #resyncing = false;
   /** Entities seen during the current resync, to detect what disappeared. */
@@ -102,7 +105,54 @@ export class HaStore {
     }
 
     this.#allowed = next;
+    this.reportMissing();
     return patch;
+  }
+
+  /**
+   * Log the entities `dashboard.yaml` names that Home Assistant does not have.
+   *
+   * Without this, a mistyped or misguessed entity id fails **silently**: the
+   * store simply never has a state for it, the panel is sent nothing, and the
+   * card renders as though it were still waiting. The one that motivated this
+   * was a device tile written as `prefix: desk_pro` against a device whose
+   * entities were registered under a different name — twenty-five ids, all
+   * wrong, and nothing anywhere said so.
+   *
+   * Same reasoning as `immichError` in shared/protocol.ts: the panel is on a
+   * wall, and "nothing is showing" has to explain itself somewhere.
+   *
+   * Only changes are logged. This is called on every snapshot, and a config
+   * naming one absent entity should not print a line every time Home
+   * Assistant restarts.
+   */
+  reportMissing(): void {
+    // Before the first snapshot we hold nothing, so everything would look
+    // missing. Absence is only evidence once HA has told us what it has.
+    if (this.#states.size === 0) return;
+
+    const missing = [...this.#allowed].filter((id) => !this.#states.has(id)).sort();
+    const same =
+      missing.length === this.#reportedMissing.size &&
+      missing.every((id) => this.#reportedMissing.has(id));
+    if (same) return;
+
+    const had = this.#reportedMissing.size > 0;
+    this.#reportedMissing = new Set(missing);
+
+    if (missing.length === 0) {
+      if (had) log.info('Every entity in dashboard.yaml now exists in Home Assistant.');
+      return;
+    }
+
+    log.warn(
+      `${missing.length} ${missing.length === 1 ? 'entity' : 'entities'} in dashboard.yaml ` +
+        'do not exist in Home Assistant and will never show state:',
+    );
+    for (const id of missing) log.warn(`  ${id}`);
+    log.warn('Check the spelling in Developer Tools -> States. A device tile written with');
+    log.warn('`prefix:` derives its ids from the device name, so a renamed device needs the');
+    log.warn('new prefix (or the slots written out individually).');
   }
 
   /**
@@ -165,6 +215,9 @@ export class HaStore {
         this.#resyncing = false;
         this.#resyncSeen.clear();
         log.info(`Resync complete: ${this.#states.size} entities, ${this.visibleCount} visible`);
+        // The snapshot is the only moment we can tell "Home Assistant has not
+        // sent this yet" from "Home Assistant does not have this".
+        this.reportMissing();
       }
     }
 

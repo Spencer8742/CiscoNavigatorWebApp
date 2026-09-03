@@ -3,7 +3,7 @@ import { Pressable } from '~/components/Pressable.tsx';
 import { Slider } from '~/components/Slider.tsx';
 import { entity } from '~/state/entities.ts';
 import { toggle, pressButton, setEntityNumber } from '~/state/actions.ts';
-import { markActivity, openDeviceSource } from '~/state/ui.ts';
+import { health, markActivity, openDeviceSource } from '~/state/ui.ts';
 import { timeOpts } from '~/config/index.ts';
 import { formatTime, formatMeridiem, type TimeOpts } from '~/lib/format.ts';
 import type { ControlDevice, DeviceEntities } from '@shared/config.ts';
@@ -30,17 +30,67 @@ import type { EntityState } from '@shared/protocol.ts';
  */
 export function DeviceTile({ item, compact }: { item: ControlDevice; compact?: boolean }) {
   const e = item.entities;
+  const ids = Object.values(e);
+
+  /*
+   * True when Home Assistant is up and has NONE of this device's entities.
+   *
+   * The `health` test comes first deliberately, and not only for correctness:
+   * `every` short-circuits, so a working tile reads exactly one entity signal
+   * here and re-renders no more often than that one entity changes. Only the
+   * broken case pays for reading all twenty-five.
+   */
+  const blind =
+    ids.length > 0 &&
+    health.value?.ha === 'connected' &&
+    ids.every((id) => entity(id).value === null);
 
   return (
     <div class="devtile" data-compact={compact ? '' : undefined}>
       <Head item={item} />
 
+      {/* When the tile is blind the meeting list is dropped rather than left
+          saying "Waiting for Home Assistant" — it is not waiting, nothing is
+          coming, and the space is better spent on the notice than on a
+          placeholder that pushes the page's keys under the nav. */}
+      {blind ? <Missing first={ids[0]!} /> : null}
+
       <div class="devtile-body">
-        {e.meetings ? <Meetings entities={e} /> : null}
-        <Controls entities={e} soloed={!e.meetings} />
+        {e.meetings && !blind ? <Meetings entities={e} /> : null}
+        <Controls entities={e} soloed={!e.meetings || blind} />
       </div>
 
       <Foot entities={e} />
+    </div>
+  );
+}
+
+/**
+ * The "none of these entities exist" notice.
+ *
+ * The failure this exists for looks exactly like a tile that is still
+ * loading: every control renders, nothing has state, and the meeting list
+ * says "Waiting for Home Assistant" forever. The usual cause is a `prefix:`
+ * that does not match the device's name in Home Assistant — the integration
+ * builds entity ids from the device name, which is whatever the codec reports
+ * as SystemUnit.Name, or its host address when that was never set.
+ *
+ * One id is named rather than all of them. It is the one thing that makes the
+ * message actionable — it can be pasted into Developer Tools and compared —
+ * and twenty-five of them would be a wall of text on a wall-mounted panel.
+ */
+function Missing({ first }: { first: string }) {
+  return (
+    <div class="devtile-missing">
+      <Icon name="alert" size="1.125rem" weight={1.9} />
+      {/* Kept to one line on a 1325px panel. The tile below is already at
+          the height the screen allows, so every extra line of this notice
+          pushes the page's own keys under the nav. */}
+      <div>
+        No entities for this device — no <code class="devtile-missing-id">{first}</code>.
+        Set <code>prefix:</code> in <code>dashboard.yaml</code> to the device's name in
+        Home Assistant.
+      </div>
     </div>
   );
 }

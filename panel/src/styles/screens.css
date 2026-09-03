@@ -1595,6 +1595,44 @@
   margin-bottom: var(--s-4);
 }
 
+/*
+ * The "none of these entities exist" notice.
+ *
+ * Sits directly under the head, above the controls it is explaining, and
+ * stays inside the tile rather than becoming a toast: it is a configuration
+ * fault, not an event, and it is still true five minutes later.
+ *
+ * No color-mix() for the tint — Chromium 102 does not have it (docs/ROOMOS.md
+ * §4), and a dropped background here would leave amber text on the page
+ * ground with nothing marking it as a warning.
+ */
+.devtile-missing {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-4);
+  border-radius: var(--r-md);
+  /* --warn is #fbbf24; this is the same hue at 12%. */
+  background: rgba(251, 191, 36, 0.12);
+  color: var(--warn);
+  font-size: 0.9375rem;
+  line-height: 1.45;
+}
+
+.devtile-missing code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.875em;
+}
+
+/* Only the entity id may break mid-token, and it must: it is the whole point
+   of the message and a clipped one cannot be compared against Developer
+   Tools. Applying this to every `code` broke "dashboard.yaml" across a line,
+   which reads as a typo rather than as a filename. */
+.devtile-missing-id {
+  word-break: break-all;
+}
+
 .devtile-head {
   flex: 0 0 auto;
   display: flex;
