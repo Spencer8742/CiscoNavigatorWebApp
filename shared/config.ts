@@ -430,7 +430,109 @@ export interface SourceRef {
   name?: string;
 }
 
-export type ControlItem = ControlButton | ControlLight | ControlSources;
+/**
+ * A whole RoomOS device, as one full-width tile.
+ *
+ * The Room Bar and the Desk Pro are the one thing on this panel that a grid
+ * of keys genuinely cannot express: they have a meeting list, live occupancy
+ * and noise, four independent mute states, a volume, and a share source —
+ * and unlike a Companion key, every one of those reports back. So this is a
+ * tile with real state rather than a page of fire-and-forget buttons, and it
+ * replaces the Companion call keys rather than sitting beside them.
+ *
+ * Every slot is optional and independent. A device missing an entity simply
+ * does not render that control, which is what lets the same tile describe a
+ * Desk Pro with a calendar and a Room Kit Mini without one.
+ *
+ * Entity ids come from Spencer8742/HomeAssistantCiscoRoomOS. Writing 25 of
+ * them by hand is nobody's idea of a good time, so `prefix:` derives the lot
+ * from the device's slug and any slot may still be written out to override
+ * the guess — see deviceEntities() in the loader.
+ */
+export interface ControlDevice {
+  type: 'device';
+  id: string;
+  /** Shown as the tile's heading. */
+  name: string;
+  entities: DeviceEntities;
+}
+
+/**
+ * The entities a device tile reads and drives. All optional.
+ *
+ * Grouped the way the tile is: what it shows, what it toggles, what it
+ * presses.
+ */
+export interface DeviceEntities {
+  /* ── Read ──────────────────────────────────────────────────────────────*/
+  /** `sensor.*_standby_state` — Awake / Standby / Halfwake. */
+  standby?: string;
+  /** `sensor.*_ambient_noise`, in dBA. */
+  noise?: string;
+  /** `sensor.*_people_count`. */
+  people?: string;
+  /**
+   * `sensor.*_next_meeting`. Its `meetings` attribute carries the whole list:
+   * title, start_time, end_time, organizer, joinable.
+   */
+  meetings?: string;
+  /** `sensor.*_uptime`, in seconds. */
+  uptime?: string;
+  /** `sensor.*_ip_address`. */
+  ip?: string;
+  /** `sensor.*_software_version`. */
+  version?: string;
+  /** `sensor.*_active_alerts`. */
+  alerts?: string;
+  /** `binary_sensor.*_in_call` — decides which share button is offered. */
+  inCall?: string;
+  /** `binary_sensor.*_sharing_content`. */
+  sharing?: string;
+
+  /* ── Toggle ────────────────────────────────────────────────────────────*/
+  /** `switch.*_microphone_mute`. ON means MUTED, as the integration reports it. */
+  mic?: string;
+  /** `switch.*_speaker_mute`. ON means MUTED. */
+  speaker?: string;
+  /** `switch.*_do_not_disturb`. */
+  dnd?: string;
+  /** `switch.*_selfview`. */
+  selfview?: string;
+
+  /* ── Set ───────────────────────────────────────────────────────────────*/
+  /** `number.*_volume`. */
+  volume?: string;
+  /** `select.*_share_source`. */
+  shareSource?: string;
+
+  /* ── Press ─────────────────────────────────────────────────────────────*/
+  /** `button.*_wake_up`. */
+  wake?: string;
+  /** `button.*_standby`. */
+  sleep?: string;
+  /** `button.*_answer_call`. */
+  answer?: string;
+  /** `button.*_hang_up`. */
+  hangUp?: string;
+  /**
+   * `button.*_join_next_meeting`.
+   *
+   * The integration offers no per-booking join, so this joins whichever
+   * meeting is next — which is why the tile puts Join on the next meeting's
+   * row alone rather than on every row.
+   */
+  join?: string;
+  /** `button.*_refresh_meetings`. */
+  refreshMeetings?: string;
+  /** `button.*_share_locally`. */
+  shareLocal?: string;
+  /** `button.*_share_to_call`. */
+  shareToCall?: string;
+  /** `button.*_stop_sharing`. */
+  stopSharing?: string;
+}
+
+export type ControlItem = ControlButton | ControlLight | ControlSources | ControlDevice;
 
 export interface ControlPage {
   id: string;
@@ -533,6 +635,11 @@ export function allReferencedEntities(cfg: DashboardConfig): Set<string> {
       // A source picker both READS the entity (for source_list) and calls
       // select_source on it, so it needs the same allow-listing as a tile.
       if (item.type === 'sources') add(item.entity);
+      // A device tile reads a dozen entities and drives another dozen. All of
+      // them go on the allow-list — the ones it only reads as well, because
+      // the store filters the panel's snapshot by this same set and the tile
+      // would otherwise have nothing to display.
+      if (item.type === 'device') Object.values(item.entities).forEach(add);
     }
   }
 

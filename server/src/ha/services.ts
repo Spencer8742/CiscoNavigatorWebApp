@@ -108,6 +108,19 @@ const ALLOWED: Record<string, ReadonlySet<string>> = {
   input_select: new Set(['select_option', 'select_next', 'select_previous']),
   input_button: new Set(['press']),
   button: new Set(['press']),
+  /*
+   * The modern `number` and `select` domains, alongside the `input_*` helper
+   * versions already above.
+   *
+   * Added for the RoomOS integration, whose volume is a `number` and whose
+   * share source is a `select`. The reach is general, so it is worth being
+   * explicit: this lets a panel write the value of ANY number or select
+   * entity named in dashboard.yaml. That file is still the boundary, and
+   * neither domain has a verb that does anything beyond setting that
+   * entity's own value.
+   */
+  number: new Set(['set_value']),
+  select: new Set(['select_option', 'select_next', 'select_previous']),
   vacuum: new Set(['start', 'pause', 'stop', 'return_to_base', 'locate']),
   humidifier: new Set(['turn_on', 'turn_off', 'toggle', 'set_humidity', 'set_mode']),
   water_heater: new Set(['set_temperature', 'set_operation_mode', 'turn_on', 'turn_off']),
@@ -161,6 +174,8 @@ const ALLOWED_DATA: Record<string, ReadonlySet<string>> = {
   music_assistant: new Set(['media_id', 'media_type', 'enqueue', 'radio_mode']),
   input_number: new Set(['value']),
   input_select: new Set(['option']),
+  number: new Set(['value']),
+  select: new Set(['option']),
   humidifier: new Set(['humidity', 'mode']),
   water_heater: new Set(['temperature', 'operation_mode']),
   script: new Set(['variables']),

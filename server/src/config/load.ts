@@ -19,6 +19,7 @@ import type {
   ControlItem,
   ControlPage,
   DashboardConfig,
+  DeviceEntities,
   EntityRef,
   ImmichSource,
   KeyLightConfig,
@@ -550,6 +551,29 @@ function controlItems(
     }
 
     /*
+     * `device:` is a whole RoomOS device as one tile, not a key. Checked
+     * first because it is a block rather than an action and nothing below
+     * would recognise it.
+     */
+    const device = raw['device'];
+    if (device !== undefined && device !== null) {
+      const spec = obj(device);
+      const entities = deviceEntities(spec, `${itemPath}.device`);
+      if (Object.keys(entities).length === 0) {
+        log.warn(`${itemPath}.device: no entities (set "prefix" or name them) — skipping`);
+        return;
+      }
+      seen.add(id);
+      out.push({
+        type: 'device',
+        id,
+        name: str(spec['name'], 'Device', `${itemPath}.device.name`),
+        entities,
+      });
+      return;
+    }
+
+    /*
      * `sources:` names a media player and makes this key a picker rather
      * than a button. Checked before the action forms because it is the same
      * shape as one and would otherwise be read as an `entity:` key.
@@ -683,6 +707,76 @@ function controlAction(raw: Raw, path: string): ControlAction | null {
 
   log.warn(`${path}: no action (companion, webhook, keylight, entity or light) — skipping`);
   return null;
+}
+
+/**
+ * Which entity fills each slot of a device tile.
+ *
+ * `prefix: desk_pro` derives all 25 from Home Assistant's naming, and any
+ * slot written out by hand overrides the guess. Deriving is worth the table
+ * below because writing 25 entity ids by hand is how you get one of them
+ * subtly wrong and spend an evening wondering why the volume does nothing.
+ *
+ * The suffixes are HA's slugified ENTITY NAMES, not the integration's
+ * internal keys, and two of them differ: `share_local` is named "Share
+ * locally" and `presentation_source` is named "Share source". Deriving from
+ * the keys would produce two ids that do not exist.
+ */
+const DEVICE_SLOTS: Record<keyof DeviceEntities, string> = {
+  standby: 'sensor.%_standby_state',
+  noise: 'sensor.%_ambient_noise',
+  people: 'sensor.%_people_count',
+  meetings: 'sensor.%_next_meeting',
+  uptime: 'sensor.%_uptime',
+  ip: 'sensor.%_ip_address',
+  version: 'sensor.%_software_version',
+  alerts: 'sensor.%_active_alerts',
+  inCall: 'binary_sensor.%_in_call',
+  sharing: 'binary_sensor.%_sharing_content',
+  mic: 'switch.%_microphone_mute',
+  speaker: 'switch.%_speaker_mute',
+  dnd: 'switch.%_do_not_disturb',
+  selfview: 'switch.%_selfview',
+  volume: 'number.%_volume',
+  shareSource: 'select.%_share_source',
+  wake: 'button.%_wake_up',
+  sleep: 'button.%_standby',
+  answer: 'button.%_answer_call',
+  hangUp: 'button.%_hang_up',
+  join: 'button.%_join_next_meeting',
+  refreshMeetings: 'button.%_refresh_meetings',
+  shareLocal: 'button.%_share_locally',
+  shareToCall: 'button.%_share_to_call',
+  stopSharing: 'button.%_stop_sharing',
+};
+
+function deviceEntities(spec: Raw, path: string): DeviceEntities {
+  const out: DeviceEntities = {};
+  const prefix = str(spec['prefix'], '', `${path}.prefix`);
+
+  if (prefix && !/^[a-z0-9_]+$/.test(prefix)) {
+    warn(`${path}.prefix`, "a device slug like 'desk_pro'", prefix);
+    return out;
+  }
+
+  for (const [slot, pattern] of Object.entries(DEVICE_SLOTS) as [
+    keyof DeviceEntities,
+    string,
+  ][]) {
+    const written = spec[slot];
+    if (written === null) continue; // an explicit null drops a derived slot
+    if (typeof written === 'string' && written.includes('.')) {
+      out[slot] = written.trim();
+      continue;
+    }
+    if (written !== undefined) {
+      warn(`${path}.${slot}`, 'an entity id', written);
+      continue;
+    }
+    if (prefix) out[slot] = pattern.replace('%', prefix);
+  }
+
+  return out;
 }
 
 /**

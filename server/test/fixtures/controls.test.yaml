@@ -92,6 +92,21 @@ controls:
           name: Nope
           sources: light.living_room
 
+    - id: desk
+      name: Desk Tile
+      items:
+        - device:
+            name: Test Desk Pro
+            prefix: dp
+            # Overrides the derived number.dp_volume.
+            volume: number.dp_speaker_volume
+            # Drops a slot the derivation would otherwise invent.
+            selfview: null
+        # A device block naming nothing at all is not a device.
+        - id: dp.empty
+          device:
+            name: Nothing
+
     - id: lights
       name: Lights
       icon: bulb
