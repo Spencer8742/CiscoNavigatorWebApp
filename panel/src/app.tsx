@@ -12,6 +12,7 @@ import { Screensaver } from '~/screens/Screensaver.tsx';
 import { Cast } from '~/screens/Cast.tsx';
 import { EntitySheet } from '~/components/EntitySheet.tsx';
 import { SourcesSheet } from '~/components/SourcesSheet.tsx';
+import { DeviceSourceSheet } from '~/components/DeviceSourceSheet.tsx';
 import { castConfig, ui } from '~/config/index.ts';
 import { connectionProblem, ready, route, screensaverActive } from '~/state/ui.ts';
 import { isCastDashboard, isCastMode, startCastReceiver } from '~/lib/cast.ts';
@@ -116,6 +117,7 @@ export function App() {
           mounted inside a screen is laid out against that box rather than the
           viewport and ends up fighting the nav. */}
       <SourcesSheet />
+      <DeviceSourceSheet />
       <Toast />
     </ErrorBoundary>
   );

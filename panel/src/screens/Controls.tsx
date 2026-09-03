@@ -8,8 +8,10 @@ import { entity } from '~/state/entities.ts';
 import { keyLightFor, pressed } from '~/state/controls.ts';
 import { pressControl, setKeyLight } from '~/net/socket.ts';
 import { KEY_LIGHT_MAX_KELVIN, KEY_LIGHT_MIN_KELVIN } from '@shared/protocol.ts';
+import { DeviceTile } from '~/components/DeviceTile.tsx';
 import type {
   ControlButton,
+  ControlDevice,
   ControlLight,
   ControlPage,
   ControlSources,
@@ -130,9 +132,17 @@ function Page({ page }: { page: ControlPage }) {
     i.type === 'button' || i.type === 'sources',
   );
   const lights = page.items.filter(isLight);
+  const devices = page.items.filter((i): i is ControlDevice => i.type === 'device');
 
   return (
     <>
+      {/* Device tiles come FIRST and take the height they need. A tile is the
+          page's subject when there is one — a Desk Pro with its meetings and
+          its live mute state is not a peer of a key that fires and forgets. */}
+      {devices.map((item) => (
+        <DeviceTile key={item.id} item={item} compact={keys.length > 0 || lights.length > 0} />
+      ))}
+
       {keys.length > 0 ? (
         <div
           class="macro-grid"

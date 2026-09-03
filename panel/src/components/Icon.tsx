@@ -112,6 +112,16 @@ const ICONS: Record<string, PathSpec> = {
     ],
   },
   bolt: { d: ['M13 3 6 13.5h4.6L11 21l7-10.5h-4.6z'] },
+  /* Occupancy on a device tile. Two figures, not one: "1 person" beside a
+     single silhouette reads as a login, beside a pair it reads as a count. */
+  people: {
+    d: [
+      'M3.5 19.5a5.5 5.5 0 0 1 11 0',
+      'M16.5 6.2a3 3 0 0 1 0 5.6',
+      'M18.8 19.5a5 5 0 0 0-2.4-4.2',
+    ],
+    c: [[9, 8, 3.2]],
+  },
 
   /* ── Macro-page variants ────────────────────────────────────────────────
      A control surface is read by SHAPE, not by label — you are mid-call and

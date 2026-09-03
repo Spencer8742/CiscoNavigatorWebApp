@@ -283,6 +283,37 @@ export function setNumber(entityId: string, value: number, final: boolean): void
   }
 }
 
+/* ── Device tiles ─────────────────────────────────────────────────────────
+   These three take their domain from the ENTITY rather than hardcoding one,
+   which is not a stylistic preference: `selectOption` and `setNumber` above
+   are both pinned to their `input_*` domain, and reusing one of them for a
+   `number.` or `select.` entity is precisely the bug that made choosing a TV
+   input answer "Not permitted". Deriving cannot make that mistake. */
+
+/** Press a `button` (or `input_button`). */
+export function pressButton(entityId: string): void {
+  send(domainOf(entityId), 'press', entityId);
+}
+
+/** Set a `number` (or `input_number`), throttled while dragging. */
+export function setEntityNumber(entityId: string, value: number, final: boolean): void {
+  optimistic(entityId, String(value));
+
+  const fire = () => send(domainOf(entityId), 'set_value', entityId, { value });
+  if (final) {
+    cancelThrottle(entityId + ':num');
+    fire();
+  } else {
+    throttle(entityId + ':num', DRAG_INTERVAL_MS, fire);
+  }
+}
+
+/** Choose an option on a `select` (or `input_select`). */
+export function setEntityOption(entityId: string, option: string): void {
+  optimistic(entityId, option);
+  send(domainOf(entityId), 'select_option', entityId, { option });
+}
+
 /* ── Music, straight to Music Assistant ───────────────────────────────────
    None of this goes through Home Assistant any more. Music Assistant is the
    thing that actually owns the speakers, the queue and the library, and

@@ -164,6 +164,9 @@ before(async () => {
   ha = new MockHomeAssistant(HA_PORT);
   ha.seed('scene.movie_night', 'scening', { friendly_name: 'Movie Night' });
   ha.seed('script.goodnight', 'off', { friendly_name: 'Goodnight' });
+  ha.seed('switch.dp_microphone_mute', 'on', { friendly_name: 'Mic mute' });
+  ha.seed('number.dp_speaker_volume', '62', { min: 0, max: 100, step: 1 });
+  ha.seed('select.dp_share_source', 'HDMI 1', { options: ['HDMI 1', 'HDMI 2'] });
   ha.seed('media_player.tv', 'on', {
     friendly_name: 'Test TV',
     source: 'HDMI 2',
@@ -246,7 +249,7 @@ describe('control pages', () => {
     const pages = panel.config.controls.pages;
     // Order is preserved from the file; membership is checked loosely so
     // adding a page to the fixture does not fail a test about button shape.
-    assert.deepEqual(pages.map((p) => p.id), ['deskpro', 'scenes', 'av', 'lights']);
+    assert.deepEqual(pages.map((p) => p.id), ['deskpro', 'scenes', 'av', 'desk', 'lights']);
 
     const join = page('deskpro').items[0];
     assert.equal(join.type, 'button');
@@ -478,6 +481,92 @@ describe('media player keys', () => {
     const error = await panel.errorFor(701);
     assert.equal(error.message, 'Not permitted');
     assert.equal(ha.serviceCalls.length, 0);
+  });
+});
+
+/* ── Device tiles ─────────────────────────────────────────────────────────*/
+
+describe('device tiles', () => {
+  test('`prefix:` derives the whole entity set', () => {
+    const tile = page('desk').items.find((i) => i.type === 'device');
+    assert.ok(tile, 'expected a device item');
+    assert.equal(tile.name, 'Test Desk Pro');
+
+    // A sample across every platform the integration uses, including the two
+    // whose entity NAME differs from the integration's internal key — those
+    // are the ones a naive derivation gets wrong.
+    assert.equal(tile.entities.noise, 'sensor.dp_ambient_noise');
+    assert.equal(tile.entities.meetings, 'sensor.dp_next_meeting');
+    assert.equal(tile.entities.inCall, 'binary_sensor.dp_in_call');
+    assert.equal(tile.entities.mic, 'switch.dp_microphone_mute');
+    assert.equal(tile.entities.join, 'button.dp_join_next_meeting');
+    assert.equal(tile.entities.shareLocal, 'button.dp_share_locally');
+    assert.equal(tile.entities.shareSource, 'select.dp_share_source');
+  });
+
+  test('a written slot overrides the derived one, and null drops it', () => {
+    const tile = page('desk').items.find((i) => i.type === 'device');
+    assert.equal(tile.entities.volume, 'number.dp_speaker_volume');
+    assert.equal(tile.entities.selfview, undefined);
+  });
+
+  test('a device naming no entities is skipped', () => {
+    assert.equal(
+      page('desk').items.find((i) => i.id === 'dp.empty'),
+      undefined,
+      'a device block with neither prefix nor slots is not a device',
+    );
+  });
+
+  test('every device entity is allow-listed, so the tile has state to show', async () => {
+    // Referenced ONLY by the tile. Without the device branch in
+    // allReferencedEntities() the store would filter these out and the tile
+    // would render empty against a perfectly healthy Home Assistant.
+    for (const id of ['switch.dp_microphone_mute', 'number.dp_speaker_volume', 'select.dp_share_source']) {
+      await waitFor(() => panel.states.get(id), `${id} to reach the panel`);
+    }
+  });
+
+  test('number.set_value is permitted — the volume slider', async () => {
+    // The message the tile actually sends: setEntityNumber() takes its domain
+    // from the entity, so a `number.` entity produces `number.set_value`.
+    ha.serviceCalls.length = 0;
+    panel.ws.send(JSON.stringify({
+      t: 'call', id: 800, domain: 'number', service: 'set_value',
+      entity: 'number.dp_speaker_volume', data: { value: 40 },
+    }));
+    const call = await waitFor(
+      () => ha.serviceCalls.find((c) => c.service === 'set_value'),
+      'a number.set_value',
+    );
+    assert.equal(call.domain, 'number');
+    assert.equal(call.service_data.value, 40);
+  });
+
+  test('select.select_option is permitted — the share source', async () => {
+    ha.serviceCalls.length = 0;
+    panel.ws.send(JSON.stringify({
+      t: 'call', id: 801, domain: 'select', service: 'select_option',
+      entity: 'select.dp_share_source', data: { option: 'HDMI 2' },
+    }));
+    const call = await waitFor(
+      () => ha.serviceCalls.find((c) => c.service === 'select_option'),
+      'a select.select_option',
+    );
+    assert.equal(call.domain, 'select');
+    assert.equal(call.service_data.option, 'HDMI 2');
+  });
+
+  test('widening to number/select did not widen anything else', async () => {
+    // `set_value` on a switch is still a domain mismatch, and the new domains
+    // brought no new verbs with them.
+    const ref = panel.seq + 1;
+    panel.ws.send(JSON.stringify({
+      t: 'call', id: ref, domain: 'number', service: 'set_value',
+      entity: 'switch.dp_microphone_mute', data: { value: 1 },
+    }));
+    const error = await panel.errorFor(ref);
+    assert.equal(error.message, 'Not permitted');
   });
 });
 

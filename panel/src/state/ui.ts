@@ -49,6 +49,17 @@ export const controlPage = signal<string | null>(null);
  */
 export const openSources = signal<string | null>(null);
 
+/**
+ * The `select` entity whose option picker is open, from a device tile.
+ * null = closed.
+ *
+ * Holds the ENTITY id rather than a control item id, unlike `openSources`:
+ * a device tile's share source is one slot of a tile, not a control of its
+ * own, and there is nothing else to name it by. It is allow-listed the same
+ * way — the tile's entities all go into allReferencedEntities().
+ */
+export const openDeviceSource = signal<string | null>(null);
+
 export function navigate(to: Route): void {
   if (route.value === to) return;
   // Leaving Rooms always resets the drill-down, so coming back lands on the

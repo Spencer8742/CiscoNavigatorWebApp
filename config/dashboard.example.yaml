@@ -529,3 +529,87 @@ controls:
   #      - name: Listen
   #        icon: mic
   #        webhook: office_voice_listen
+  #
+  #  # ── A media player's inputs, as a picker ───────────────────────────────
+  #  #
+  #  # `sources:` makes a key a PICKER rather than a button: it opens a sheet
+  #  # of that media player's inputs, and choosing one calls select_source.
+  #  #
+  #  # `inputs:` curates and renames. Without it the sheet offers whatever the
+  #  # device reports — every HDMI plus Live TV and every streaming app — when
+  #  # the question is only ever "which box am I looking at". And it names them
+  #  # for the cable rather than the room: "HDMI 3" is only meaningful if you
+  #  # remember what is plugged into it.
+  #  #
+  #  # A curated list also becomes the allow-list, which is stronger than the
+  #  # device's because it is written down: the picker still works while the TV
+  #  # is OFF and source_list is empty, which is exactly when you reach for it.
+  #  #
+  #  # Bare string or {source, name}, mixed freely, same as an entity list.
+  #  - id: av
+  #    name: A/V
+  #    icon: tv
+  #    items:
+  #      # One key that turns a TV on OR off — `toggle` beats a pair of keys on
+  #      # a surface where the device's real state is the thing you are trying
+  #      # not to have to think about.
+  #      - { name: TV Power, icon: tv, entity: media_player.lounge_tv, service: toggle }
+  #      - name: TV Input
+  #        icon: input
+  #        sources: media_player.lounge_tv
+  #        inputs:
+  #          - HDMI 1
+  #          - { source: HDMI 2, name: Laptop }
+  #          - { source: HDMI 3, name: Mac Studio }
+  #
+  #  # ── A whole RoomOS device, as one tile ─────────────────────────────────
+  #  #
+  #  # `device:` is not a key. It is a Desk Pro or Room Bar rendered as a full
+  #  # tile: the device's own meeting list, live occupancy and noise, the four
+  #  # mute states, volume, share source, and call control.
+  #  #
+  #  # It is the one control here that is NOT fire-and-forget. A Companion key
+  #  # can only report that the press was sent; this reads the device back, so
+  #  # a mute key honestly shows that the mic IS muted. Where a device tile
+  #  # covers something, it should REPLACE the Companion keys for it rather
+  #  # than sit beside them.
+  #  #
+  #  # Needs github.com/Spencer8742/HomeAssistantCiscoRoomOS in Home Assistant.
+  #  #
+  #  # `prefix:` is the device's slug in Home Assistant and derives all 25
+  #  # entity ids from it — sensor.desk_pro_ambient_noise,
+  #  # switch.desk_pro_microphone_mute, button.desk_pro_join_next_meeting and
+  #  # so on. Any slot may be written out to override the guess, or set to
+  #  # `null` to drop it. A slot with no entity does not render, which is what
+  #  # lets one tile describe a Room Kit Mini with no calendar and a Desk Pro
+  #  # with one.
+  #  - id: deskpro
+  #    name: Desk Pro
+  #    icon: phone
+  #    items:
+  #      - device:
+  #          name: Desk Pro
+  #          prefix: desk_pro
+  #
+  #          # Read:   standby noise people meetings uptime ip version alerts
+  #          #         inCall sharing
+  #          # Toggle: mic speaker dnd selfview
+  #          # Set:    volume shareSource
+  #          # Press:  wake sleep answer hangUp join refreshMeetings
+  #          #         shareLocal shareToCall stopSharing
+  #          #
+  #          # Overriding one, and dropping one:
+  #          # volume: number.desk_pro_speaker_volume
+  #          # selfview: null
+  #
+  #      # Two things the integration does not expose, so the tile cannot:
+  #      #
+  #      #   CAMERA MUTE. It has `selfview`, which is the local preview, not
+  #      #   the outgoing video. If a Companion key turns your camera off
+  #      #   today, keep that key — like these two.
+  #      #
+  #      #   PER-MEETING JOIN. There is only `join_next_meeting`, so the tile
+  #      #   puts Join on the next booking's row alone. A Join on the 12:00 row
+  #      #   that started the 9:00 meeting is worse than no button.
+  #      - { name: Camera On,  icon: camera,    companion: 1/2/1 }
+  #      - { name: Camera Off, icon: cameraOff, companion: 1/2/0 }
