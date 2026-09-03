@@ -1,12 +1,14 @@
-import { Icon } from '~/components/Icon.tsx';
+import { Icon, hasIcon } from '~/components/Icon.tsx';
 import { Pressable } from '~/components/Pressable.tsx';
 import { Slider } from '~/components/Slider.tsx';
 import { entity } from '~/state/entities.ts';
 import { toggle, pressButton, setEntityNumber } from '~/state/actions.ts';
-import { health, markActivity, openDeviceSource } from '~/state/ui.ts';
+import { pressed } from '~/state/controls.ts';
+import { pressControl } from '~/net/socket.ts';
+import { health, markActivity, openDeviceAlerts, openDeviceSource } from '~/state/ui.ts';
 import { timeOpts } from '~/config/index.ts';
 import { formatTime, formatMeridiem, type TimeOpts } from '~/lib/format.ts';
-import type { ControlDevice, DeviceEntities } from '@shared/config.ts';
+import type { ControlButton, ControlDevice, DeviceEntities } from '@shared/config.ts';
 import type { EntityState } from '@shared/protocol.ts';
 
 /**
@@ -57,7 +59,7 @@ export function DeviceTile({ item, compact }: { item: ControlDevice; compact?: b
 
       <div class="devtile-body">
         {e.meetings && !blind ? <Meetings entities={e} /> : null}
-        <Controls entities={e} soloed={!e.meetings || blind} />
+        <Controls entities={e} keys={item.keys} soloed={!e.meetings || blind} />
       </div>
 
       <Foot entities={e} />
@@ -246,7 +248,15 @@ function firstJoinable(meetings: Meeting[]): number {
 
 /* ── Controls ─────────────────────────────────────────────────────────────*/
 
-function Controls({ entities: e, soloed }: { entities: DeviceEntities; soloed: boolean }) {
+function Controls({
+  entities: e,
+  keys,
+  soloed,
+}: {
+  entities: DeviceEntities;
+  keys: ControlButton[];
+  soloed: boolean;
+}) {
   const inCall = useState(e.inCall);
   const sharing = useState(e.sharing);
   const calling = inCall?.s === 'on';
@@ -258,7 +268,7 @@ function Controls({ entities: e, soloed }: { entities: DeviceEntities; soloed: b
 
   return (
     <div class="devtile-controls" data-solo={soloed ? '' : undefined}>
-      <Toggles entities={e} />
+      <Toggles entities={e} keys={keys} />
       {e.volume ? <Volume entity={e.volume} /> : null}
 
       {shareTarget || e.shareSource ? (
@@ -285,7 +295,7 @@ function Controls({ entities: e, soloed }: { entities: DeviceEntities; soloed: b
           {e.answer ? (
             <Pressable
               class="devtile-wide"
-              data-tone="accent"
+              tone="ok"
               onPress={() => {
                 pressButton(e.answer!);
                 markActivity();
@@ -299,7 +309,7 @@ function Controls({ entities: e, soloed }: { entities: DeviceEntities; soloed: b
           {e.hangUp ? (
             <Pressable
               class="devtile-wide"
-              data-tone="danger"
+              tone="danger"
               onPress={() => {
                 pressButton(e.hangUp!);
                 markActivity();
@@ -324,22 +334,65 @@ function Controls({ entities: e, soloed }: { entities: DeviceEntities; soloed: b
  * label says so. A key that reads "Mic" and glows when the mic is WORKING
  * would be read the wrong way round in exactly the moment it matters.
  */
-function Toggles({ entities: e }: { entities: DeviceEntities }) {
+function Toggles({ entities: e, keys }: { entities: DeviceEntities; keys: ControlButton[] }) {
   const specs: { id?: string; on: string; off: string; iconOn: string; iconOff: string }[] = [
     { id: e.mic, on: 'Mic muted', off: 'Mic', iconOn: 'micOff', iconOff: 'mic' },
     { id: e.speaker, on: 'Speaker muted', off: 'Speaker', iconOn: 'mute', iconOff: 'volume' },
     { id: e.dnd, on: 'DND on', off: 'DND', iconOn: 'moon', iconOff: 'moon' },
-    { id: e.selfview, on: 'Selfview on', off: 'Selfview', iconOn: 'camera', iconOff: 'camera' },
+    { id: e.selfview, on: 'Selfview on', off: 'Selfview', iconOn: 'pip', iconOff: 'pip' },
   ];
   const present = specs.filter((s) => s.id);
-  if (present.length === 0) return null;
+  if (present.length === 0 && keys.length === 0) return null;
+
+  // The count drives the column split in CSS: `repeat()` needs a literal
+  // integer, so this is an attribute rather than a custom property.
+  const count = present.length + keys.length;
 
   return (
-    <div class="devtile-keys">
+    <div class="devtile-keys" data-count={count > 4 ? String(Math.min(count, 6)) : undefined}>
       {present.map((spec) => (
         <ToggleKey key={spec.id} spec={spec} />
       ))}
+      {/* Configured keys come after the device's own, so the row's stateful
+          half stays in one place as keys are added and removed. */}
+      {keys.map((button) => (
+        <MacroKey key={button.id} button={button} />
+      ))}
     </div>
+  );
+}
+
+/**
+ * A configured key in the toggle row — a Companion press, a webhook, a scene.
+ *
+ * Deliberately NOT drawn as a toggle. It has no state to show: the press goes
+ * out and nothing comes back, so it confirms that it went and claims nothing
+ * further. Borrowing the lit-up look of the real toggles beside it would make
+ * "camera off" indistinguishable from "I asked for camera off".
+ */
+function MacroKey({ button }: { button: ControlButton }) {
+  const confirming = pressed.value.has(button.id);
+
+  return (
+    <Pressable
+      class="devtile-key"
+      onPress={() => {
+        pressControl(button.id);
+        markActivity();
+      }}
+      ariaLabel={button.name}
+    >
+      <span class="devtile-key-face" data-confirm={confirming ? '' : undefined}>
+        <Icon
+          name={hasIcon(button.icon) ? button.icon : 'grid'}
+          size="1.625rem"
+          weight={1.6}
+          class="devtile-key-icon"
+        />
+        <Icon name="check" size="1.625rem" weight={2.2} class="devtile-key-tick" />
+      </span>
+      <span class="devtile-key-name truncate">{button.name}</span>
+    </Pressable>
   );
 }
 
@@ -444,14 +497,30 @@ function Foot({ entities: e }: { entities: DeviceEntities }) {
         </div>
       ))}
       {Number.isFinite(alertCount) ? (
-        <div class="devtile-foot-item devtile-alerts" data-raised={alertCount > 0 ? '' : undefined}>
-          <Icon name={alertCount > 0 ? 'alert' : 'check'} size="0.875rem" weight={1.8} />
-          <span>
-            {alertCount > 0
-              ? `${alertCount} ${alertCount === 1 ? 'alert' : 'alerts'}`
-              : 'No alerts'}
-          </span>
-        </div>
+        // Pressable only when there is something to read. A chip that says
+        // "No alerts" and opens an empty sheet is a worse answer than one
+        // that simply does not invite the tap.
+        alertCount > 0 && e.alerts ? (
+          <Pressable
+            class="devtile-foot-item devtile-alerts is-raised"
+            onPress={() => {
+              openDeviceAlerts.value = e.alerts!;
+              markActivity();
+            }}
+            ariaLabel={`${alertCount} device ${alertCount === 1 ? 'alert' : 'alerts'}: show detail`}
+          >
+            <Icon name="alert" size="0.875rem" weight={1.8} />
+            <span>
+              {alertCount} {alertCount === 1 ? 'alert' : 'alerts'}
+            </span>
+            <Icon name="chevronRight" size="0.75rem" weight={2} />
+          </Pressable>
+        ) : (
+          <div class="devtile-foot-item devtile-alerts">
+            <Icon name="check" size="0.875rem" weight={1.8} />
+            <span>No alerts</span>
+          </div>
+        )
       ) : null}
     </div>
   );

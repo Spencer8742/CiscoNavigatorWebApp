@@ -455,6 +455,21 @@ export interface ControlDevice {
   /** Shown as the tile's heading. */
   name: string;
   entities: DeviceEntities;
+  /**
+   * Extra keys drawn in the tile's toggle row.
+   *
+   * For the things the RoomOS integration does not expose but the device can
+   * still be made to do another way — camera on/off, notably, which has no
+   * entity and has to go through Companion. They belong in the row because
+   * that is where someone looks for them, not at the bottom of the page with
+   * the room macros.
+   *
+   * They are ordinary buttons and they look it: no state, a confirmation tick
+   * on press. A Companion press has no feedback, and a key that borrowed the
+   * lit-up look of the real toggles beside it would be claiming to know
+   * something it cannot.
+   */
+  keys: ControlButton[];
 }
 
 /**
@@ -639,7 +654,14 @@ export function allReferencedEntities(cfg: DashboardConfig): Set<string> {
       // them go on the allow-list — the ones it only reads as well, because
       // the store filters the panel's snapshot by this same set and the tile
       // would otherwise have nothing to display.
-      if (item.type === 'device') Object.values(item.entities).forEach(add);
+      if (item.type === 'device') {
+        Object.values(item.entities).forEach(add);
+        // A tile's own keys are keys: one calling a service needs the same
+        // allow-listing as one sitting in the grid below.
+        for (const key of item.keys) {
+          if (key.action.kind === 'entity') add(key.action.entity);
+        }
+      }
     }
   }
 

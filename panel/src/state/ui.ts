@@ -60,6 +60,15 @@ export const openSources = signal<string | null>(null);
  */
 export const openDeviceSource = signal<string | null>(null);
 
+/**
+ * The alerts entity whose detail sheet is open, or null.
+ *
+ * The tile's footer shows a count; this is how the count becomes readable.
+ * Holds the entity id rather than a boolean so a page with two device tiles
+ * opens the right one.
+ */
+export const openDeviceAlerts = signal<string | null>(null);
+
 export function navigate(to: Route): void {
   if (route.value === to) return;
   // Leaving Rooms always resets the drill-down, so coming back lands on the

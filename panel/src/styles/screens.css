@@ -1838,10 +1838,20 @@
   gap: var(--s-3);
 }
 
+/* Three columns once the row carries more than four keys: six keys at four
+   columns leaves two alone on a second row, and a 1325px panel has the width
+   for three across twice. `auto-fit` was tried and is worse here — it sizes
+   from a minimum rather than a count, so the row silently reflows to
+   something different on the cast display. */
 .devtile-keys {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: var(--s-2);
+}
+
+.devtile-keys[data-count='5'],
+.devtile-keys[data-count='6'] {
+  grid-template-columns: repeat(3, 1fr);
 }
 
 .devtile-key {
@@ -1862,6 +1872,38 @@
   background: var(--surface-3);
   border: 1px solid var(--border-subtle);
   color: var(--text);
+}
+
+/* A configured key confirms its press and nothing more, cross-fading a tick
+   over its icon. Same mechanism as a macro key in the grid below: both icons
+   stay in the DOM and only opacity moves, because toggling `display` would
+   relayout the row on every press (docs/ROOMOS.md §2). The face needs
+   `position: relative` for the absolutely positioned tick. */
+.devtile-key-face {
+  position: relative;
+}
+
+.devtile-key-icon,
+.devtile-key-tick {
+  transition: opacity var(--t-fast) var(--ease);
+}
+
+.devtile-key-tick {
+  position: absolute;
+  opacity: 0;
+  color: var(--ok);
+}
+
+.devtile-key-face[data-confirm] .devtile-key-icon {
+  opacity: 0;
+}
+
+.devtile-key-face[data-confirm] .devtile-key-tick {
+  opacity: 1;
+}
+
+.devtile-key-face[data-confirm] {
+  border-color: rgba(52, 211, 153, 0.4);
 }
 
 /* Lit means MUTED on the two mute switches — which is how the integration
@@ -1908,6 +1950,16 @@
   color: var(--accent);
 }
 
+/* Answer is green and Hang up is red because on a call control the cost of
+   pressing the wrong one is not symmetric. Colour is the only thing that
+   separates them at a glance — the two keys are the same size, side by side,
+   and reached for without looking. */
+.devtile-wide[data-tone='ok'] {
+  background: rgba(52, 211, 153, 0.14);
+  border-color: rgba(52, 211, 153, 0.34);
+  color: var(--ok);
+}
+
 .devtile-wide[data-tone='danger'] {
   background: rgba(248, 113, 113, 0.12);
   border-color: rgba(248, 113, 113, 0.32);
@@ -1940,9 +1992,86 @@
 .devtile-alerts {
   margin-left: auto;
 }
-.devtile-alerts[data-raised] {
+
+/* ── Device alerts sheet ──────────────────────────────────────────────────*/
+
+.devalerts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.devalerts-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+  padding: var(--s-3);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+
+.devalerts-icon {
+  flex: 0 0 auto;
+  margin-top: 0.125rem;
   color: var(--warn);
 }
+
+.devalerts-text {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.devalerts-type {
+  font-size: 0.9375rem;
+  font-weight: 560;
+}
+
+/* Wraps rather than truncating: the description is the only part that says
+   what to do about the alert, and half of one is no use. */
+.devalerts-desc {
+  margin-top: 0.125rem;
+  font-size: 0.875rem;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+
+.devalerts-level {
+  flex: 0 0 auto;
+  padding: 0.125rem var(--s-2);
+  border-radius: var(--r-full);
+  background: var(--surface-3);
+  font-size: 0.75rem;
+  font-weight: 560;
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
+}
+
+.devalerts-level[data-level='Error'],
+.devalerts-level[data-level='Critical'] {
+  background: rgba(248, 113, 113, 0.16);
+  color: var(--danger);
+}
+
+.devalerts-level[data-level='Warning'] {
+  background: rgba(251, 191, 36, 0.16);
+  color: var(--warn);
+}
+/* `.is-raised` rather than `[data-raised]`: the raised chip is a Pressable,
+   which forwards only the props it declares, so an ad-hoc data attribute
+   would be dropped. The class survives because Pressable concatenates it. */
+.devtile-alerts.is-raised {
+  color: var(--warn);
+  /* It opens a sheet, so it is a button — stripped back to look like the
+     static chips beside it rather than like a control bolted into a
+     footer strip. */
+  gap: var(--s-1);
+  padding: 0;
+  background: none;
+  border: 0;
+  font: inherit;
+}
+
+
 
 /* The tile is not alone on its page — there are keys below it for what the
    integration does not expose. The meeting list gives up the height rather

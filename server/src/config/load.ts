@@ -16,6 +16,7 @@ import type {
   CastPane,
   CastTarget,
   ControlAction,
+  ControlButton,
   ControlItem,
   ControlPage,
   DashboardConfig,
@@ -564,11 +565,27 @@ function controlItems(
         return;
       }
       seen.add(id);
+      /*
+       * Keys drawn inside the tile, parsed by the very same code as any other
+       * key — recursion rather than a second parser. A camera key is a
+       * Companion press like every other Companion press, and it would be
+       * surprising for it to accept a different spelling because of where it
+       * happens to be drawn. Anything that is not a plain button (a nested
+       * device, a source picker) is dropped: the row has space for keys.
+       */
+      const keys = controlItems(
+        spec['keys'],
+        `${id}.k`,
+        `${itemPath}.device.keys`,
+        seen,
+      ).filter((k): k is ControlButton => k.type === 'button');
+
       out.push({
         type: 'device',
         id,
         name: str(spec['name'], 'Device', `${itemPath}.device.name`),
         entities,
+        keys,
       });
       return;
     }
