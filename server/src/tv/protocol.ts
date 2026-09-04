@@ -120,7 +120,18 @@ export const URI = {
  */
 export function inputOfAppId(appId: unknown): string | null {
   if (typeof appId !== 'string') return null;
-  const match = /^com\.webos\.app\.hdmi(\d+)$/i.exec(appId.trim());
+
+  /*
+   * There is more than one shape in the wild, and matching only the first one
+   * fails in a way that is almost invisible: the input is simply never known,
+   * so the key's label stays blank AND the cycle restarts from the first
+   * input every press. It looks like "switching only works for one input"
+   * rather than like a parsing problem.
+   *
+   * Seen: com.webos.app.hdmi2, com.webos.app.externalinput.hdmi2, and
+   * suffixed variants like hdmi2_1 on sets with multiple sources per socket.
+   */
+  const match = /(?:^|\.)hdmi(\d+)(?:[._-]|$)/i.exec(appId.trim());
   return match ? `HDMI_${match[1]}` : null;
 }
 

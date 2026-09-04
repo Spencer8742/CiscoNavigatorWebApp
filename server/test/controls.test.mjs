@@ -368,6 +368,21 @@ describe('a key with more than one action', () => {
     assert.equal(companion.presses.length, 1, 'and the first to have run too');
   });
 
+  test('reads `action: on` as ON, not as the YAML boolean it is', () => {
+    /*
+     * YAML 1.1 reads bare `on` and `off` as booleans, and the failure is
+     * silent: the value matches no option, quietly takes the fallback, and a
+     * key written to turn a television ON becomes a toggle. Which half works,
+     * so nobody notices until it turns the set off at the wrong moment.
+     */
+    const items = page('combo').items;
+    const on = items.find((i) => i.id === 'combo.tvon');
+    const off = items.find((i) => i.id === 'combo.tvoff');
+
+    assert.deepEqual(on.actions, [{ kind: 'tv', tv: 'room_tv', op: 'on' }]);
+    assert.deepEqual(off.actions, [{ kind: 'tv', tv: 'room_tv', op: 'off' }]);
+  });
+
   test('stops at the first failure', async () => {
     // Carrying on would leave the room half-started while the panel reported
     // only whatever the last action did.

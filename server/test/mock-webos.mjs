@@ -38,6 +38,14 @@ export class MockWebosTv {
   clientKey = 'mock-client-key';
   /** URIs to refuse with returnValue:false. */
   refuse = new Set();
+  /** What the set is currently showing, or undefined for "not saying". */
+  foregroundAppId = undefined;
+  /**
+   * Set false for a television that accepts commands but never says what it
+   * is showing — which is the shape of set that made the input key appear to
+   * work for only one input.
+   */
+  reportsInput = true;
   /** Keys the set refuses outright, whatever manifest comes with them. */
   rejectKeys = new Set();
 
@@ -162,7 +170,8 @@ export class MockWebosTv {
     if (msg.uri === 'ssap://tv/switchInput' && this.subscribeId) {
       const id = String(msg.payload?.inputId ?? '');
       const n = /^HDMI_(\d+)$/i.exec(id)?.[1];
-      if (n) {
+      if (n && this.reportsInput) {
+        this.foregroundAppId = `com.webos.app.hdmi${n}`;
         reply({ id: msg.id, type: 'response', payload: { returnValue: true } });
         reply({
           id: this.subscribeId,
@@ -172,6 +181,20 @@ export class MockWebosTv {
         // Already recorded above, with every other request.
         return;
       }
+    }
+
+    // A real set answers this with whatever it is showing. Answering it with
+    // an empty success would let a client that mishandles "the reply does
+    // not say" look identical to one that gets it right.
+    if (msg.uri === 'ssap://com.webos.applicationManager/getForegroundAppInfo') {
+      reply({
+        id: msg.id,
+        type: 'response',
+        payload: this.foregroundAppId
+          ? { returnValue: true, appId: this.foregroundAppId }
+          : { returnValue: true },
+      });
+      return;
     }
 
     if (msg.uri === 'ssap://tv/getExternalInputList') {

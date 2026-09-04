@@ -31,5 +31,5 @@ export type { VisitResult } from '~/cast/keeper.ts';
  * simply off) is a property of one short conversation with a device.
  */
 export { WebosClient } from '~/tv/webos.ts';
-export { endpointsFor, failureOf, inputsOf } from '~/tv/protocol.ts';
+export { endpointsFor, failureOf, inputOfAppId, inputsOf } from '~/tv/protocol.ts';
 export { magicPacket, parseMac } from '~/tv/wol.ts';

@@ -223,7 +223,11 @@ export class Controls {
     if (!cfg || !tv) return 'Unknown TV';
     if (cfg.inputs.length === 0) return 'No inputs configured for this TV';
 
-    const current = tv.currentInput;
+    // What the TV says, or what we last asked for. See WebosClient.cycleAnchor:
+    // the label may only claim what the set confirmed, but a cycle just has to
+    // keep moving — and a set whose input we cannot read would otherwise make
+    // every press restart at the first one.
+    const current = tv.cycleAnchor;
     const at = current ? cfg.inputs.findIndex((i) => i.source === current) : -1;
     const next = cfg.inputs[(at + 1) % cfg.inputs.length];
     if (!next) return 'No inputs configured for this TV';

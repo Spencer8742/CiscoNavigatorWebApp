@@ -14,6 +14,15 @@ home:
     - scene.movie_night
 
 controls:
+  tvs:
+    - id: room_tv
+      name: Room TV
+      # Nothing listens here; these items exist to test PARSING.
+      host: 127.0.0.1:19899
+      inputs:
+        - { source: HDMI_2, name: Laptop }
+        - { source: HDMI_3, name: Mac Studio }
+
   keylights:
     - id: key_left
       name: Key Left
@@ -127,6 +136,16 @@ controls:
         # The first action fails (no button at 9/9/9), so the second must not
         # run — a half-started room reported as a success is the failure this
         # guards.
+        # `on` and `off` are BOOLEANS in YAML 1.1. Written bare here on
+        # purpose: quoting them would test the wrong thing.
+        - id: combo.tvon
+          name: TV On
+          tv: room_tv
+          action: on
+        - id: combo.tvoff
+          name: TV Off
+          tv: room_tv
+          action: off
         - id: combo.stops
           name: Stops Early
           actions:
