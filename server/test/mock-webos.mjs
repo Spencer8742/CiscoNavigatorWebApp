@@ -1,4 +1,6 @@
 import { WebSocketServer } from 'ws';
+import { createServer } from 'node:https';
+import { readFileSync } from 'node:fs';
 
 /**
  * A mock LG webOS television, speaking real SSAP.
@@ -18,6 +20,10 @@ import { WebSocketServer } from 'ws';
 export class MockWebosTv {
   #server;
   #port;
+  #http;
+  #tls;
+  #cert;
+  #key;
 
   /** Every command received, as { uri, payload }. */
   commands = [];
@@ -39,12 +45,30 @@ export class MockWebosTv {
     { id: 'HDMI_3', label: 'Mac Studio', connected: true },
   ];
 
-  constructor(port) {
+  /**
+   * `tls` serves wss, the way a 2020-or-later set does on 3001. A modern TV
+   * leaves 3000 closed; an older one leaves 3001 closed. Both shapes are
+   * worth being able to mock, because the client has to find whichever is
+   * actually there.
+   */
+  constructor(port, { tls = false, cert, key } = {}) {
     this.#port = port;
+    this.#tls = tls;
+    this.#cert = cert;
+    this.#key = key;
   }
 
   async start() {
-    this.#server = new WebSocketServer({ port: this.#port, host: '127.0.0.1' });
+    if (this.#tls) {
+      this.#http = createServer({
+        cert: readFileSync(this.#cert),
+        key: readFileSync(this.#key),
+      });
+      this.#server = new WebSocketServer({ server: this.#http });
+      await new Promise((resolve) => this.#http.listen(this.#port, '127.0.0.1', resolve));
+    } else {
+      this.#server = new WebSocketServer({ port: this.#port, host: '127.0.0.1' });
+    }
     this.#server.on('connection', (socket) => {
       socket.on('message', (data) => {
         let msg;
@@ -56,7 +80,9 @@ export class MockWebosTv {
         this.#handle(socket, msg);
       });
     });
-    await new Promise((resolve) => this.#server.once('listening', resolve));
+    if (!this.#tls) {
+      await new Promise((resolve) => this.#server.once('listening', resolve));
+    }
   }
 
   #handle(socket, msg) {
@@ -103,6 +129,10 @@ export class MockWebosTv {
     if (!this.#server) return;
     for (const client of this.#server.clients) client.terminate();
     await new Promise((resolve) => this.#server.close(resolve));
+    if (this.#http) {
+      await new Promise((resolve) => this.#http.close(resolve));
+      this.#http = undefined;
+    }
     this.#server = undefined;
   }
 }
