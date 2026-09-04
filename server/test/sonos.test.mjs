@@ -1,0 +1,573 @@
+import { test, before, after, describe } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { createServer } from 'node:net';
+import { WebSocket } from 'ws';
+import { fileURLToPath, URL } from 'node:url';
+import { MockSonos, defaultZones } from './mock-sonos.mjs';
+import {
+  decodeEntities,
+  parseXml,
+  textOf,
+  findAll,
+  parseZoneGroupState,
+  parseTrackMetadata,
+  seconds,
+  flag,
+} from '../dist/testkit.js';
+
+/**
+ * Phase 1 of docs/SONOS.md: the household, read-only.
+ *
+ * Two layers, for two different kinds of bug.
+ *
+ * The **direct** tests feed the XML layer the cases that fail silently against
+ * real hardware — an album called `Rock & Roll`, an entity that is already
+ * escaped, a live stream reporting `NOT_IMPLEMENTED`. None of these throw when
+ * they are handled wrongly; they produce plausible output, which is exactly
+ * why they need assertions rather than review.
+ *
+ * The **integration** tests spawn a real backend against a mock household of
+ * five speakers on five ports and read the result as the panel does, over the
+ * WebSocket. That is what proves the store talks to each speaker rather than
+ * reading one and reporting it for all of them.
+ *
+ * Home Assistant and Music Assistant are both left unconfigured throughout:
+ * Sonos must stand on its own.
+ */
+
+const TOKEN = 'panel-token';
+const SERVER = fileURLToPath(new URL('../dist/server.js', import.meta.url));
+const CONFIG = fileURLToPath(new URL('./fixtures/dashboard.test.yaml', import.meta.url));
+
+function freePort() {
+  return new Promise((resolve) => {
+    const s = createServer();
+    s.listen(0, '127.0.0.1', () => {
+      const { port } = s.address();
+      s.close(() => resolve(port));
+    });
+  });
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitFor(check, description, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  let last;
+  while (Date.now() < deadline) {
+    last = await check();
+    if (last) return last;
+    await sleep(25);
+  }
+  assert.fail(`Timed out waiting for: ${description}`);
+}
+
+/* ── The XML layer, directly ──────────────────────────────────────────────*/
+
+describe('entity decoding', () => {
+  test('decodes the five named entities', () => {
+    assert.equal(decodeEntities('Rock &amp; Roll'), 'Rock & Roll');
+    assert.equal(decodeEntities('&lt;Live&gt;'), '<Live>');
+    assert.equal(decodeEntities('&quot;x&quot; &apos;y&apos;'), '"x" \'y\'');
+  });
+
+  test('decodes numeric references, decimal and hex', () => {
+    assert.equal(decodeEntities('caf&#233;'), 'café');
+    assert.equal(decodeEntities('caf&#xe9;'), 'café');
+  });
+
+  /*
+   * The one that matters. `&amp;lt;` is an ESCAPED `&lt;`, so it decodes to
+   * the four characters `&lt;` and stops there. A decoder that loops until
+   * nothing changes turns it into `<` and corrupts any title containing a
+   * literal entity — and, far more often, mangles the second level of Sonos's
+   * doubly-escaped payloads.
+   */
+  test('decodes exactly once', () => {
+    assert.equal(decodeEntities('&amp;lt;'), '&lt;');
+    assert.equal(decodeEntities('&amp;amp;'), '&amp;');
+  });
+
+  test('leaves unknown and malformed entities alone', () => {
+    assert.equal(decodeEntities('a &nosuch; b'), 'a &nosuch; b');
+    assert.equal(decodeEntities('100% & rising'), '100% & rising');
+    // Lone surrogates are not characters; decoding one produces a string that
+    // breaks anything that later re-encodes it.
+    assert.equal(decodeEntities('&#xD800;'), '&#xD800;');
+  });
+});
+
+describe('parsing XML', () => {
+  test('reads attributes, text and nesting', () => {
+    const root = parseXml('<a x="1"><b y="2">hi</b><c/></a>');
+    assert.equal(root.name, 'a');
+    assert.equal(root.attrs.x, '1');
+    assert.equal(textOf(root, 'b'), 'hi');
+    assert.equal(findAll(root, 'c').length, 1);
+  });
+
+  test('decodes entities in text and in attributes', () => {
+    const root = parseXml('<z n="Ben &amp; Jerry&apos;s"><t>Rock &amp; Roll &lt;Live&gt;</t></z>');
+    assert.equal(root.attrs.n, "Ben & Jerry's");
+    assert.equal(textOf(root, 't'), 'Rock & Roll <Live>');
+  });
+
+  test('matches on the local name, ignoring the namespace prefix', () => {
+    // Sonos mixes prefixed and bare forms for the same field across services.
+    const root = parseXml('<DIDL><dc:title>Teardrop</dc:title></DIDL>');
+    assert.equal(textOf(root, 'title'), 'Teardrop');
+  });
+
+  test('survives an attribute containing an angle bracket', () => {
+    // `indexOf('>')` would truncate this tag and lose the child entirely.
+    const root = parseXml('<a note="2 &gt; 1"><b>ok</b></a>');
+    assert.equal(root.attrs.note, '2 > 1');
+    assert.equal(textOf(root, 'b'), 'ok');
+  });
+
+  test('ignores declarations and comments, and keeps CDATA literal', () => {
+    const root = parseXml('<?xml version="1.0"?><!-- note --><a><![CDATA[a & b]]></a>');
+    assert.equal(root.name, 'a');
+    // CDATA is literal by definition — decoding it would be wrong.
+    assert.equal(root.text, 'a & b');
+  });
+
+  test('a stray closing tag does not tear down the document', () => {
+    const root = parseXml('<a><b>one</b></zzz><c>two</c></a>');
+    assert.equal(textOf(root, 'c'), 'two');
+  });
+});
+
+describe('reading the topology', () => {
+  test('hides bonded members that are not speakers', () => {
+    const { zones } = parseZoneGroupState(TOPOLOGY);
+    const names = [...zones.values()].map((z) => z.name).sort();
+
+    assert.deepEqual(names, ['Bedroom', 'Kitchen', 'Living Room', 'Study & Den']);
+    // Each of these is a real ZoneGroupMember, and none is a speaker anyone
+    // points at. Showing them puts "Sub" in the player picker.
+    assert.ok(!zones.has('RINCON_BEDROOM_R'), 'the right channel of a pair is not a speaker');
+    assert.ok(!zones.has('RINCON_LIVING_SUB'), 'a bonded sub is not a speaker');
+    assert.ok(!zones.has('RINCON_LIVING_SAT'), 'a satellite is not a speaker');
+  });
+
+  test('decodes a zone name through both levels of escaping', () => {
+    const { zones } = parseZoneGroupState(TOPOLOGY);
+    assert.equal(zones.get('RINCON_STUDY').name, 'Study & Den');
+  });
+
+  test('groups members under their coordinator, coordinator first', () => {
+    const { zones } = parseZoneGroupState(TOPOLOGY);
+    const kitchen = zones.get('RINCON_KITCHEN');
+
+    assert.equal(kitchen.coordinator, 'RINCON_LIVING');
+    assert.deepEqual(kitchen.group, ['RINCON_LIVING', 'RINCON_KITCHEN']);
+    assert.equal(zones.get('RINCON_LIVING').coordinator, 'RINCON_LIVING');
+  });
+
+  test('marks a stereo pair, and keeps every host for failover', () => {
+    const { zones, hosts } = parseZoneGroupState(TOPOLOGY);
+    assert.equal(zones.get('RINCON_BEDROOM').kind, 'stereo_pair');
+    assert.equal(zones.get('RINCON_LIVING').kind, 'player');
+
+    // The port travels with the address: taking the speaker's own word for
+    // where it listens is what lets the mock household use ordinary ports.
+    assert.ok(hosts.includes('192.168.1.51:1400'));
+    assert.ok(hosts.length >= 4, 'every member address is kept, visible or not');
+  });
+});
+
+describe('reading track metadata', () => {
+  test('decodes a title through DIDL escaping', () => {
+    const track = parseTrackMetadata(
+      '<DIDL-Lite><item><dc:title>Rock &amp; Roll &lt;Live&gt;</dc:title>' +
+        '<dc:creator>Led Zeppelin</dc:creator></item></DIDL-Lite>',
+    );
+    assert.equal(track.title, 'Rock & Roll <Live>');
+    assert.equal(track.artist, 'Led Zeppelin');
+  });
+
+  test('is null for an empty or unimplemented payload', () => {
+    assert.equal(parseTrackMetadata(''), null);
+    assert.equal(parseTrackMetadata('NOT_IMPLEMENTED'), null);
+    assert.equal(parseTrackMetadata(null), null);
+  });
+});
+
+describe('Sonos value conventions', () => {
+  test('reads H:MM:SS', () => {
+    assert.equal(seconds('0:04:12'), 252);
+    assert.equal(seconds('1:00:00'), 3600);
+  });
+
+  /*
+   * A live stream reports NOT_IMPLEMENTED for both position and duration.
+   * Parsing that to 0 draws a progress bar claiming a radio station is at the
+   * start of a zero-length track.
+   */
+  test('NOT_IMPLEMENTED is null, not zero', () => {
+    assert.equal(seconds('NOT_IMPLEMENTED'), null);
+    assert.equal(seconds(''), null);
+    assert.equal(seconds('garbage'), null);
+  });
+
+  test('booleans are 1 and 0', () => {
+    assert.equal(flag('1'), true);
+    assert.equal(flag('0'), false);
+    // Notably NOT 'true' — nothing in Sonos ever sends that.
+    assert.equal(flag('true'), false);
+  });
+});
+
+/* ── The panel's view ─────────────────────────────────────────────────────*/
+
+/** A panel: connects and records what it is told. */
+class TestPanel {
+  #seq = 900;
+
+  constructor(port) {
+    this.port = port;
+    this.players = [];
+    this.queues = [];
+    this.health = null;
+  }
+
+  async connect() {
+    this.ws = new WebSocket(`ws://127.0.0.1:${this.port}/ws?t=${TOKEN}`);
+
+    this.ws.on('message', (data) => {
+      const msg = JSON.parse(data.toString());
+      if (msg.t === 'hello') {
+        this.health = msg.health;
+        this.players = msg.players;
+        this.queues = msg.queues;
+      } else if (msg.t === 'players') {
+        this.players = msg.players;
+        this.queues = msg.queues;
+      } else if (msg.t === 'health') {
+        this.health = msg.health;
+      }
+    });
+
+    await new Promise((resolve, reject) => {
+      this.ws.once('open', resolve);
+      this.ws.once('error', reject);
+    });
+    await waitFor(() => this.health !== null, 'hello message');
+  }
+
+  player(id) {
+    return this.players.find((p) => p.id === id);
+  }
+
+  queue(id) {
+    return this.queues.find((q) => q.id === id);
+  }
+
+  close() {
+    this.ws?.close();
+  }
+}
+
+/** A backend with its own mock household. */
+function isolated({ host, zones } = {}) {
+  const ctx = {};
+
+  before(async () => {
+    ctx.port = await freePort();
+    ctx.sonos = new MockSonos(zones ?? defaultZones());
+    await ctx.sonos.start();
+
+    // Point SONOS_HOST at ONE speaker. Everything else — including the other
+    // four addresses — has to come out of the topology it answers with.
+    const seed = host === undefined ? ctx.sonos.address('RINCON_KITCHEN') : host;
+
+    ctx.backend = spawn(process.execPath, [SERVER], {
+      env: {
+        ...process.env,
+        PORT: String(ctx.port),
+        HOST: '127.0.0.1',
+        PANEL_TOKEN: TOKEN,
+        CONFIG_PATH: CONFIG,
+        HA_URL: '',
+        HA_TOKEN: '',
+        IMMICH_URL: '',
+        IMMICH_API_KEY: '',
+        // Music Assistant deliberately absent: Sonos must stand alone.
+        MASS_URL: '',
+        SONOS_HOST: seed,
+        LOG_LEVEL: 'warn',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    ctx.backend.stdout.on('data', (d) => process.stderr.write(`[backend] ${d}`));
+    ctx.backend.stderr.on('data', (d) => process.stderr.write(`[backend] ${d}`));
+
+    await waitFor(async () => {
+      try {
+        return (await fetch(`http://127.0.0.1:${ctx.port}/api/health`)).ok;
+      } catch {
+        return false;
+      }
+    }, 'backend to listen');
+  });
+
+  after(async () => {
+    if (ctx.backend && ctx.backend.exitCode === null) {
+      ctx.backend.kill('SIGTERM');
+      await new Promise((resolve) => {
+        ctx.backend.once('exit', resolve);
+        setTimeout(() => {
+          ctx.backend.kill('SIGKILL');
+          resolve();
+        }, 3000);
+      });
+    }
+    await ctx.sonos?.stop();
+  });
+
+  return ctx;
+}
+
+describe('speakers from Sonos', () => {
+  const ctx = isolated();
+
+  test('the household reaches the panel in the first frame', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players to arrive');
+
+    assert.equal(panel.health.sonos, 'connected');
+    assert.equal(panel.health.sonosError, null);
+
+    const names = panel.players.map((p) => p.name);
+    assert.deepEqual(names, ['Bedroom', 'Kitchen', 'Living Room', 'Study & Den']);
+
+    panel.close();
+  });
+
+  /*
+   * The reason the mock runs one server per speaker. A store that reads one
+   * address and reports it for the whole household passes every other test in
+   * this file and gives four speakers the same volume.
+   */
+  test('each speaker is read at its own address', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.player('RINCON_LIVING')?.volume !== null, 'volumes');
+
+    assert.equal(panel.player('RINCON_LIVING').volume, 35);
+    assert.equal(panel.player('RINCON_KITCHEN').volume, 18);
+    assert.equal(panel.player('RINCON_STUDY').volume, 55);
+    assert.equal(panel.player('RINCON_BEDROOM').volume, 8);
+
+    assert.equal(panel.player('RINCON_STUDY').muted, true);
+    assert.equal(panel.player('RINCON_LIVING').muted, false);
+
+    panel.close();
+  });
+
+  /*
+   * A grouped follower's own AVTransport says STOPPED while it is audibly
+   * playing. Only its coordinator knows. Asking each speaker about itself
+   * draws a paused Kitchen in the middle of a party.
+   */
+  test('a follower reports what its coordinator is playing', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.player('RINCON_KITCHEN')?.media !== null, 'media');
+
+    const kitchen = panel.player('RINCON_KITCHEN');
+    assert.equal(kitchen.state, 'playing', 'the mock has the Kitchen reporting STOPPED');
+    assert.equal(kitchen.syncedTo, 'RINCON_LIVING');
+    assert.deepEqual(kitchen.members, ['RINCON_LIVING', 'RINCON_KITCHEN']);
+    assert.equal(kitchen.media.title, 'Rock & Roll <Live>');
+
+    const living = panel.player('RINCON_LIVING');
+    assert.equal(living.syncedTo, null, 'the coordinator follows nobody');
+
+    // A group of one is not a group: a lone speaker listing itself as its own
+    // member reads oddly in "Playing on".
+    assert.deepEqual(panel.player('RINCON_BEDROOM').members, []);
+
+    panel.close();
+  });
+
+  test('now playing survives both levels of escaping', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.player('RINCON_LIVING')?.media !== null, 'media');
+
+    const media = panel.player('RINCON_LIVING').media;
+    assert.equal(media.title, 'Rock & Roll <Live>');
+    assert.equal(media.artist, 'Led Zeppelin');
+    assert.equal(media.album, 'Led Zeppelin IV');
+    assert.equal(media.duration, 252);
+    assert.equal(media.elapsed, 67);
+    assert.ok(media.elapsedAt > 0, 'the moment it was measured, so the panel can extrapolate');
+
+    // Artwork is a key on our own origin, never a Sonos address — the panel is
+    // never told where another device on the LAN lives.
+    assert.match(media.art, /^\/img\/art\?k=[0-9a-f]{16}$/);
+
+    panel.close();
+  });
+
+  test('a live stream shows the song, not the station, and has no progress bar', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.player('RINCON_STUDY')?.media !== null, 'media');
+
+    const media = panel.player('RINCON_STUDY').media;
+    // dc:title is the station and r:streamContent is the song. A panel that
+    // reads only dc:title shows the same text for an hour and looks frozen.
+    assert.equal(media.title, 'Sleaford Mods - Nudge It');
+    assert.equal(media.artist, 'BBC Radio 6 Music');
+    assert.equal(media.duration, null, 'NOT_IMPLEMENTED is not zero');
+    assert.equal(media.elapsed, null);
+
+    panel.close();
+  });
+
+  test('one queue per group, owned by the coordinator', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.queues.length > 0, 'queues');
+
+    const ids = panel.queues.map((q) => q.id).sort();
+    // The Kitchen is a follower: it has no queue of its own while grouped.
+    assert.deepEqual(ids, ['RINCON_BEDROOM', 'RINCON_LIVING', 'RINCON_STUDY']);
+
+    const living = panel.queue('RINCON_LIVING');
+    assert.equal(living.count, 12);
+    // Sonos counts tracks from 1; the panel counts from 0.
+    assert.equal(living.index, 2, 'the mock is on track 3');
+
+    // SHUFFLE means shuffle AND repeat-all. SHUFFLE_NOREPEAT is the one that
+    // means what its name suggests. Reading them the obvious way round makes
+    // the repeat button lie.
+    assert.equal(living.shuffle, true);
+    assert.equal(living.repeat, 'all');
+
+    const bedroom = panel.queue('RINCON_BEDROOM');
+    assert.equal(bedroom.shuffle, true);
+    assert.equal(bedroom.repeat, 'off');
+
+    // Every player names the queue driving it — for a follower, its group's.
+    assert.equal(panel.player('RINCON_KITCHEN').queueId, 'RINCON_LIVING');
+
+    panel.close();
+  });
+
+  test('a volume changed elsewhere reaches the panel', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.player('RINCON_BEDROOM')?.volume === 8, 'the starting volume');
+
+    // As if somebody turned it up in the Sonos app.
+    ctx.sonos.set('RINCON_BEDROOM', { volume: 42 });
+
+    // Phase 1 polls for this; phase 2 replaces the poll with GENA events and
+    // this assertion should then pass in milliseconds rather than seconds.
+    await waitFor(
+      () => panel.player('RINCON_BEDROOM')?.volume === 42,
+      'the new volume to be noticed',
+      15_000,
+    );
+
+    panel.close();
+  });
+
+  /*
+   * Phase 1 is read-only, and says so in the data rather than only in a
+   * document. `canGroupWith` empty means the panel draws no "Playing on" bar,
+   * so there is no button that sends a command nothing yet handles.
+   */
+  test('advertises no capability it cannot yet honour', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    for (const player of panel.players) {
+      assert.deepEqual(player.canGroupWith, [], 'grouping arrives in phase 3');
+      assert.equal(player.powered, null, 'Sonos speakers have no power concept');
+    }
+
+    panel.close();
+  });
+});
+
+describe('when Sonos cannot be reached', () => {
+  // A port nothing is listening on: the shape of a wrong SONOS_HOST.
+  const ctx = isolated({ host: '127.0.0.1:9' });
+
+  test('says so specifically instead of showing an empty screen', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+
+    await waitFor(() => panel.health.sonosError !== null, 'a reason to be reported', 10_000);
+
+    assert.equal(panel.health.sonos, 'disconnected');
+    assert.equal(panel.players.length, 0);
+    // The Settings screen shows this verbatim. "Disconnected" alone gives
+    // nobody standing at the panel anything to act on.
+    assert.match(panel.health.sonosError, /UPnP|could not be reached|refused/i);
+
+    panel.close();
+  });
+});
+
+describe('when Sonos is not configured', () => {
+  const ctx = isolated({ host: '' });
+
+  test('is disabled rather than broken', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+
+    assert.equal(panel.health.sonos, 'disabled');
+    assert.equal(panel.health.sonosError, null);
+    assert.equal(panel.players.length, 0);
+
+    panel.close();
+  });
+});
+
+/**
+ * A `ZoneGroupState` payload as a speaker sends it, escaped once.
+ *
+ * Written out rather than generated so the escaping is visible: this is the
+ * document the parser has to get right, and a fixture built by the same code
+ * that reads it proves nothing.
+ */
+const TOPOLOGY = `<ZoneGroupState><ZoneGroups>
+<ZoneGroup Coordinator="RINCON_LIVING" ID="RINCON_LIVING:1">
+  <ZoneGroupMember UUID="RINCON_LIVING" ZoneName="Living Room"
+    Location="http://192.168.1.51:1400/xml/device_description.xml"
+    Invisible="0" ChannelMapSet="">
+    <Satellite UUID="RINCON_LIVING_SAT" ZoneName="Living Room (LS)"
+      Location="http://192.168.1.54:1400/xml/device_description.xml" Invisible="1"/>
+  </ZoneGroupMember>
+  <ZoneGroupMember UUID="RINCON_KITCHEN" ZoneName="Kitchen"
+    Location="http://192.168.1.52:1400/xml/device_description.xml"
+    Invisible="0" ChannelMapSet=""/>
+  <ZoneGroupMember UUID="RINCON_LIVING_SUB" ZoneName="Living Room (Sub)"
+    Location="http://192.168.1.55:1400/xml/device_description.xml"
+    Invisible="1" ChannelMapSet=""/>
+</ZoneGroup>
+<ZoneGroup Coordinator="RINCON_STUDY" ID="RINCON_STUDY:1">
+  <ZoneGroupMember UUID="RINCON_STUDY" ZoneName="Study &amp; Den"
+    Location="http://192.168.1.53:1400/xml/device_description.xml"
+    Invisible="0" ChannelMapSet=""/>
+</ZoneGroup>
+<ZoneGroup Coordinator="RINCON_BEDROOM" ID="RINCON_BEDROOM:1">
+  <ZoneGroupMember UUID="RINCON_BEDROOM" ZoneName="Bedroom"
+    Location="http://192.168.1.56:1400/xml/device_description.xml"
+    Invisible="0" ChannelMapSet="RINCON_BEDROOM:LF,LF;RINCON_BEDROOM_R:RF,RF"/>
+  <ZoneGroupMember UUID="RINCON_BEDROOM_R" ZoneName="Bedroom (R)"
+    Location="http://192.168.1.57:1400/xml/device_description.xml"
+    Invisible="1" ChannelMapSet=""/>
+</ZoneGroup>
+</ZoneGroups><VanishedDevices/></ZoneGroupState>`;
