@@ -597,7 +597,7 @@ describe('a device tile\'s own keys', () => {
 
   test('is a real button the panel can press', async () => {
     companion.presses.length = 0;
-    panel.press('desk.cam_on');
+    panel.press('desk.lights');
 
     const press = await waitFor(() => companion.presses[0], 'a Companion press');
     assert.deepEqual(press, { page: 1, row: 0, column: 1 });
@@ -606,12 +606,12 @@ describe('a device tile\'s own keys', () => {
   test('is on the tile, not on the page grid', () => {
     const tile = page('desk').items.find((i) => i.type === 'device');
     assert.equal(tile.keys.length, 2);
-    assert.equal(tile.keys[0].name, 'Camera On');
-    assert.equal(tile.keys[1].name, 'Camera Off');
+    assert.equal(tile.keys[0].name, 'Lights');
+    assert.equal(tile.keys[1].name, 'Blinds');
 
     // Not ALSO a top-level page item — it belongs in exactly one place.
     assert.equal(
-      page('desk').items.find((i) => i.id === 'desk.cam_on'),
+      page('desk').items.find((i) => i.id === 'desk.lights'),
       undefined,
     );
   });

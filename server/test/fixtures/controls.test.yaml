@@ -103,10 +103,12 @@ controls:
             # Drops a slot the derivation would otherwise invent.
             selfview: null
             # Keys drawn in the tile's own toggle row — a Companion press
-            # for something the integration does not expose.
+            # for something the integration does not expose. Deliberately NOT
+            # a camera key: the integration exposes a camera mute now, so an
+            # example using one would document the wrong thing.
             keys:
-              - { id: desk.cam_on, name: Camera On, companion: 1/0/1 }
-              - { id: desk.cam_off, name: Camera Off, companion: 2/1/3 }
+              - { id: desk.lights, name: Lights, companion: 1/0/1 }
+              - { id: desk.blinds, name: Blinds, companion: 2/1/3 }
         # A device block naming nothing at all is not a device.
         - id: dp.empty
           device:
