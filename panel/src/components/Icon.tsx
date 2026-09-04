@@ -105,6 +105,25 @@ const ICONS: Record<string, PathSpec> = {
    * two mean very different things — one is what you see, the other is what
    * the far end sees.
    */
+  /* Four corners pushing outward — the standard "go full screen" mark. Its
+     pair, `collapse`, is the same corners pulled back in, so the two read as
+     one control in two states rather than as two different buttons. */
+  expand: {
+    d: [
+      'M9 3.5H4.5A1 1 0 0 0 3.5 4.5V9',
+      'M15 3.5h4.5a1 1 0 0 1 1 1V9',
+      'M15 20.5h4.5a1 1 0 0 0 1-1V15',
+      'M9 20.5H4.5a1 1 0 0 1-1-1V15',
+    ],
+  },
+  collapse: {
+    d: [
+      'M3.5 9H8a1 1 0 0 0 1-1V3.5',
+      'M20.5 9H16a1 1 0 0 1-1-1V3.5',
+      'M20.5 15H16a1 1 0 0 0-1 1v4.5',
+      'M3.5 15H8a1 1 0 0 1 1 1v4.5',
+    ],
+  },
   pip: {
     d: [
       'M3.5 6.5h17a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-17a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z',

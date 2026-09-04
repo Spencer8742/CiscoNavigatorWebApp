@@ -5,8 +5,15 @@ import { entity } from '~/state/entities.ts';
 import { toggle, pressButton, setEntityNumber } from '~/state/actions.ts';
 import { pressed } from '~/state/controls.ts';
 import { pressControl } from '~/net/socket.ts';
-import { health, markActivity, openDeviceAlerts, openDeviceSource } from '~/state/ui.ts';
+import {
+  health,
+  kiosk,
+  markActivity,
+  openDeviceAlerts,
+  openDeviceSource,
+} from '~/state/ui.ts';
 import { timeOpts } from '~/config/index.ts';
+import { now } from '~/state/clock.ts';
 import { formatTime, formatMeridiem, type TimeOpts } from '~/lib/format.ts';
 import type { ControlButton, ControlDevice, DeviceEntities } from '@shared/config.ts';
 import type { EntityState } from '@shared/protocol.ts';
@@ -144,6 +151,22 @@ function Head({ item }: { item: ControlDevice }) {
           </div>
         ) : null}
 
+        {/* Full-screen lock, beside power because both are about the panel
+            as a whole rather than about the call. Always rendered — it is
+            the ONLY way back out once it is on, so it must never depend on
+            anything the device happens to be reporting. */}
+        <Pressable
+          class="devtile-lock"
+          onPress={() => {
+            kiosk.value = !kiosk.value;
+            markActivity();
+          }}
+          ariaLabel={kiosk.value ? 'Leave full screen' : 'Full screen, locked to this page'}
+          ariaPressed={kiosk.value}
+        >
+          <Icon name={kiosk.value ? 'collapse' : 'expand'} size="1.375rem" weight={1.9} />
+        </Pressable>
+
         {powerTarget ? (
           <Pressable
             class="devtile-power"
@@ -166,16 +189,59 @@ function Head({ item }: { item: ControlDevice }) {
 interface Meeting {
   title: string;
   start_time?: string;
+  /** Published by the integration alongside `start_time`; may be absent
+      depending on which calendar service the device is paired with. */
+  end_time?: string;
   organizer?: string;
+  /**
+   * NOT a statement about time. The integration sets this from whether the
+   * booking carries a dialable callback number — a plain calendar block with
+   * no video meeting is listed but not joinable. A meeting that finished
+   * hours ago stays `joinable: true` for as long as the device lists it.
+   */
   joinable?: boolean;
 }
 
 function Meetings({ entities: e }: { entities: DeviceEntities }) {
   const state = useState(e.meetings);
   const raw = state?.a['meetings'];
-  const meetings: Meeting[] = Array.isArray(raw)
+  const all: Meeting[] = Array.isArray(raw)
     ? (raw.filter((m) => m && typeof m === 'object') as Meeting[])
     : [];
+
+  /*
+   * Meetings that have already finished are dropped.
+   *
+   * The device lists a wide window — the integration asks for 100 days and
+   * takes what the calendar has — and does not prune what has passed. So by
+   * mid-morning the list still opens with the 9am booking, which is both
+   * clutter and, worse, where the Join badge used to land: `joinable` means
+   * "has a dial-in number", not "is happening", so a finished meeting held
+   * the badge for the rest of the day.
+   *
+   * Ticks with the shared minute clock, so a meeting drops off the list as it
+   * ends rather than whenever Home Assistant next says something.
+   */
+  const at = now.value;
+  const meetings = all.filter((m) => !isOver(m, at));
+
+  /*
+   * Which row gets the Join badge — and whether one is honest at all.
+   *
+   * `join_next_meeting` is a single button with no argument. The integration
+   * points it at the earliest booking in the DEVICE's list that carries a
+   * number, with no regard for the time, so the panel cannot choose which
+   * meeting it starts. All the panel can do is put the badge on the row that
+   * button will actually dial.
+   *
+   * When that booking has already finished, the button is pointed at
+   * something nobody wants to join. Moving the badge to the meeting that IS
+   * happening would not change where it dials — it would just make the panel
+   * lie more convincingly. So no badge, and a line saying why.
+   */
+  const deviceTarget = all.find((m) => m.joinable);
+  const stale = deviceTarget !== undefined && isOver(deviceTarget, at);
+  const joinRow = deviceTarget && !stale ? meetings.indexOf(deviceTarget) : -1;
 
   const t = timeOpts.value;
 
@@ -200,12 +266,23 @@ function Meetings({ entities: e }: { entities: DeviceEntities }) {
 
       {meetings.length === 0 ? (
         <div class="devtile-empty">
-          {state
-            ? 'Nothing booked. The device reports its own calendar, so this needs it paired with a calendar service.'
-            : 'Waiting for Home Assistant.'}
+          {!state
+            ? 'Waiting for Home Assistant.'
+            : all.length > 0
+              ? 'Nothing left today. Every booking the device knows about has finished.'
+              : 'Nothing booked. The device reports its own calendar, so this needs it paired with a calendar service.'}
         </div>
       ) : (
         <div class="devtile-list scroll">
+          {stale ? (
+            <div class="devtile-stale">
+              <Icon name="alert" size="0.875rem" weight={1.9} />
+              <span>
+                Join is pointed at a meeting that has already finished — refresh to move it
+                on.
+              </span>
+            </div>
+          ) : null}
           {meetings.map((m, i) => (
             <div class="devtile-meeting" key={`${m.start_time ?? ''}-${i}`}>
               <div class="devtile-time tnum">{clockOf(m.start_time, t)}</div>
@@ -221,7 +298,7 @@ function Meetings({ entities: e }: { entities: DeviceEntities }) {
                 on the 12:00 row would join the 9:00 one — a button that lies
                 about which meeting it starts is worse than no button.
               */}
-              {e.join && m.joinable && i === firstJoinable(meetings) ? (
+              {e.join && i === joinRow ? (
                 <Pressable
                   class="devtile-join"
                   onPress={() => {
@@ -242,8 +319,17 @@ function Meetings({ entities: e }: { entities: DeviceEntities }) {
   );
 }
 
-function firstJoinable(meetings: Meeting[]): number {
-  return meetings.findIndex((m) => m.joinable);
+/**
+ * Has this booking already finished?
+ *
+ * Unknown when the calendar service did not give an end time, and unknown
+ * means NOT over: hiding a meeting we cannot reason about would be worse than
+ * showing one that has passed.
+ */
+function isOver(m: Meeting, at: Date): boolean {
+  if (!m.end_time) return false;
+  const end = Date.parse(m.end_time);
+  return Number.isFinite(end) && end <= at.getTime();
 }
 
 /* ── Controls ─────────────────────────────────────────────────────────────*/
