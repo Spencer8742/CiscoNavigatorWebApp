@@ -753,6 +753,7 @@ const DEVICE_SLOTS: Record<keyof DeviceEntities, string> = {
   mic: 'switch.%_microphone_mute',
   speaker: 'switch.%_speaker_mute',
   dnd: 'switch.%_do_not_disturb',
+  camera: 'switch.%_camera_mute',
   selfview: 'switch.%_selfview',
   volume: 'number.%_volume',
   shareSource: 'select.%_share_source',

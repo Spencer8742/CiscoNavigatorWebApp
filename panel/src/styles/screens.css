@@ -2047,6 +2047,31 @@
   border-color: rgba(52, 211, 153, 0.4);
 }
 
+/* Press feedback.
+   The global `.pressable` rule is a 3.5% scale, which is enough on a small
+   control and invisible on a 4.25rem key — you tap Mic and nothing appears
+   to happen until Home Assistant answers, which on a busy network is long
+   enough to tap it again. So the face lights on contact, from the pointer
+   event rather than from a state change, and says "that press landed"
+   without claiming anything about what the device did with it.
+
+   Background and border only: both are compositor-cheap, and the scale is
+   left to the global rule so every control still squashes by the same
+   amount. */
+.devtile-key[data-pressed] .devtile-key-face,
+.devtile-lock[data-pressed],
+.devtile-power[data-pressed] {
+  background: var(--surface-4);
+  border-color: rgba(255, 255, 255, 0.28);
+}
+
+/* On a lit key the same press has to read as a press rather than as the key
+   going out, so it brightens instead of picking up the neutral fill. */
+.devtile-key[data-pressed] .devtile-key-face[data-on] {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+}
+
 /* Lit means MUTED on the two mute switches — which is how the integration
    reports them, and what the label underneath says. */
 .devtile-key-face[data-on] {

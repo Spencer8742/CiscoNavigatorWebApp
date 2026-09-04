@@ -559,6 +559,10 @@ function Toggles({ entities: e, keys }: { entities: DeviceEntities; keys: Contro
   const specs: { id?: string; on: string; off: string; iconOn: string; iconOff: string }[] = [
     { id: e.mic, on: 'Mic muted', off: 'Mic', iconOn: 'micOff', iconOff: 'mic' },
     { id: e.speaker, on: 'Speaker muted', off: 'Speaker', iconOn: 'mute', iconOff: 'volume' },
+    // The camera, not the selfview: one is what the far end sees, the other is
+    // the preview. Sits next to the mic because those two are the pair people
+    // reach for in a call.
+    { id: e.camera, on: 'Camera off', off: 'Camera', iconOn: 'cameraOff', iconOff: 'camera' },
     { id: e.dnd, on: 'DND on', off: 'DND', iconOn: 'moon', iconOff: 'moon' },
     { id: e.selfview, on: 'Selfview on', off: 'Selfview', iconOn: 'pip', iconOff: 'pip' },
   ];
