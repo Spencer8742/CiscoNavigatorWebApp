@@ -1,6 +1,7 @@
 import { logger } from '~/lib/log.ts';
 import { CompanionClient } from '~/controls/companion.ts';
 import { KeyLight } from '~/controls/keylight.ts';
+import { WebosClient } from '~/tv/webos.ts';
 import type { ControlAction, ControlItem, DashboardConfig, KeyLightOp } from '@shared/config.ts';
 import type { EntityState, KeyLightState } from '@shared/protocol.ts';
 
@@ -47,6 +48,14 @@ export interface ControlsDeps {
   onLights: (lights: KeyLightState[]) => void;
   /** Whether any panel is connected. Polling is pointless when none is. */
   hasPanels: () => boolean;
+  /**
+   * Where webOS pairing keys are kept.
+   *
+   * On disk rather than in memory because pairing is a physical act: someone
+   * has to accept a prompt on the television with the remote. A key lost on
+   * restart means that prompt appears again, on a screen in a meeting room.
+   */
+  tvKeyFile: string;
 }
 
 /** A webhook is unauthenticated and idempotent-ish; still, do not hang on it. */
@@ -57,6 +66,7 @@ export class Controls {
   readonly #companion: CompanionClient;
   /** Live key lights, by config id. Rebuilt on every config change. */
   #lights = new Map<string, KeyLight>();
+  #tvs = new Map<string, WebosClient>();
   #poll: ReturnType<typeof setInterval> | undefined;
   /** The interval currently armed, so a config edit only re-arms on a change. */
   #pollSeconds = 0;
@@ -99,6 +109,37 @@ export class Controls {
 
     this.#lights = next;
 
+    /*
+     * Televisions are rebuilt only when their address changes.
+     *
+     * A WebosClient holds the pairing key it loaded and, usually, an open
+     * socket. Replacing one on an unrelated config edit would drop that
+     * socket and re-read the key file for no reason — and on a set that has
+     * never been paired, reconnecting is what puts a prompt back on screen.
+     */
+    const nextTvs = new Map<string, WebosClient>();
+    for (const tv of cfg.tvs) {
+      const existing = this.#tvs.get(tv.id);
+      if (existing && existing.host === tv.host) {
+        nextTvs.set(tv.id, existing);
+        continue;
+      }
+      void existing?.stop();
+      nextTvs.set(
+        tv.id,
+        new WebosClient({
+          host: tv.host,
+          ...(tv.mac ? { mac: tv.mac } : {}),
+          ...(tv.broadcast ? { broadcast: tv.broadcast } : {}),
+          keyFile: this.#deps.tvKeyFile,
+        }),
+      );
+    }
+    for (const [id, client] of this.#tvs) {
+      if (!nextTvs.has(id)) void client.stop();
+    }
+    this.#tvs = nextTvs;
+
     this.#arm(cfg.pollSeconds);
     // Only a change to the LIST — a light added, removed or renamed — is
     // worth a push from here. Each light's own state is pushed by the poll,
@@ -132,8 +173,82 @@ export class Controls {
       log.warn(`Refused control "${buttonId}": not in dashboard.yaml`);
       return 'Unknown button';
     }
+    // A TV power key is a button as far as the panel is concerned; it just
+    // goes somewhere else.
+    if (item.type === 'tv') return this.#tvPower(item.tv, item.action);
     if (item.type !== 'button') return 'Not a button';
     return this.#run(item.action, item.name);
+  }
+
+  /* ── Televisions ───────────────────────────────────────────────────────*/
+
+  /**
+   * Power a TV in `controls.tvs`.
+   *
+   * `toggle` asks whether the set answers and does the opposite. That costs a
+   * connection attempt before acting, which is slower than firing blind — but
+   * webOS has no toggle of its own, and guessing wrong here means turning off
+   * a television somebody is watching.
+   */
+  async #tvPower(tvId: string, action: 'toggle' | 'on' | 'off'): Promise<string | null> {
+    const tv = this.#tvs.get(tvId);
+    if (!tv) {
+      log.warn(`Refused TV "${tvId}": not in controls.tvs`);
+      return 'Unknown TV';
+    }
+
+    let want = action;
+    if (action === 'toggle') want = (await tv.isOn()) ? 'off' : 'on';
+
+    log.debug(`TV ${tvId}: ${want}`);
+    return want === 'on' ? tv.turnOn() : tv.turnOff();
+  }
+
+  /**
+   * The inputs to offer for a `tv:` picker.
+   *
+   * A configured list wins outright and is not merged with the TV's: it is an
+   * assertion about what is plugged in, so it still answers while the set is
+   * off — which is exactly when the TV cannot be asked and when somebody is
+   * most likely to be choosing where to look.
+   */
+  async tvInputs(itemId: string): Promise<{ id: string; label: string }[]> {
+    const item = this.#find(itemId);
+    if (!item || item.type !== 'tvInput') return [];
+
+    const cfg = this.#deps.getConfig().controls.tvs.find((t) => t.id === item.tv);
+    if (cfg && cfg.inputs.length > 0) {
+      return cfg.inputs.map((i) => ({ id: i.source, label: i.name ?? i.source }));
+    }
+
+    const tv = this.#tvs.get(item.tv);
+    if (!tv) return [];
+    return (await tv.listInputs()).map((i) => ({ id: i.id, label: i.label }));
+  }
+
+  /**
+   * Switch a TV to an input.
+   *
+   * The id is checked against what the config offers, or against what the TV
+   * reports when nothing is configured. Same rule as the `sources:` picker:
+   * the panel names a CHOICE, never a raw value to push at a device.
+   */
+  async tvInput(itemId: string, inputId: string): Promise<string | null> {
+    const item = this.#find(itemId);
+    if (!item || item.type !== 'tvInput') {
+      log.warn(`Refused TV input "${itemId}": not a tv picker in dashboard.yaml`);
+      return 'Unknown control';
+    }
+
+    const allowed = await this.tvInputs(itemId);
+    if (!allowed.some((i) => i.id === inputId)) {
+      log.warn(`Refused input "${inputId}" for ${item.tv}: not one it offers`);
+      return 'Not an input this TV offers';
+    }
+
+    const tv = this.#tvs.get(item.tv);
+    if (!tv) return 'Unknown TV';
+    return tv.switchInput(inputId);
   }
 
   /**

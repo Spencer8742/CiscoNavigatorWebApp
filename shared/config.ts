@@ -389,6 +389,46 @@ export interface ControlLight {
  * hand-written list would be a second copy of something the device already
  * knows, and second copies go stale.
  */
+/**
+ * A key that drives a TV from `controls.tvs` directly.
+ *
+ * `action` is what the press does: `toggle` decides its direction from
+ * whether the set answers, `on` sends a wake packet, `off` asks it to sleep.
+ *
+ * Unlike the Companion keys elsewhere, this one CAN be honest about state —
+ * reachability is the power state on webOS — but it deliberately does not
+ * poll for it. See tv/webos.ts: asking costs a TCP connection to a device
+ * that may be asleep, and doing that every few seconds to a television is
+ * worse manners than leaving the key stateless.
+ */
+export interface ControlTv {
+  type: 'tv';
+  id: string;
+  name: string;
+  icon: string;
+  /** A tv id from `controls.tvs`. */
+  tv: string;
+  action: 'toggle' | 'on' | 'off';
+}
+
+/** A key that opens the input picker for a TV in `controls.tvs`. */
+export interface ControlTvInput {
+  type: 'tvInput';
+  id: string;
+  name: string;
+  icon: string;
+  tv: string;
+  /**
+   * The inputs to offer, copied from the TV's entry at load.
+   *
+   * Carried on the item so the panel can draw the picker without asking:
+   * a curated list is a static assertion about what is plugged in, and
+   * round-tripping to a television to render a menu would make the menu
+   * unopenable exactly when the set is off.
+   */
+  inputs: SourceRef[];
+}
+
 export interface ControlSources {
   type: 'sources';
   id: string;
@@ -556,7 +596,13 @@ export interface DeviceEntities {
   stopSharing?: string;
 }
 
-export type ControlItem = ControlButton | ControlLight | ControlSources | ControlDevice;
+export type ControlItem =
+  | ControlButton
+  | ControlLight
+  | ControlSources
+  | ControlDevice
+  | ControlTv
+  | ControlTvInput;
 
 export interface ControlPage {
   id: string;
@@ -601,9 +647,55 @@ export interface KeyLightConfig {
   host: string;
 }
 
+/**
+ * An LG webOS television, spoken to directly rather than through Home
+ * Assistant.
+ *
+ * Same reasoning as the key lights above: this is a transport control on a
+ * panel sitting in front of the thing it controls, and every hop is somewhere
+ * the press can die. The TV speaks a documented protocol on its own IP, so
+ * there is nothing to gain by asking something else to ask it.
+ */
+export interface TvConfig {
+  id: string;
+  name: string;
+  /**
+   * The TV's address. webOS listens on 3000, so `192.168.1.67` is enough;
+   * `192.168.1.67:3000` is accepted too, like the key lights and cast
+   * displays.
+   */
+  host: string;
+  /**
+   * The TV's MAC, needed ONLY to turn it on.
+   *
+   * A webOS set that is off has its network stack down, so there is nothing
+   * to send a command to — the only way back on is a Wake-on-LAN packet.
+   * Without this, power off works and power on cannot. The TV also has to be
+   * set to listen for it: "Quick Start+", or Network > "TV On with Mobile"
+   * on older sets.
+   */
+  mac?: string;
+  /**
+   * Broadcast address for that packet. Defaults to 255.255.255.255, which is
+   * right unless the panel's host is on a different subnet from the TV — in
+   * which case a directed broadcast like 192.168.1.255 is what reaches it.
+   */
+  broadcast?: string;
+  /**
+   * The inputs to offer, in order, optionally renamed.
+   *
+   * webOS names inputs by socket id — HDMI_2, not "HDMI 2" — and reports
+   * every one whether anything is plugged in or not. Curating here answers
+   * "which box am I looking at" instead, and keeps the picker useful while
+   * the TV is off, when it cannot be asked.
+   */
+  inputs: SourceRef[];
+}
+
 export interface ControlsConfig {
   pages: ControlPage[];
   keylights: KeyLightConfig[];
+  tvs: TvConfig[];
   /**
    * Seconds between key light state polls. 0 stops polling.
    *

@@ -401,6 +401,11 @@ export function selectControlSource(item: string, value: string): boolean {
   return send({ t: 'source', id: nextId(), item, value });
 }
 
+/** Choose an input on a `tv:` picker — a television driven directly. */
+export function selectTvInput(item: string, input: string): boolean {
+  return send({ t: 'tvinput', id: nextId(), item, input });
+}
+
 /**
  * Change a panel preference.
  *
