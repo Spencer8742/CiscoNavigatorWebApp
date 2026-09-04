@@ -3,7 +3,7 @@ import { Empty } from '~/components/Empty.tsx';
 import { Icon, hasIcon } from '~/components/Icon.tsx';
 import { Pressable } from '~/components/Pressable.tsx';
 import { Slider } from '~/components/Slider.tsx';
-import { controlPage, markActivity, openSources } from '~/state/ui.ts';
+import { controlPage, kiosk, markActivity, openSources } from '~/state/ui.ts';
 import { entity } from '~/state/entities.ts';
 import { keyLightFor, pressed } from '~/state/controls.ts';
 import { pressControl, setKeyLight } from '~/net/socket.ts';
@@ -75,8 +75,12 @@ export function Controls() {
 
       {/* A page strip, not a nav level: the Controls screen is one
           destination and these are what is on it. One page is not a choice,
-          so it gets no strip — the subtitle already names it. */}
-      {pages.length > 1 ? <PageTabs pages={pages} active={active.id} /> : null}
+          so it gets no strip — the subtitle already names it.
+
+          The kiosk lock hides it too. "Locked to this page" has to mean this
+          page: hiding the nav bar but leaving the strip would still let
+          anyone wander off to Lights, which is most of what the lock is for. */}
+      {pages.length > 1 && !kiosk.value ? <PageTabs pages={pages} active={active.id} /> : null}
 
       <div class="screen-body scroll">
         <Page page={active} />

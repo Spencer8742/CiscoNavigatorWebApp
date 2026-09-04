@@ -69,7 +69,25 @@ export const openDeviceSource = signal<string | null>(null);
  */
 export const openDeviceAlerts = signal<string | null>(null);
 
+/**
+ * Kiosk lock: the nav bar is hidden and the panel stays on the page it is on.
+ *
+ * For the one thing a Navigator on a desk is usually doing — being a call
+ * controller — where the five other destinations are a way to end up
+ * somewhere you did not mean to be, and where a guest should not be able to
+ * wander into Settings.
+ *
+ * Deliberately NOT persisted. It survives navigation but not a reload, so a
+ * panel that is somehow stuck in it is one refresh away from normal. On a
+ * device with no address bar and no way to force-quit, an unlock that only
+ * exists as a button in the UI is one bad render away from a brick.
+ */
+export const kiosk = signal(false);
+
 export function navigate(to: Route): void {
+  // Belt and braces: the nav is hidden under the kiosk lock, but nothing else
+  // should be able to move the panel off the page it is locked to either.
+  if (kiosk.value) return;
   if (route.value === to) return;
   // Leaving Rooms always resets the drill-down, so coming back lands on the
   // list rather than a room the user has forgotten they were in.

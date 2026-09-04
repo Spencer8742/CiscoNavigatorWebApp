@@ -109,6 +109,14 @@ img {
   grid-template-areas: 'main' 'nav';
 }
 
+/* Kiosk lock: one full-bleed screen, no nav. Overrides both nav positions,
+   so it does not matter which one the config asks for. */
+.shell[data-kiosk] {
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr;
+  grid-template-areas: 'main';
+}
+
 .shell-nav {
   grid-area: nav;
   min-width: 0;

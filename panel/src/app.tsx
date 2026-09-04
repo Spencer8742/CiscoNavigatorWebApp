@@ -15,7 +15,7 @@ import { SourcesSheet } from '~/components/SourcesSheet.tsx';
 import { DeviceSourceSheet } from '~/components/DeviceSourceSheet.tsx';
 import { DeviceAlertsSheet } from '~/components/DeviceAlertsSheet.tsx';
 import { castConfig, ui } from '~/config/index.ts';
-import { connectionProblem, ready, route, screensaverActive } from '~/state/ui.ts';
+import { connectionProblem, kiosk, ready, route, screensaverActive } from '~/state/ui.ts';
 import { isCastDashboard, isCastMode, startCastReceiver } from '~/lib/cast.ts';
 
 /**
@@ -99,12 +99,18 @@ export function App() {
       <div
         class="shell"
         data-nav={ui.value.navPosition}
+        /* Kiosk collapses the nav track entirely rather than hiding the bar
+           inside it — a hidden bar would leave its row in the grid and a
+           strip of dead space along the bottom of the screen. */
+        data-kiosk={kiosk.value ? '' : undefined}
         data-cast={CAST_DASHBOARD ? '' : undefined}
         data-hidden={showScreensaver ? '' : undefined}
       >
-        <div class="shell-nav">
-          <Nav />
-        </div>
+        {kiosk.value ? null : (
+          <div class="shell-nav">
+            <Nav />
+          </div>
+        )}
         <main class="shell-main">
           <Screen />
         </main>
