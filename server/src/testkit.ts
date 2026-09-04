@@ -23,3 +23,13 @@ export { CastDevice, DASHCAST_APP_ID } from '~/cast/device.ts';
 export type { CastOutcome, CastTransport } from '~/cast/device.ts';
 export { CastKeeper, splitHost } from '~/cast/keeper.ts';
 export type { VisitResult } from '~/cast/keeper.ts';
+
+/*
+ * The webOS client, for the same reason as the Cast pieces above: every case
+ * worth testing (a pairing prompt nobody has accepted yet, a stored key being
+ * reused, a refusal that arrives dressed as a success, a television that is
+ * simply off) is a property of one short conversation with a device.
+ */
+export { WebosClient } from '~/tv/webos.ts';
+export { failureOf, inputsOf } from '~/tv/protocol.ts';
+export { magicPacket, parseMac } from '~/tv/wol.ts';

@@ -69,6 +69,9 @@ export const openDeviceSource = signal<string | null>(null);
  */
 export const openDeviceAlerts = signal<string | null>(null);
 
+/** The `tv:` picker item whose input sheet is open, or null. */
+export const openTvInput = signal<string | null>(null);
+
 /**
  * Kiosk lock: the nav bar is hidden and the panel stays on the page it is on.
  *

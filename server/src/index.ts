@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { fileURLToPath, URL } from 'node:url';
 import { existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { loadEnv } from '~/env.ts';
 import { logger } from '~/lib/log.ts';
 import { ConfigStore } from '~/config/load.ts';
@@ -268,6 +268,7 @@ async function main(): Promise<void> {
     onControl: (button) => controls.press(button),
     onKeyLight: (light, op, value) => controls.keyLight(light, op, value),
     onSource: (item, value) => controls.selectSource(item, value),
+    onTvInput: (item, input) => controls.tvInput(item, input),
 
     onPhotos: async (count) => {
       const photos = await playlist.take(count);
@@ -300,6 +301,9 @@ async function main(): Promise<void> {
     // gone to sleep, or a container running before the device is provisioned,
     // should not be talking to the lights every fifteen seconds.
     hasPanels: () => hub.panelCount > 0,
+    // Beside the config, like panel-prefs.json — that directory is already
+    // the one thing a deployment is expected to persist.
+    tvKeyFile: join(dirname(env.configPath), 'tv-keys.json'),
   });
 
   /* ── Google Nest Hubs ────────────────────────────────────────────────────

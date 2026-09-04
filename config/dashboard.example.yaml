@@ -437,6 +437,48 @@ controls:
   #    name: Key Right
   #    host: 192.168.1.148
 
+  # ── Televisions, spoken to directly ──────────────────────────────────────
+  #
+  # An LG webOS TV on its own IP, over LG's protocol, with no Home Assistant
+  # in between. Same reasoning as the key lights above: this is a transport
+  # control on a panel sitting in front of the thing it drives, and every hop
+  # is somewhere the press can die.
+  #
+  # PAIRING is a physical act. The first connection puts a prompt on the TV
+  # and somebody has to accept it with the remote. The key the TV hands back
+  # is written to `tv-keys.json` beside this file, so it survives restarts —
+  # persist that directory, or a restart re-prompts a screen that may well
+  # have people looking at it.
+  #
+  # `mac:` is ONLY for turning the set on. A webOS TV that is off has its
+  # network stack down, so there is nothing to send a command to, and the only
+  # way back is a Wake-on-LAN packet. Power off works without it; power on
+  # does not. The TV must also be set to listen — Quick Start+, or Network >
+  # "TV On with Mobile" on older sets — or it is genuinely unreachable when
+  # off. Wired and Wi-Fi have different MACs; use whichever it connects by.
+  tvs: []
+  #  - id: office_lg
+  #    name: Office LG
+  #    host: 192.168.1.67          # :3000 is implied
+  #    mac: a8:23:fe:00:11:22
+  #    broadcast: 192.168.1.255    # only if the panel is on another subnet
+  #    # webOS names inputs by socket id — HDMI_2, not "HDMI 2". Listing them
+  #    # answers "which box am I looking at", and keeps the picker usable
+  #    # while the TV is off, which is when it cannot be asked what it has.
+  #    inputs:
+  #      - { source: HDMI_2, name: Laptop }
+  #      - { source: HDMI_3, name: Mac Studio }
+  #
+  # On a page, `tv:` points at one of these:
+  #
+  #   - { name: LG Power, icon: tv,    tv: office_lg, action: toggle }
+  #   - { name: LG Input, icon: input, tv: office_lg }
+  #
+  # `action:` makes it a power key — toggle | on | off. `toggle` asks whether
+  # the set answers and does the opposite, so it cannot drift the way a
+  # latching Companion key does. Omit `action:` and the key opens the input
+  # picker instead.
+
   # Seconds between key light state polls. 0 stops polling.
   #
   # Elgato lights push nothing, so this is the only way to notice one that was

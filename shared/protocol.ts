@@ -442,6 +442,15 @@ export type ClientMessage =
    * that no page put there.
    */
   | { t: 'source'; id: number; item: string; value: string }
+  /**
+   * Choose an input on a `tv:` picker, which talks to the television
+   * directly rather than through Home Assistant.
+   *
+   * Carries the item id and the TV's own input id (HDMI_2, not "HDMI 2").
+   * The backend still resolves both against the config — the panel names a
+   * choice the config offers, never an address and never a raw value.
+   */
+  | { t: 'tvinput'; id: number; item: string; input: string }
   /** Heartbeat. Detects half-open sockets that TCP will not report. */
   | { t: 'ping'; id: number }
   /**

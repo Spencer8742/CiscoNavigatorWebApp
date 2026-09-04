@@ -18,6 +18,7 @@ import type {
   ControlAction,
   ControlButton,
   ControlItem,
+  TvConfig,
   ControlPage,
   DashboardConfig,
   DeviceEntities,
@@ -96,7 +97,7 @@ export const FALLBACK_CONFIG: DashboardConfig = {
     followMusic: true,
     audioKeepAlive: false,
   },
-  controls: { pages: [], keylights: [], pollSeconds: 15 },
+  controls: { pages: [], keylights: [], tvs: [], pollSeconds: 15 },
 };
 
 /* ── Coercion helpers ──────────────────────────────────────────────────────
@@ -237,6 +238,10 @@ function validate(raw: unknown): DashboardConfig {
   const castRaw = obj(root['cast']);
   const controlsRaw = obj(root['controls']);
 
+  // Parsed once: the pages need it to resolve their pickers' inputs, and
+  // parsing twice would double every warning the list emits.
+  const tvsParsed = tvList(controlsRaw['tvs']);
+
   const version = num(root['version'], 1, 'version', 1, 1);
   if (version !== 1) log.warn(`Unknown config version ${version}; treating as 1`);
 
@@ -333,7 +338,8 @@ function validate(raw: unknown): DashboardConfig {
 
     controls: {
       keylights: keyLightList(controlsRaw['keylights']),
-      pages: controlPages(controlsRaw['pages']),
+      tvs: tvsParsed,
+      pages: linkTvInputs(controlPages(controlsRaw['pages']), tvsParsed),
       // 15s is a compromise: fast enough that turning a light off at the
       // light is reflected before anyone reaches the panel, slow enough that
       // two lights cost four requests a minute.
@@ -437,6 +443,105 @@ function displayList(v: unknown): CastDisplay[] {
    understood is DROPPED with a warning rather than defaulted, because there
    is no sensible default for "what should this button do" and a button that
    silently does the wrong thing is worse than one that is missing. */
+
+/**
+ * Copy each TV's curated inputs onto the pickers that point at it.
+ *
+ * Done here rather than in controlItems() because a page is parsed before the
+ * registry it references — the pages section may even sit above `tvs:` in the
+ * file, and config should not depend on the order things are written in.
+ *
+ * A picker whose TV has no `inputs:` is left empty and warned about. It would
+ * otherwise render a menu with nothing in it, which reads as a broken panel
+ * rather than as an unfinished config.
+ */
+function linkTvInputs(pages: ControlPage[], tvs: TvConfig[]): ControlPage[] {
+  const byId = new Map(tvs.map((t) => [t.id, t]));
+
+  for (const page of pages) {
+    for (const item of page.items) {
+      if (item.type !== 'tvInput' && item.type !== 'tv') continue;
+
+      const tv = byId.get(item.tv);
+      if (!tv) {
+        log.warn(
+          `controls.pages: "${item.id}" points at tv "${item.tv}", which is not in controls.tvs`,
+        );
+        continue;
+      }
+      if (item.type !== 'tvInput') continue;
+
+      if (tv.inputs.length === 0) {
+        log.warn(
+          `controls.pages: "${item.id}" opens an input picker for "${tv.id}", ` +
+            'which lists no `inputs:` — the picker will ask the TV, and will be ' +
+            'empty while it is off',
+        );
+      }
+      item.inputs = tv.inputs;
+    }
+  }
+
+  return pages;
+}
+
+function tvList(v: unknown): TvConfig[] {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v)) {
+    warn('controls.tvs', 'list', v);
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const out: TvConfig[] = [];
+
+  v.forEach((item, i) => {
+    const path = `controls.tvs[${i}]`;
+    const raw = typeof item === 'string' ? { host: item } : obj(item);
+
+    const host = str(raw['host'] ?? raw['ip'], '', `${path}.host`);
+    if (!host) {
+      warn(path, 'an address like 192.168.1.67', item);
+      return;
+    }
+    // Same trap as the key lights: a URL here reads as a host called "http"
+    // and fails looking exactly like the TV being off.
+    if (host.includes('/') || /\s/.test(host)) {
+      warn(`${path}.host`, 'a bare address, not a URL', host);
+      return;
+    }
+
+    const id = str(raw['id'], `tv${i + 1}`, `${path}.id`);
+    if (seen.has(id)) {
+      log.warn(`${path}: duplicate id "${id}" — skipping`);
+      return;
+    }
+    seen.add(id);
+
+    const cfg: TvConfig = {
+      id,
+      name: str(raw['name'], id, `${path}.name`),
+      host,
+      inputs: sourceRefList(raw['inputs'], `${path}.inputs`),
+    };
+
+    // A malformed MAC is dropped rather than passed on, so the failure shows
+    // up here — at load, naming the file and the line — instead of as a wake
+    // packet that silently goes nowhere.
+    const mac = str(raw['mac'], '', `${path}.mac`);
+    if (mac) {
+      if (/^[0-9a-f]{12}$/i.test(mac.replace(/[^0-9a-f]/gi, ''))) cfg.mac = mac;
+      else warn(`${path}.mac`, 'a MAC like a8:23:fe:00:11:22', mac);
+    }
+
+    const broadcast = str(raw['broadcast'], '', `${path}.broadcast`);
+    if (broadcast) cfg.broadcast = broadcast;
+
+    out.push(cfg);
+  });
+
+  return out;
+}
 
 function keyLightList(v: unknown): KeyLightConfig[] {
   if (v === undefined || v === null) return [];
@@ -586,6 +691,47 @@ function controlItems(
         name: str(spec['name'], 'Device', `${itemPath}.device.name`),
         entities,
         keys,
+      });
+      return;
+    }
+
+    /*
+     * `tv:` points at an entry in `controls.tvs` and makes this key drive
+     * that television directly. Checked before the action forms because
+     * `tv: office_lg` is the same shape as an `entity:` key and would
+     * otherwise be read as one.
+     */
+    const tv = raw['tv'];
+    if (typeof tv === 'string' && tv.trim()) {
+      const target = tv.trim();
+      seen.add(id);
+
+      // With an `action:` it is a power key; without one it is the input
+      // picker. Naming the action is what distinguishes them, because "press
+      // this to open a menu" and "press this to turn the TV off" should not
+      // look identical in YAML.
+      const action = raw['action'];
+      if (action === undefined || action === null) {
+        out.push({
+          type: 'tvInput',
+          id,
+          tv: target,
+          name: str(raw['name'], 'Input', `${itemPath}.name`),
+          icon: str(raw['icon'], 'input', `${itemPath}.icon`),
+          // Resolved later, once controls.tvs is parsed — the pages are read
+          // before the registry they point at.
+          inputs: [],
+        });
+        return;
+      }
+
+      out.push({
+        type: 'tv',
+        id,
+        tv: target,
+        name: str(raw['name'], 'TV', `${itemPath}.name`),
+        icon: str(raw['icon'], 'tv', `${itemPath}.icon`),
+        action: oneOf(action, ['toggle', 'on', 'off'] as const, 'toggle', `${itemPath}.action`),
       });
       return;
     }
