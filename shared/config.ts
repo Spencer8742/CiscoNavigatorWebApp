@@ -511,7 +511,16 @@ export interface DeviceEntities {
   speaker?: string;
   /** `switch.*_do_not_disturb`. */
   dnd?: string;
-  /** `switch.*_selfview`. */
+  /**
+   * `switch.*_camera_mute` — the OUTGOING camera.
+   *
+   * Not `selfview`, which is the local preview: turning that off leaves the
+   * camera running and the room on screen at the far end. Requires the
+   * integration's camera mute switch (0.6.0+); before that there was no
+   * entity for this and the only way to drive a camera was a Companion key.
+   */
+  camera?: string;
+  /** `switch.*_selfview` — the local preview picture, not the camera. */
   selfview?: string;
 
   /* ── Set ───────────────────────────────────────────────────────────────*/

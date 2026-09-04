@@ -510,6 +510,9 @@ describe('device tiles', () => {
     assert.equal(tile.entities.meetings, 'sensor.dp_next_meeting');
     assert.equal(tile.entities.inCall, 'binary_sensor.dp_in_call');
     assert.equal(tile.entities.mic, 'switch.dp_microphone_mute');
+    // The camera mute is a real switch, not the selfview beside it — one is
+    // what the far end sees, the other is the local preview.
+    assert.equal(tile.entities.camera, 'switch.dp_camera_mute');
     assert.equal(tile.entities.join, 'button.dp_join_next_meeting');
     assert.equal(tile.entities.shareLocal, 'button.dp_share_locally');
     assert.equal(tile.entities.shareSource, 'select.dp_share_source');
