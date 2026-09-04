@@ -236,7 +236,7 @@ already in this repository. `--dry-run` prints the XML without sending it.
 | 10 | Failure hardening | ⬜ |
 | 11 | Performance pass on-device | ⬜ |
 | 12 | Deployment polish | 🟡 CI, GHCR images, Unraid template and the device provisioning script done |
-| 13 | Sonos direct — replaces Music Assistant | 📋 planned, [`docs/SONOS.md`](docs/SONOS.md) |
+| 13 | Sonos direct — replaces Music Assistant | 🟡 phase 1 of 6 done: the household, read-only. [`docs/SONOS.md`](docs/SONOS.md) |
 
 Each phase is verified working before the next begins.
 
@@ -269,6 +269,7 @@ panel/      frontend (Preact + signals, Vite, target chrome102)
 server/     backend  (Node 22, deps: ws + yaml)
   ha/         WebSocket client · state store · service allow-list
   mass/       Music Assistant · players, queues, library browsing
+  sonos/      Sonos, direct on the LAN · SOAP, XML, household topology
   immich/     REST client · playlist · image proxy (originals unreachable)
   cast/       Cast v2 — keeps Google Nest Hubs showing the dashboard
   controls/   Companion presses · Elgato Key Lights · HA webhooks

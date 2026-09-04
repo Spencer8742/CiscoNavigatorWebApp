@@ -72,6 +72,20 @@ export interface BackendHealth {
    */
   massError: string | null;
   /**
+   * Sonos, spoken to directly on the LAN. 'disabled' when SONOS_HOST is unset
+   * and discovery is off.
+   *
+   * There is no socket to Sonos — control is stateless SOAP on port 1400 — so
+   * 'connected' means the household answered a topology request recently.
+   */
+  sonos: LinkState | 'disabled';
+  /**
+   * Why Sonos is unhappy. A wrong address, a network that blocks discovery and
+   * UPnP switched off in the Sonos app all present as an empty Media screen,
+   * and they need three different things done about them.
+   */
+  sonosError: string | null;
+  /**
    * Why Immich is unhappy, if it is — already human-readable, and including
    * whatever Immich itself said. Null when the last request succeeded.
    *

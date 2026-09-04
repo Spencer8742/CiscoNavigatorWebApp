@@ -53,6 +53,21 @@ export interface Env {
     enabled: boolean;
   };
 
+  /**
+   * Sonos, spoken to directly on the LAN.
+   *
+   * No token and no URL: control is unauthenticated SOAP on port 1400 of every
+   * speaker, so all this needs is one address to start from. From any single
+   * player the backend learns the whole household — see sonos/topology.ts.
+   */
+  sonos: {
+    /** One speaker's IP. The documented path; see docs/SONOS.md §5. */
+    host: string;
+    /** Fall back to SSDP when no host is set. Off unless asked for. */
+    discovery: boolean;
+    enabled: boolean;
+  };
+
   immich: {
     url: string;
     apiKey: string;
@@ -122,6 +137,9 @@ export function loadEnv(): Env {
   const immichKey = str('IMMICH_API_KEY');
   const massUrl = normalizeUrl(str('MASS_URL'));
   const companionUrl = normalizeUrl(str('COMPANION_URL'));
+  // A bare address, not a URL: the port and paths are fixed by Sonos.
+  const sonosHost = str('SONOS_HOST').trim();
+  const sonosDiscovery = bool('SONOS_DISCOVERY');
 
   const env: Env = {
     port: int('PORT', 8099),
@@ -147,6 +165,15 @@ export function loadEnv(): Env {
       // refusing to start without one here would lock out older servers that
       // do not use tokens at all.
       enabled: Boolean(massUrl),
+    },
+
+    sonos: {
+      host: sonosHost,
+      discovery: sonosDiscovery,
+      // Opt-in on both counts. Turning SSDP on by default would have every
+      // existing deployment start multicasting the moment it updates, to find
+      // speakers nobody asked it to look for.
+      enabled: Boolean(sonosHost) || sonosDiscovery,
     },
 
     immich: {
@@ -188,6 +215,20 @@ export function loadEnv(): Env {
     log.info(
       'MASS_URL not set — media falls back to Home Assistant media_player entities. ' +
         'Set it to browse your library, edit the queue and control speakers directly.',
+    );
+  }
+
+  if (!env.sonos.enabled) {
+    log.info(
+      'SONOS_HOST not set — Sonos speakers will not appear. Set it to the IP address ' +
+        'of one Sonos speaker, or set SONOS_DISCOVERY=1 to search the network.',
+    );
+  } else if (env.mass.enabled) {
+    // Expected during the migration in docs/SONOS.md and confusing if it is
+    // not: a household reachable both ways is listed twice, once per source.
+    log.warn(
+      'Both MASS_URL and Sonos are configured. Speakers that Music Assistant also ' +
+        'knows about will appear twice until Music Assistant is removed.',
     );
   }
 

@@ -33,3 +33,18 @@ export type { VisitResult } from '~/cast/keeper.ts';
 export { WebosClient } from '~/tv/webos.ts';
 export { endpointsFor, failureOf, inputOfAppId, inputsOf } from '~/tv/protocol.ts';
 export { magicPacket, parseMac } from '~/tv/wol.ts';
+
+/*
+ * Sonos XML, for the same reason again — with one addition that matters more
+ * than the others. Sonos escapes XML inside XML (and, from phase 2, inside
+ * that again), so a decoder that unescapes once too many or too few produces
+ * plausible-looking output rather than an error. That is only checkable by
+ * feeding it the nasty cases directly: an album called `Rock & Roll`, a zone
+ * called `Ben & Jerry's`, and an already-escaped entity that must survive.
+ */
+export { decodeEntities, escapeXml, find, findAll, parseXml, textOf } from '~/sonos/xml.ts';
+export type { XmlNode } from '~/sonos/xml.ts';
+export { parseZoneGroupState } from '~/sonos/topology.ts';
+export type { Household, SonosZone } from '~/sonos/topology.ts';
+export { parseTrackMetadata, artUrl } from '~/sonos/didl.ts';
+export { seconds, flag, integer } from '~/sonos/soap.ts';

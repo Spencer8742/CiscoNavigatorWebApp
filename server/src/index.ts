@@ -18,13 +18,15 @@ import { MassClient } from '~/mass/client.ts';
 import { MassStore } from '~/mass/store.ts';
 import { MassCommands } from '~/mass/commands.ts';
 import { MassBrowser } from '~/mass/browse.ts';
+import { SonosClient } from '~/sonos/client.ts';
+import { SonosStore } from '~/sonos/store.ts';
 import { CastKeeper } from '~/cast/keeper.ts';
 import { Controls } from '~/controls/index.ts';
 import { PrefsStore } from '~/config/prefs.ts';
 import { ImmichClient } from '~/immich/client.ts';
 import { ImmichImages } from '~/immich/images.ts';
 import { Playlist } from '~/immich/playlist.ts';
-import type { BackendHealth } from '@shared/protocol.ts';
+import type { BackendHealth, MassPlayer, MassQueue } from '@shared/protocol.ts';
 
 const log = logger('server');
 
@@ -140,6 +142,8 @@ async function main(): Promise<void> {
     immichError: env.immich.enabled ? (immich.lastError?.message ?? null) : null,
     mass: env.mass.enabled ? massClient.state : 'disabled',
     massError: env.mass.enabled ? massClient.lastError : null,
+    sonos: env.sonos.enabled ? sonosClient.state : 'disabled',
+    sonosError: env.sonos.enabled ? sonosClient.lastError : null,
     haLastMessage: haClient.lastMessageAt ? new Date(haClient.lastMessageAt).toISOString() : null,
     uptime: Math.floor((Date.now() - STARTED_AT) / 1000),
     version: VERSION,
@@ -235,13 +239,63 @@ async function main(): Promise<void> {
   });
 
   const massStore = new MassStore(massClient, mediaArt, {
-    onChange(players, queues) {
-      hub.broadcastPlayers(players, queues);
+    onChange() {
+      // Fanned out as the merged list rather than Music Assistant's own: the
+      // panel holds one player list, so a push from either source has to
+      // carry both or it would delete the other one from the screen.
+      hub.broadcastPlayers(...musicSnapshot());
     },
   });
 
   const massCommands = new MassCommands(massClient, massStore);
   const massBrowser = new MassBrowser(massClient, massStore, mediaArt);
+
+  /* ── Sonos ───────────────────────────────────────────────────────────────
+     Phase 1 of docs/SONOS.md: the household, read-only. Speakers appear in
+     the player list beside Music Assistant's, in the same shape, because the
+     wire protocol describes speakers and queues rather than any one source —
+     which is what lets Sonos arrive in stages instead of one commit.
+
+     Nothing here can control anything yet. Transport, volume and grouping are
+     phase 3, and the guard that makes them safe is the point of that phase. */
+
+  const sonosClient = new SonosClient(env.sonos, {
+    onStateChange() {
+      // No grace period, for the same reason as Music Assistant: a speaker
+      // whose state we cannot verify should stop claiming to be playing.
+      // There is no equivalent of "the light is probably still on".
+      hub.broadcastHealth(getHealth());
+    },
+  });
+
+  const sonosStore = new SonosStore({
+    client: sonosClient,
+    art: mediaArt,
+    events: {
+      onChange() {
+        hub.broadcastPlayers(...musicSnapshot());
+      },
+    },
+    hasPanels: () => hub.panelCount > 0,
+  });
+
+  /**
+   * Every speaker, from both sources.
+   *
+   * A tuple rather than an object so it spreads straight into
+   * `broadcastPlayers`. Player ids cannot collide — Sonos uses `RINCON_…`
+   * UUIDs — so a household reachable through both appears twice rather than
+   * ambiguously, which `env.ts` warns about at boot. Phase 6 deletes the
+   * Music Assistant half and this helper with it.
+   */
+  const musicSnapshot = (): [MassPlayer[], MassQueue[]] => {
+    const mass = massStore.snapshot();
+    const sonos = sonosStore.snapshot();
+    return [
+      [...mass.players, ...sonos.players].sort((a, b) => a.name.localeCompare(b.name)),
+      [...mass.queues, ...sonos.queues],
+    ];
+  };
 
   const hub: Hub = new Hub(server, {
     auth,
@@ -260,7 +314,10 @@ async function main(): Promise<void> {
     onPref: (key, value) => prefs.set(key, value),
     onLayout: (layout) => prefs.setLayout(layout, config.current.media.sections),
 
-    getPlayers: () => massStore.snapshot(),
+    getPlayers: () => {
+      const [players, queues] = musicSnapshot();
+      return { players, queues };
+    },
     onMassCommand: (command, args) => massCommands.run(command, args),
     onBrowse: (req) => massBrowser.browse(req),
 
@@ -333,6 +390,8 @@ async function main(): Promise<void> {
 
   haClient.start();
   massClient.start();
+  sonosClient.start();
+  sonosStore.start();
 
   async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const rawUrl = req.url ?? '/';
@@ -498,6 +557,9 @@ async function main(): Promise<void> {
     log.info(`Home Assistant: ${env.ha.enabled ? env.ha.url : 'not configured'}`);
     log.info(`Immich: ${env.immich.enabled ? env.immich.url : 'not configured'}`);
     log.info(`Music Assistant: ${env.mass.enabled ? env.mass.url : 'not configured'}`);
+    log.info(
+      `Sonos: ${env.sonos.host || (env.sonos.discovery ? 'discovering' : 'not configured')}`,
+    );
     // Started here rather than above so the first cast cannot land on a
     // display before there is anything for it to load.
     castKeeper.start();
@@ -519,6 +581,8 @@ async function main(): Promise<void> {
     haClient.stop();
     massClient.stop();
     massStore.dispose();
+    sonosClient.stop();
+    sonosStore.dispose();
     castKeeper.stop();
     controls.stop();
     hub.close();

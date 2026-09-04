@@ -1,6 +1,18 @@
 # Sonos: direct integration
 
-**Status: plan. Nothing here is built yet.**
+**Status: phase 1 is built and shipping. Phases 2 onward are still a plan.**
+
+| Phase | | |
+|---|---|---|
+| 1 | Topology — the household, read-only | ✅ |
+| 2 | Events — GENA, no more polling | ⬜ |
+| 3 | Control — transport, volume, grouping | ⬜ |
+| 4 | Browse — favourites, playlists, library, queue | ⬜ |
+| 5 | Spotify search | ⬜ |
+| 6 | Cut over — delete `mass/`, rename the types | ⬜ |
+| 7–8 | SMAPI and play history *(optional)* | ⬜ |
+
+What phase 1 delivers, and what it deliberately does not, is in §15.
 
 The goal, stated as the decision it is: **Sonos becomes the music system this
 panel talks to, and Music Assistant is removed.** The backend speaks the local
@@ -612,7 +624,7 @@ the device, and no phase starts before the last is verified there.
 
 | # | Phase | Delivers | Done when |
 |---|---|---|---|
-| **1** | Topology | `discovery.ts`, `soap.ts`, `xml.ts`, `topology.ts`, `store.ts`. Players in `hello`, read-only | The Media screen lists your real zones with correct names, groups and volumes. Bonded subs and pair channels do not appear |
+| **1** ✅ | Topology | `discovery.ts`, `soap.ts`, `xml.ts`, `didl.ts`, `topology.ts`, `client.ts`, `store.ts`. Players in `hello`, read-only | The Media screen lists your real zones with correct names, groups and volumes. Bonded subs and pair channels do not appear |
 | **2** | Events | `events.ts`: subscribe, renew, unsubscribe, `NOTIFY` route with all three guards | Change volume in the Sonos app → panel moves within ~200 ms. Restart the container → no orphaned subscriptions. Kill the network → the link goes degraded, not stale |
 | **3** | Control | `commands.ts` verbs, coordinator routing, grouping, `uris.ts` | Transport, volume, mute, seek and grouping all work from the panel. A transport command aimed at a follower is refused, not silently dropped |
 | **4** | Browse | `browse.ts`: `FV:2`, `SQ:`, `Q:0`, `A:*`, `R:0/0`, library search, queue editing | Every existing Browse and Queue interaction works against Sonos with no panel changes beyond the tab list |
@@ -625,6 +637,50 @@ Phases 1–3 are the system. Phase 4 is where it becomes better than what it
 replaced. Phase 6 is the point of no return and deliberately comes after
 everything is proven, so the two can run side by side while you are still
 deciding whether you like it.
+
+### What phase 1 actually built
+
+Five decisions differ from what is written above, and each is worth recording
+rather than leaving to be rediscovered:
+
+**The XML parser is hand-rolled, not `fast-xml-parser`.** §10 recommended the
+dependency and said the choice was reversible because it lives behind one
+interface. Building it showed the interface is four functions and the risky
+part is entity decoding alone — ten lines, and now covered by direct tests for
+the cases that fail silently, including `&amp;lt;` decoding to `&lt;` rather
+than `<`. So the server still has two runtime dependencies and the decision
+stays open: swapping in a library means reimplementing `sonos/xml.ts` and
+nothing else.
+
+**Sonos players appear beside Music Assistant's, in the same list.** Ids cannot
+collide — Sonos uses `RINCON_…` UUIDs — so a household reachable through both
+is listed twice rather than ambiguously, and `env.ts` warns at boot when both
+are configured. Phase 6 deletes the Music Assistant half.
+
+**There is one timer, and it is a poll.** Phase 1 has no event subscriptions,
+so a volume changed in the Sonos app is only noticed by asking. It polls every
+five seconds, **only while a panel is connected** — the same gate the key-light
+poll uses, for the same reason. Phase 2 deletes it. The client deliberately
+holds no timer of its own: `refresh()` is both the liveness check and the way
+state is read, so one cadence lives in one place instead of a retry loop racing
+a poll.
+
+**`canGroupWith` is empty on purpose.** Sonos can group any zone with any
+other, so populating it is a one-liner — and it would immediately put a
+"Playing on" bar on the Media screen whose button sends a command nothing yet
+handles. A control that is drawn but inert is worse than one that is absent, so
+grouping appears when phase 3 can honour it. A test asserts this rather than
+leaving it to a comment.
+
+**A speaker's address carries its port.** `Location` in the topology is a full
+URL, so the port travels with the host instead of 1400 being assumed. On real
+hardware it is always 1400 and this is a no-op; it is what lets the test suite
+run a household of five mock speakers on five ordinary ports, which is in turn
+what catches a store that reads one speaker and reports it for all of them.
+
+**Still inert in phase 1:** the transport buttons on a Sonos player. They send
+commands the backend has no handler for and will report "Not permitted" — which
+is honest, and fixed by phase 3.
 
 ---
 

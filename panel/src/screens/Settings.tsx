@@ -88,6 +88,16 @@ export function Settings() {
               an unreachable server both read as "disconnected" otherwise, and
               only one of them is fixed by restarting anything. */}
           {h?.massError ? <Row k="Music Assistant says" v={h.massError} tone="bad" /> : null}
+          <Row
+            k="Backend → Sonos"
+            v={h?.sonos ?? '—'}
+            tone={h?.sonos === 'disabled' ? undefined : tone(h?.sonos)}
+          />
+          {/* Same reasoning as the Music Assistant line above: a wrong
+              address, a network that blocks discovery and UPnP switched off
+              in the Sonos app all read as "disconnected", and each needs
+              something different done about it. */}
+          {h?.sonosError ? <Row k="Sonos says" v={h.sonosError} tone="bad" /> : null}
           <Row k="Overall" v={linkStatus.value} tone={tone(linkStatus.value)} />
           <Row
             k="Last HA message"
