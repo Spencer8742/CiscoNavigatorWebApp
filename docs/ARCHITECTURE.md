@@ -366,6 +366,12 @@ instead of ~180, and always ends on the exact value.
 
 ### Music Assistant is a SECOND connection, not a Home Assistant feature
 
+> **Superseded by [`SONOS.md`](./SONOS.md).** Music Assistant is slated for
+> removal: the backend will speak the local Sonos protocol directly instead.
+> This section describes what is running today, and the reasoning below for
+> *why the music connection is separate from Home Assistant* survives the
+> change unaltered — only the far end does.
+
 Home Assistant owns the house — lights, locks, covers, sensors. **Music
 Assistant owns the music**, and the backend talks to it directly on its own
 WebSocket (`ws://host:8095/ws`) rather than through Home Assistant's

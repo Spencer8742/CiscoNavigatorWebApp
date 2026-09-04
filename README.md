@@ -236,6 +236,7 @@ already in this repository. `--dry-run` prints the XML without sending it.
 | 10 | Failure hardening | ⬜ |
 | 11 | Performance pass on-device | ⬜ |
 | 12 | Deployment polish | 🟡 CI, GHCR images, Unraid template and the device provisioning script done |
+| 13 | Sonos direct — replaces Music Assistant | 📋 planned, [`docs/SONOS.md`](docs/SONOS.md) |
 
 Each phase is verified working before the next begins.
 
@@ -257,7 +258,7 @@ Enforced, not aspirational.
 
 ```
 .github/    CI (typecheck, tests, bundle budget) + GHCR image publish
-docs/       ROOMOS.md · ARCHITECTURE.md · DEPLOYMENT.md
+docs/       ROOMOS.md · ARCHITECTURE.md · DEPLOYMENT.md · SONOS.md
 unraid/     Unraid container template
 config/     dashboard.yaml — rooms, favourites, scenes, albums, control pages
 scripts/    provision-roombar.sh — reapply the device side after a reset
