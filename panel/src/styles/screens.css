@@ -1435,6 +1435,15 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* The input this panel selected on a television that will not confirm what it
+   is showing. Still shown — it is right unless somebody used the TV's own
+   remote, and "—" forever is no more honest, just less useful — but italic
+   and fainter, so the two claims do not read as the same claim. */
+.macro-btn-sub[data-assumed] {
+  font-style: italic;
+  opacity: 0.72;
+}
+
 /* The glyph is sized by an SVG width/height attribute, which CSS outranks.
    A 1.75rem icon centred in a 9rem key reads as a mistake. */
 .macro-grid[data-size='lg'] .macro-btn-icon,

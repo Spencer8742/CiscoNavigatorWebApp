@@ -324,6 +324,15 @@ export const SEARCH_LIMIT = 12;
 export interface TvState {
   id: string;
   input: string | null;
+  /**
+   * True when the television itself said so, false when this is only the
+   * input the panel last selected.
+   *
+   * The distinction is shown rather than smoothed over: a set that never
+   * reports its foreground app leaves the panel with nothing but its own
+   * last instruction, which somebody holding the remote can have made wrong.
+   */
+  confirmed: boolean;
 }
 
 export interface KeyLightState {

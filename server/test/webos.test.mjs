@@ -302,6 +302,106 @@ describe('when the TV will not say what it is showing', () => {
     tv.reportsInput = true;
     await c.stop();
   });
+
+  /*
+   * Reported after the shape-matching fix shipped: the input switched
+   * correctly and the label still never appeared. So the app id this set
+   * reports is not one the pattern can read — which is a guess either way,
+   * and the television publishes the answer itself.
+   */
+  test('the input is read from the TV\'s own table, not guessed from the name', async () => {
+    const named = new MockWebosTv(19834);
+    // Sockets this set names in a shape nothing could parse. inputOfAppId
+    // returns null for every one of them; only the table resolves them.
+    named.inputs = [
+      { id: 'HDMI_2', label: 'Laptop', connected: true, appId: 'com.webos.app.dock-a' },
+      { id: 'HDMI_3', label: 'Mac Studio', connected: true, appId: 'com.webos.app.dock-b' },
+    ];
+    await named.start();
+
+    assert.equal(inputOfAppId('com.webos.app.dock-b'), null, 'precondition: unguessable');
+
+    const c = new WebosClient({ host: '127.0.0.1:19834', keyFile: join(keyDir, 'named.json') });
+    await c.switchInput('HDMI_3');
+    await waitFor(() => c.currentInput === 'HDMI_3', 'the TV table to resolve the app id');
+
+    await c.stop();
+    await named.stop();
+  });
+
+  test('and a set that publishes no table still falls back to the pattern', async () => {
+    const bare = new MockWebosTv(19835);
+    bare.hideInputAppIds = true;
+    await bare.start();
+
+    const c = new WebosClient({ host: '127.0.0.1:19835', keyFile: join(keyDir, 'bare.json') });
+    await c.switchInput('HDMI_3');
+    await waitFor(() => c.currentInput === 'HDMI_3', 'the naming pattern to carry it');
+
+    await c.stop();
+    await bare.stop();
+  });
+
+  test('a set that never reports still labels the input it was given', async () => {
+    /*
+     * The user-visible half of the fix. `currentInput` stays undefined —
+     * nothing was confirmed — but the panel is no longer left with an em dash
+     * forever on a television that simply will not answer the question. What
+     * it shows is the weaker claim, and it is marked as one.
+     */
+    const silent = new MockWebosTv(19836);
+    silent.reportsInput = false;
+    await silent.start();
+
+    const c = new WebosClient({ host: '127.0.0.1:19836', keyFile: join(keyDir, 'assume.json') });
+    assert.equal(c.assumedInput, undefined, 'nothing to assume before any press');
+
+    await c.switchInput('HDMI_3');
+    assert.equal(c.currentInput, undefined, 'still nothing the television confirmed');
+    assert.equal(c.assumedInput, 'HDMI_3', 'but the panel knows where it sent it');
+
+    await c.stop();
+    await silent.stop();
+  });
+
+  test('an assumption is dropped when the set goes away', async () => {
+    // A television that has been off is one somebody may have put on
+    // something else with the remote, so the weak claim is worth no more
+    // than the strong one here.
+    const going = new MockWebosTv(19837);
+    going.reportsInput = false;
+    await going.start();
+
+    const c = new WebosClient({ host: '127.0.0.1:19837', keyFile: join(keyDir, 'drop.json') });
+    await c.switchInput('HDMI_2');
+    assert.equal(c.assumedInput, 'HDMI_2');
+
+    await going.stop();
+    await waitFor(() => c.assumedInput === undefined, 'the assumption to be dropped');
+    await c.stop();
+  });
+
+  test('switching input on a silent set still notifies the panel', async () => {
+    /*
+     * Without this the label would be correct and never delivered: the only
+     * push the panel gets comes from the foreground-app subscription, which
+     * on this set never fires.
+     */
+    const silent = new MockWebosTv(19838);
+    silent.reportsInput = false;
+    await silent.start();
+
+    const c = new WebosClient({ host: '127.0.0.1:19838', keyFile: join(keyDir, 'notify.json') });
+    const seen = [];
+    c.onInputChange(() => seen.push(c.assumedInput ?? c.currentInput ?? null));
+
+    await c.switchInput('HDMI_2');
+    await c.switchInput('HDMI_3');
+    assert.deepEqual(seen, ['HDMI_2', 'HDMI_3'], 'each change reaches the panel');
+
+    await c.stop();
+    await silent.stop();
+  });
 });
 
 describe('a television that is off', () => {

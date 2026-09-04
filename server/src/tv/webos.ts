@@ -67,8 +67,23 @@ export class WebosClient {
   #endpoint: string | undefined;
   /** The input the TV is showing, or undefined when we do not know. */
   #currentInput: string | undefined;
-  /** The last input WE asked for, used only to keep a cycle moving. */
+  /** The last input WE asked for: the cycle's anchor, and the weak label. */
   #requestedInput: string | undefined;
+  /**
+   * The TV's own map of foreground app id to input id, from
+   * getExternalInputList. Empty on a set that does not report `appId` per
+   * input, which is what `inputOfAppId` is for.
+   */
+  #appIds = new Map<string, string>();
+  /**
+   * The last foreground app id nothing could resolve.
+   *
+   * Kept because the two answers can arrive in either order: a set that
+   * reports its foreground app before it answers the input list would
+   * otherwise have that first report thrown away, and the label would stay
+   * empty until the input changed again.
+   */
+  #unresolvedAppId: string | undefined;
   /** Called when the current input changes, so panels can be told. */
   #onInput: ((input: string | undefined) => void) | undefined;
 
@@ -90,6 +105,23 @@ export class WebosClient {
    */
   get currentInput(): string | undefined {
     return this.#currentInput;
+  }
+
+  /**
+   * The input we last successfully asked for, when the set has not confirmed
+   * one itself.
+   *
+   * Reported separately from `currentInput` and rendered differently, because
+   * it is a weaker claim: it is what this panel set, not what the television
+   * says it is showing. Somebody with the remote can make it wrong.
+   *
+   * It exists because "no idea" is the permanent answer on a set that never
+   * reports its foreground app — and a key whose label reads "—" forever is
+   * no more honest than one that says where it last sent the TV, it is just
+   * less useful.
+   */
+  get assumedInput(): string | undefined {
+    return this.#currentInput ? undefined : this.#requestedInput;
   }
 
   /** Watch for input changes. One listener; the runner owns it. */
@@ -161,8 +193,37 @@ export class WebosClient {
   /** `inputId` is the TV's own id — HDMI_2, not "HDMI 2". */
   async switchInput(inputId: string): Promise<string | null> {
     const failure = await this.#command(URI.switchInput, { inputId });
-    if (!failure) this.#requestedInput = inputId;
-    return failure;
+    if (failure) return failure;
+
+    // Worth announcing even though the television may confirm it a moment
+    // later: on a set that never reports its foreground app, this is the only
+    // notification the panel will ever get, and without it the label stays
+    // blank however many times the key is pressed.
+    const changed = this.#requestedInput !== inputId;
+    this.#requestedInput = inputId;
+    if (changed && !this.#currentInput) this.#onInput?.(inputId);
+    return null;
+  }
+
+  /**
+   * Bring the socket up if it is not, but only on a television we are already
+   * paired with.
+   *
+   * Called from the poll, so the input shows on the panel before anybody
+   * presses anything and keeps up with the TV's own remote. The pairing guard
+   * matters: connecting to an UNPAIRED set puts a prompt on its screen, and a
+   * poll that did that would put one there every few seconds, in a room where
+   * people are trying to have a meeting.
+   */
+  async ensureConnected(): Promise<void> {
+    if (this.#socket?.readyState === WebSocket.OPEN) return;
+    await this.#loadKey();
+    if (!this.#clientKey) return;
+    try {
+      await this.#connect();
+    } catch {
+      // The set is off, which is the normal case and not news.
+    }
   }
 
   /**
@@ -325,6 +386,7 @@ export class WebosClient {
     this.#socket = socket;
     this.#attach(socket);
     await this.#register(socket);
+    this.#learnInputs();
     this.#watchInput(socket);
   }
 
@@ -344,15 +406,7 @@ export class WebosClient {
     // id, so unlike a request the handler is never removed.
     this.#pending.set(id, (frame) => {
       if (failureOf(frame)) return;
-      const appId = frame.payload?.['appId'];
-      const input = inputOfAppId(appId);
-      // Say what was not understood. An app id in a shape this does not
-      // recognise is otherwise completely silent — the label stays blank and
-      // the cycle restarts every press, and nothing anywhere names the cause.
-      if (!input && typeof appId === 'string' && appId) {
-        log.debug(`${this.#opts.host} is showing "${appId}", which is not an input`);
-      }
-      this.#setInput(input ?? undefined);
+      this.#reportForeground(frame.payload?.['appId']);
     });
 
     socket.send(JSON.stringify({ id, type: 'subscribe', uri: URI.foregroundApp }), (err) => {
@@ -380,11 +434,66 @@ export class WebosClient {
          * panel would show as a label that appears and then vanishes.
          */
         if (!('appId' in (frame.payload ?? {}))) return;
-        this.#setInput(inputOfAppId(frame.payload?.['appId']) ?? undefined);
+        this.#reportForeground(frame.payload?.['appId']);
       })
       .catch(() => {
         // The set answered the subscribe and not this; not worth a word.
       });
+  }
+
+  /**
+   * Ask the television which app id belongs to which socket.
+   *
+   * This is the difference between reading the set's answer and guessing at
+   * it. `inputOfAppId` can only recognise app ids shaped the way LG has
+   * historically shaped them, and a set that names an input anything else —
+   * a soundbar's passthrough, an ARC socket, a firmware that renamed them —
+   * is unreadable to it. The TV publishes the mapping itself, so ask.
+   *
+   * Failure is not worth a word: `listInputs` already logs a refusal, and a
+   * set that does not answer this simply falls back to the pattern.
+   */
+  #learnInputs(): void {
+    void this.listInputs()
+      .then((inputs) => {
+        this.#appIds.clear();
+        for (const input of inputs) {
+          if (input.appId) this.#appIds.set(input.appId.toLowerCase(), input.id);
+        }
+        // The foreground app may have been reported before this arrived, in
+        // which case it was set aside rather than thrown away.
+        if (this.#appIds.size > 0 && this.#unresolvedAppId) {
+          this.#reportForeground(this.#unresolvedAppId);
+        }
+      })
+      .catch(() => {
+        // The socket went away mid-question. The commands report that.
+      });
+  }
+
+  /** What the TV says it is showing, turned into an input id if it is one. */
+  #reportForeground(appId: unknown): void {
+    const input = this.#resolveInput(appId);
+    if (input) {
+      this.#unresolvedAppId = undefined;
+      this.#setInput(input);
+      return;
+    }
+
+    // Say what was not understood. An app id in a shape neither the TV's own
+    // table nor the pattern recognises is otherwise completely silent — the
+    // label falls back to what we last set and nothing anywhere names why.
+    if (typeof appId === 'string' && appId) {
+      this.#unresolvedAppId = appId;
+      log.debug(`${this.#opts.host} is showing "${appId}", which is not an input`);
+    }
+    this.#setInput(undefined);
+  }
+
+  /** The TV's own mapping first; the naming pattern only as a fallback. */
+  #resolveInput(appId: unknown): string | undefined {
+    if (typeof appId !== 'string' || !appId) return undefined;
+    return this.#appIds.get(appId.trim().toLowerCase()) ?? inputOfAppId(appId) ?? undefined;
   }
 
   #setInput(next: string | undefined): void {
@@ -446,6 +555,14 @@ export class WebosClient {
       // The TV is gone, so what it was showing is no longer known. Keeping
       // the last value would leave a stale input on the panel for as long as
       // the set stays off.
+      //
+      // The input we ASKED for goes too, and the app id table with it. A set
+      // that has been off is a set somebody may have put on something else
+      // with the remote, so the weak claim is no better than the strong one
+      // here — and the mapping is re-read on the next connection anyway.
+      this.#requestedInput = undefined;
+      this.#unresolvedAppId = undefined;
+      this.#appIds.clear();
       this.#setInput(undefined);
       // Fail anything still waiting rather than leaving it to time out: the
       // socket closing IS the answer, and six seconds of nothing is a worse

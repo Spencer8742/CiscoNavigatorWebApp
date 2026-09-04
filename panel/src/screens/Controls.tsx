@@ -5,7 +5,7 @@ import { Pressable } from '~/components/Pressable.tsx';
 import { Slider } from '~/components/Slider.tsx';
 import { controlPage, kiosk, markActivity, openSources } from '~/state/ui.ts';
 import { entity } from '~/state/entities.ts';
-import { keyLightFor, pressed, tvInputOf } from '~/state/controls.ts';
+import { keyLightFor, pressed, tvStateOf } from '~/state/controls.ts';
 import { pressControl, setKeyLight } from '~/net/socket.ts';
 import { KEY_LIGHT_MAX_KELVIN, KEY_LIGHT_MIN_KELVIN } from '@shared/protocol.ts';
 import { DeviceTile } from '~/components/DeviceTile.tsx';
@@ -179,6 +179,10 @@ function Page({ page }: { page: ControlPage }) {
 function MacroButton({ button }: { button: ControlButton }) {
   const confirming = pressed.value.has(button.id);
   const live = tvLabel(button);
+  // The input belongs in the accessible name too: the visible label is a
+  // second line under the key, and a screen reader that only ever hears
+  // "LG Input" is missing the half that changes.
+  const ariaLabel = live ? `${button.name}, ${live.text}` : button.name;
 
   return (
     <Pressable
@@ -190,7 +194,7 @@ function MacroButton({ button }: { button: ControlButton }) {
         pressControl(button.id);
         markActivity();
       }}
-      ariaLabel={button.name}
+      ariaLabel={ariaLabel}
     >
       {/* The tone drives colour and the confirmation is a separate
           attribute, so a danger button flashing its tick does not stop
@@ -207,31 +211,42 @@ function MacroButton({ button }: { button: ControlButton }) {
       <span class="macro-btn-name truncate">{button.name}</span>
       {/* What the television is actually on, under the key's own name. Only
           for a key that steps through inputs: everywhere else the panel has
-          nothing to report and a second line would be decoration. */}
-      {live !== undefined ? <span class="macro-btn-sub truncate">{live}</span> : null}
+          nothing to report and a second line would be decoration.
+
+          `data-assumed` marks the weaker claim — the input this panel last
+          selected, on a set that will not say what it is showing. It reads
+          the same, quieter, because it is usually right and is worth showing;
+          it is marked because it can be wrong and the panel should not
+          pretend otherwise. */}
+      {live !== null ? (
+        <span class="macro-btn-sub truncate" data-assumed={live.assumed ? '' : undefined}>
+          {live.text}
+        </span>
+      ) : null}
     </Pressable>
   );
 }
 
 /**
- * The current input, for a key that cycles them. Undefined for every other
- * key, so nothing else grows a second line.
+ * The current input, for a key that cycles them. Null for every other key, so
+ * nothing else grows a second line.
  *
- * An em dash when the TV is off or on something that is not an input. That is
- * the honest answer: keeping the last input would leave a confident, wrong
- * label on the button precisely when somebody has changed it elsewhere.
+ * An em dash when nothing at all is known — the set is off, or on something
+ * that is not an input. `assumed` marks an input the panel selected but the
+ * television has not confirmed, which is all there is to go on for a set that
+ * never reports its foreground app.
  */
-function tvLabel(button: ControlButton): string | undefined {
+function tvLabel(button: ControlButton): { text: string; assumed: boolean } | null {
   const action = button.actions.find((a) => a.kind === 'tv' && a.op === 'next');
-  if (!action || action.kind !== 'tv') return undefined;
+  if (!action || action.kind !== 'tv') return null;
 
-  const current = tvInputOf(action.tv);
-  if (!current) return '—';
+  const state = tvStateOf(action.tv);
+  if (!state?.input) return { text: '—', assumed: false };
 
   // Named the way the room names it, falling back to the socket id.
   const tv = controlsConfig.value.tvs.find((t) => t.id === action.tv);
-  const named = tv?.inputs.find((i) => i.source === current);
-  return named?.name ?? named?.source ?? current;
+  const named = tv?.inputs.find((i) => i.source === state.input);
+  return { text: named?.name ?? state.input, assumed: !state.confirmed };
 }
 
 /**

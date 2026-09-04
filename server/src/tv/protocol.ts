@@ -177,6 +177,13 @@ export interface TvInput {
   id: string;
   label: string;
   connected: boolean;
+  /**
+   * The app id webOS reports while this input is showing, when the set says
+   * so. This is the TV's own answer to "which app means which socket", and it
+   * is worth far more than guessing at the shape of the string — see
+   * `inputOfAppId`, which is only the fallback for sets that leave it out.
+   */
+  appId?: string;
 }
 
 /**
@@ -223,12 +230,14 @@ export function inputsOf(payload: Record<string, unknown> | undefined): TvInput[
     const id = row['id'];
     if (typeof id !== 'string' || !id) continue;
     const label = row['label'];
+    const appId = row['appId'];
     out.push({
       id,
       // The TV labels an unused socket with the socket's own name, so falling
       // back to the id loses nothing and keeps every input selectable.
       label: typeof label === 'string' && label ? label : id,
       connected: row['connected'] === true,
+      ...(typeof appId === 'string' && appId ? { appId } : {}),
     });
   }
   return out;

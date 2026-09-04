@@ -148,7 +148,7 @@ export class Controls {
     // worth a push from here. Each light's own state is pushed by the poll,
     // so broadcasting on every unrelated config edit would be noise.
     if (changed) this.#publish();
-    if (next.size > 0) void this.#refreshAll();
+    if (next.size > 0 || this.#tvs.size > 0) void this.#refreshAll();
   }
 
   /** Every light's current state, for `hello`. */
@@ -158,7 +158,14 @@ export class Controls {
 
   /** Every television's current state, for `hello`. */
   tvSnapshot(): TvState[] {
-    return [...this.#tvs.entries()].map(([id, tv]) => ({ id, input: tv.currentInput ?? null }));
+    return [...this.#tvs.entries()].map(([id, tv]) => {
+      const confirmed = tv.currentInput;
+      return {
+        id,
+        input: confirmed ?? tv.assumedInput ?? null,
+        confirmed: confirmed !== undefined,
+      };
+    });
   }
 
   stop(): void {
@@ -452,6 +459,19 @@ export class Controls {
   }
 
   async #refreshAll(): Promise<void> {
+    /*
+     * Televisions first, and independently of the lights: a set that is on
+     * should be connected whether or not this room has any key lights in it.
+     *
+     * Connecting is what subscribes to the foreground app, so this is also
+     * what puts the current input on the panel BEFORE anybody presses the
+     * key — and what picks the change up when somebody switches input with
+     * the TV's own remote. WebosClient.ensureConnected does nothing to a set
+     * that is already connected, and nothing at all to one that has never
+     * been paired.
+     */
+    await Promise.all([...this.#tvs.values()].map((tv) => tv.ensureConnected()));
+
     if (this.#lights.size === 0) return;
     const results = await Promise.all([...this.#lights.values()].map((l) => l.read()));
     if (results.some(Boolean)) this.#publish();
