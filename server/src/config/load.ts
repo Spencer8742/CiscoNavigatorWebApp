@@ -130,8 +130,24 @@ function bool(v: unknown, fallback: boolean, path: string): boolean {
 }
 
 function oneOf<T extends string>(v: unknown, allowed: readonly T[], fallback: T, path: string): T {
-  if (typeof v === 'string' && (allowed as readonly string[]).includes(v)) return v as T;
-  if (v !== undefined && v !== null) warn(path, allowed.join(' | '), v);
+  /*
+   * YAML 1.1 reads bare `on` and `off` as BOOLEANS, which is the single most
+   * common surprise in a config file like this one — and it is silent: an
+   * `action: on` arrives as `true`, matches nothing, and quietly takes the
+   * fallback. A TV power key written to turn the set ON became a toggle,
+   * which is worse than an error because it half works.
+   *
+   * Coerced back wherever the option list actually contains on/off, so
+   * `action: on` means what anybody writing it meant. Quoting still works.
+   */
+  let value = v;
+  if (typeof value === 'boolean') {
+    const word = value ? 'on' : 'off';
+    if ((allowed as readonly string[]).includes(word)) value = word;
+  }
+
+  if (typeof value === 'string' && (allowed as readonly string[]).includes(value)) return value as T;
+  if (value !== undefined && value !== null) warn(path, allowed.join(' | '), value);
   return fallback;
 }
 

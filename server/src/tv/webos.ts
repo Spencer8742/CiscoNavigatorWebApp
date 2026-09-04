@@ -67,6 +67,8 @@ export class WebosClient {
   #endpoint: string | undefined;
   /** The input the TV is showing, or undefined when we do not know. */
   #currentInput: string | undefined;
+  /** The last input WE asked for, used only to keep a cycle moving. */
+  #requestedInput: string | undefined;
   /** Called when the current input changes, so panels can be told. */
   #onInput: ((input: string | undefined) => void) | undefined;
 
@@ -158,7 +160,24 @@ export class WebosClient {
 
   /** `inputId` is the TV's own id — HDMI_2, not "HDMI 2". */
   async switchInput(inputId: string): Promise<string | null> {
-    return this.#command(URI.switchInput, { inputId });
+    const failure = await this.#command(URI.switchInput, { inputId });
+    if (!failure) this.#requestedInput = inputId;
+    return failure;
+  }
+
+  /**
+   * Where a cycle should count from — what the TV says, or failing that what
+   * we last asked for.
+   *
+   * Deliberately NOT the same as `currentInput`, which is what the label
+   * shows. The label may only claim what the television confirmed; a cycle
+   * just has to keep moving. Without this fallback, a set whose input
+   * reporting we cannot read leaves every press computing "unknown, so start
+   * at the first" — which looks exactly like a key that only ever selects one
+   * input.
+   */
+  get cycleAnchor(): string | undefined {
+    return this.#currentInput ?? this.#requestedInput;
   }
 
   /* ── Transport ─────────────────────────────────────────────────────────*/
@@ -325,12 +344,47 @@ export class WebosClient {
     // id, so unlike a request the handler is never removed.
     this.#pending.set(id, (frame) => {
       if (failureOf(frame)) return;
-      this.#setInput(inputOfAppId(frame.payload?.['appId']) ?? undefined);
+      const appId = frame.payload?.['appId'];
+      const input = inputOfAppId(appId);
+      // Say what was not understood. An app id in a shape this does not
+      // recognise is otherwise completely silent — the label stays blank and
+      // the cycle restarts every press, and nothing anywhere names the cause.
+      if (!input && typeof appId === 'string' && appId) {
+        log.debug(`${this.#opts.host} is showing "${appId}", which is not an input`);
+      }
+      this.#setInput(input ?? undefined);
     });
 
     socket.send(JSON.stringify({ id, type: 'subscribe', uri: URI.foregroundApp }), (err) => {
       if (err) this.#pending.delete(id);
     });
+
+    /*
+     * And ask once, outright.
+     *
+     * A subscription is supposed to deliver the current value first, and on
+     * most sets it does. Where it does not, the panel would show no input
+     * until somebody changed one — so the first question is asked directly
+     * rather than waited for.
+     */
+    void this.#request(URI.foregroundApp)
+      .then((frame) => {
+        if (failureOf(frame)) return;
+        /*
+         * Only when it actually answers the question.
+         *
+         * A response carrying no `appId` at all is not "the TV is on
+         * nothing", it is "this reply does not say" — and treating the two
+         * alike lets a late, empty answer to this one-shot query wipe out an
+         * input the SUBSCRIPTION had already reported. Which is a race the
+         * panel would show as a label that appears and then vanishes.
+         */
+        if (!('appId' in (frame.payload ?? {}))) return;
+        this.#setInput(inputOfAppId(frame.payload?.['appId']) ?? undefined);
+      })
+      .catch(() => {
+        // The set answered the subscribe and not this; not worth a word.
+      });
   }
 
   #setInput(next: string | undefined): void {

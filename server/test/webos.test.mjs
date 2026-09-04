@@ -24,7 +24,7 @@ async function waitFor(check, what, timeoutMs = 4000) {
  * the source is TypeScript with path aliases, and testing what actually ships
  * beats testing something transpiled a second way.
  */
-const { WebosClient, endpointsFor } = await import('../dist/testkit.js');
+const { WebosClient, endpointsFor, inputOfAppId } = await import('../dist/testkit.js');
 
 const PORT = 19810;
 let tv;
@@ -240,6 +240,66 @@ describe('what the TV is showing', () => {
 
     await gone.stop();
     await waitFor(() => c.currentInput === undefined, 'the input to become unknown');
+    await c.stop();
+  });
+});
+
+describe('when the TV will not say what it is showing', () => {
+  /*
+   * Reported from the real set: the input key only ever selected the first
+   * input, and showed no label. Both are the same failure — the current
+   * input was never known — and the app id is the likeliest reason: webOS
+   * reports external inputs under more than one shape, and matching only
+   * `com.webos.app.hdmiN` leaves the rest silently unrecognised.
+   */
+
+  test('an input is recognised in every shape webOS uses', () => {
+    assert.equal(inputOfAppId('com.webos.app.hdmi2'), 'HDMI_2');
+    assert.equal(inputOfAppId('com.webos.app.externalinput.hdmi3'), 'HDMI_3');
+    assert.equal(inputOfAppId('com.webos.app.hdmi2_1'), 'HDMI_2');
+  });
+
+  test('something that is not an input stays not an input', () => {
+    // A real answer, not a missing one: the set is on Netflix.
+    assert.equal(inputOfAppId('com.webos.app.livetv'), null);
+    assert.equal(inputOfAppId('netflix'), null);
+    assert.equal(inputOfAppId(undefined), null);
+  });
+
+  test('a cycle still moves when the TV never reports an input', async () => {
+    // The anchor falls back to what we last ASKED for. Without it every press
+    // computes "unknown, so start at the first", which is exactly the
+    // "only works for one input" symptom.
+    const c = client({ keyFile: join(keyDir, 'anchor.json') });
+    assert.equal(c.cycleAnchor, undefined, 'nothing known before any press');
+
+    await c.switchInput('HDMI_3');
+    assert.equal(c.cycleAnchor, 'HDMI_3', 'the last request anchors the next step');
+    await c.stop();
+  });
+
+  test('but the label only ever claims what the set confirmed', async () => {
+    /*
+     * A television that accepts the command and never reports back — the
+     * shape of set this whole suite exists for. The cycle must keep moving
+     * from what we asked for, while the LABEL stays silent: a command that
+     * was accepted is not a television that did it.
+     */
+    tv.reportsInput = false;
+    tv.foregroundAppId = undefined;
+
+    const c = client({ keyFile: join(keyDir, 'claim.json') });
+    const failed = await c.switchInput('HDMI_3');
+    assert.equal(failed, null, 'precondition: the set accepts the command');
+
+    assert.equal(c.cycleAnchor, 'HDMI_3', 'the cycle still knows where it got to');
+    assert.equal(
+      c.currentInput,
+      undefined,
+      'but an unreported input is never shown as though the TV said so',
+    );
+
+    tv.reportsInput = true;
     await c.stop();
   });
 });
