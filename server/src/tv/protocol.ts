@@ -111,6 +111,20 @@ export const URI = {
 } as const;
 
 /**
+ * Which input a foreground app id means, or null for anything else.
+ *
+ * External inputs are apps to webOS: HDMI 3 is `com.webos.app.hdmi3`. So the
+ * app in the foreground IS the current input, when it happens to be one — and
+ * when it is Netflix it is not an input at all, which is a real answer rather
+ * than a missing one.
+ */
+export function inputOfAppId(appId: unknown): string | null {
+  if (typeof appId !== 'string') return null;
+  const match = /^com\.webos\.app\.hdmi(\d+)$/i.exec(appId.trim());
+  return match ? `HDMI_${match[1]}` : null;
+}
+
+/**
  * Where to try, in order.
  *
  * webOS moved: sets from roughly 2020 on (webOS 5 and later) serve SSAP over

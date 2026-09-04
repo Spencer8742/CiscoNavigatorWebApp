@@ -14,7 +14,6 @@ import { EntitySheet } from '~/components/EntitySheet.tsx';
 import { SourcesSheet } from '~/components/SourcesSheet.tsx';
 import { DeviceSourceSheet } from '~/components/DeviceSourceSheet.tsx';
 import { DeviceAlertsSheet } from '~/components/DeviceAlertsSheet.tsx';
-import { TvInputSheet } from '~/components/TvInputSheet.tsx';
 import { castConfig, ui } from '~/config/index.ts';
 import { connectionProblem, kiosk, ready, route, screensaverActive } from '~/state/ui.ts';
 import { isCastDashboard, isCastMode, startCastReceiver } from '~/lib/cast.ts';
@@ -127,7 +126,6 @@ export function App() {
       <SourcesSheet />
       <DeviceSourceSheet />
       <DeviceAlertsSheet />
-      <TvInputSheet />
       <Toast />
     </ErrorBoundary>
   );

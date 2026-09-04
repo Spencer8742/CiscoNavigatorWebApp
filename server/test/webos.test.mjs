@@ -6,6 +6,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MockWebosTv } from './mock-webos.mjs';
 
+/** Poll until `check` is truthy, or fail with `what`. */
+async function waitFor(check, what, timeoutMs = 4000) {
+  const until = Date.now() + timeoutMs;
+  for (;;) {
+    const value = await check();
+    if (value) return value;
+    if (Date.now() > until) assert.fail(`Timed out waiting for: ${what}`);
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
 /*
  * The webOS client, against a mock television that speaks real SSAP.
  *
@@ -195,6 +206,40 @@ describe('commands', () => {
     assert.ok(error, 'the refusal must surface as an error');
     assert.match(error, /Refused by the TV/);
     tv.refuse.delete('ssap://system/turnOff');
+    await c.stop();
+  });
+});
+
+describe('what the TV is showing', () => {
+  /*
+   * The panel labels its input key with the live input, so it has to know
+   * one. webOS reports it as the foreground APP — an external input is an app
+   * — and pushes updates on a subscription, which is how the label follows
+   * the television's own remote and not only this panel's keys.
+   */
+
+  test('an input change on the TV reaches the client', async () => {
+    const c = client({ keyFile: join(keyDir, 'watch.json') });
+    await c.switchInput('HDMI_2');
+
+    await waitFor(() => c.currentInput === 'HDMI_2', 'the input to be reported back');
+    await c.switchInput('HDMI_3');
+    await waitFor(() => c.currentInput === 'HDMI_3', 'and to follow a second change');
+    await c.stop();
+  });
+
+  test('a set that goes away stops claiming an input', async () => {
+    // Keeping the last value would leave a confident, wrong label on the
+    // button for as long as the television stayed off.
+    const gone = new MockWebosTv(19833);
+    await gone.start();
+
+    const c = new WebosClient({ host: '127.0.0.1:19833', keyFile: join(keyDir, 'gone.json') });
+    await c.switchInput('HDMI_2');
+    await waitFor(() => c.currentInput === 'HDMI_2', 'an input to be known first');
+
+    await gone.stop();
+    await waitFor(() => c.currentInput === undefined, 'the input to become unknown');
     await c.stop();
   });
 });

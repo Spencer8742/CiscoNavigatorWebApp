@@ -68,6 +68,7 @@ export const homeConfig = computed(() => config.value.home);
 export const mediaConfig = computed(() => config.value.media);
 export const castConfig = computed(() => config.value.cast);
 export const controlPages = computed(() => config.value.controls.pages);
+export const controlsConfig = computed(() => config.value.controls);
 
 /** Options bundle for lib/format.ts, derived once instead of at each call site. */
 export const timeOpts = computed(() => ({

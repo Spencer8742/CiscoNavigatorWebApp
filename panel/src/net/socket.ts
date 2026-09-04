@@ -2,7 +2,7 @@ import { Backoff } from '@shared/backoff.ts';
 import { socketUrl } from '~/net/auth.ts';
 import { applyPatch, applySnapshot } from '~/state/entities.ts';
 import { setPlayers } from '~/state/players.ts';
-import { clearPressed, keyLights, markPressed } from '~/state/controls.ts';
+import { clearPressed, keyLights, markPressed, tvs } from '~/state/controls.ts';
 import { setConfig } from '~/config/index.ts';
 import { connectionProblem, health, prefs, ready, showToast, socketState } from '~/state/ui.ts';
 import { diagnose } from '~/net/diagnose.ts';
@@ -181,6 +181,7 @@ function handle(msg: ServerMessage): void {
       prefs.value = msg.prefs;
       setPlayers(msg.players, msg.queues);
       keyLights.value = msg.keylights;
+      tvs.value = msg.tvs;
       socketState.value = 'connected';
       ready.value = true;
       // Clear any diagnosis: whatever was wrong is now demonstrably fixed.
@@ -203,6 +204,10 @@ function handle(msg: ServerMessage): void {
 
     case 'keylights':
       keyLights.value = msg.lights;
+      break;
+
+    case 'tvs':
+      tvs.value = msg.tvs;
       break;
 
     case 'config':
@@ -399,11 +404,6 @@ export function setKeyLight(light: string, op: KeyLightOp, value?: number): bool
  */
 export function selectControlSource(item: string, value: string): boolean {
   return send({ t: 'source', id: nextId(), item, value });
-}
-
-/** Choose an input on a `tv:` picker — a television driven directly. */
-export function selectTvInput(item: string, input: string): boolean {
-  return send({ t: 'tvinput', id: nextId(), item, input });
 }
 
 /**

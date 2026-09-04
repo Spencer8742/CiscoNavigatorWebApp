@@ -9,6 +9,7 @@ import type {
   BrowseRequest,
   BrowseResult,
   KeyLightState,
+  TvState,
   MassPlayer,
   MassQueue,
   PanelPrefs,
@@ -65,13 +66,12 @@ export interface HubDeps {
   onLayout?: (layout: unknown) => string | null;
   /** Current Elgato Key Light states, sent in `hello`. */
   getKeyLights: () => KeyLightState[];
+  getTvs: () => TvState[];
   /** Run a macro button by id. Returns an error string, or null. */
   onControl?: (button: string) => Promise<string | null>;
   /** Drive a key light. Returns an error string, or null. */
   onKeyLight?: (light: string, op: KeyLightOp, value?: number) => Promise<string | null>;
   /** Choose an input on a `sources:` key. Returns an error string, or null. */
-  /** Choose an input on a TV driven directly. */
-  onTvInput?: (item: string, input: string) => Promise<string | null>;
   onSource?: (item: string, value: string) => Promise<string | null>;
 }
 
@@ -160,6 +160,7 @@ export class Hub {
       players: music.players,
       queues: music.queues,
       keylights: this.#deps.getKeyLights(),
+      tvs: this.#deps.getTvs(),
     });
   }
 
@@ -260,15 +261,6 @@ export class Hub {
         break;
       }
 
-      case 'tvinput': {
-        if (!this.#deps.onTvInput) return;
-        const problem = await this.#deps.onTvInput(msg.item, msg.input);
-        if (problem) {
-          this.#send(panel, { t: 'error', ref: msg.id, code: 'source_failed', message: problem });
-        }
-        break;
-      }
-
       case 'photos': {
         if (!this.#deps.onPhotos) {
           this.#send(panel, { t: 'photos', photos: [] });
@@ -333,6 +325,10 @@ export class Hub {
 
   broadcastKeyLights(lights: KeyLightState[]): void {
     this.broadcast({ t: 'keylights', lights });
+  }
+
+  broadcastTvs(tvs: TvState[]): void {
+    this.broadcast({ t: 'tvs', tvs });
   }
 
   #send(panel: Panel, msg: ServerMessage): void {

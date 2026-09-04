@@ -5,6 +5,7 @@ import { logger } from '~/lib/log.ts';
 import {
   URI,
   endpointsFor,
+  inputOfAppId,
   failureOf,
   inputsOf,
   isAuthFailure,
@@ -64,6 +65,10 @@ export class WebosClient {
   #connecting: Promise<void> | undefined;
   /** The endpoint that last worked, tried first next time. */
   #endpoint: string | undefined;
+  /** The input the TV is showing, or undefined when we do not know. */
+  #currentInput: string | undefined;
+  /** Called when the current input changes, so panels can be told. */
+  #onInput: ((input: string | undefined) => void) | undefined;
 
   constructor(opts: WebosOptions) {
     this.#opts = opts;
@@ -71,6 +76,23 @@ export class WebosClient {
 
   get host(): string {
     return this.#opts.host;
+  }
+
+  /**
+   * The input the TV is on, or undefined when it is off or showing something
+   * that is not an input at all.
+   *
+   * Undefined is a real answer and is rendered as one. Guessing "probably
+   * still the last one" would put a label on a button that is wrong exactly
+   * when somebody has changed the input behind the panel's back.
+   */
+  get currentInput(): string | undefined {
+    return this.#currentInput;
+  }
+
+  /** Watch for input changes. One listener; the runner owns it. */
+  onInputChange(fn: (input: string | undefined) => void): void {
+    this.#onInput = fn;
   }
 
   /** True once the TV has handed us a key — i.e. pairing is done. */
@@ -284,6 +306,37 @@ export class WebosClient {
     this.#socket = socket;
     this.#attach(socket);
     await this.#register(socket);
+    this.#watchInput(socket);
+  }
+
+  /**
+   * Subscribe to the foreground app, which is how webOS reports the input.
+   *
+   * A subscription rather than a poll. The socket is already open while the
+   * TV is on, so updates cost nothing and arrive when the input actually
+   * changes — including when somebody uses the TV's own remote. Polling would
+   * mean repeatedly opening connections to a device that spends most of its
+   * life asleep, to answer a question it will tell us the answer to.
+   */
+  #watchInput(socket: WebSocket): void {
+    const id = String(this.#nextId++);
+
+    // Stays registered for the life of the socket: every update reuses this
+    // id, so unlike a request the handler is never removed.
+    this.#pending.set(id, (frame) => {
+      if (failureOf(frame)) return;
+      this.#setInput(inputOfAppId(frame.payload?.['appId']) ?? undefined);
+    });
+
+    socket.send(JSON.stringify({ id, type: 'subscribe', uri: URI.foregroundApp }), (err) => {
+      if (err) this.#pending.delete(id);
+    });
+  }
+
+  #setInput(next: string | undefined): void {
+    if (next === this.#currentInput) return;
+    this.#currentInput = next;
+    this.#onInput?.(next);
   }
 
   /** Open one endpoint, or throw. */
@@ -336,6 +389,10 @@ export class WebosClient {
 
     socket.on('close', () => {
       if (this.#socket === socket) this.#socket = undefined;
+      // The TV is gone, so what it was showing is no longer known. Keeping
+      // the last value would leave a stale input on the panel for as long as
+      // the set stays off.
+      this.#setInput(undefined);
       // Fail anything still waiting rather than leaving it to time out: the
       // socket closing IS the answer, and six seconds of nothing is a worse
       // way to deliver it.

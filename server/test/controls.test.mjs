@@ -260,20 +260,27 @@ describe('control pages', () => {
     const pages = panel.config.controls.pages;
     // Order is preserved from the file; membership is checked loosely so
     // adding a page to the fixture does not fail a test about button shape.
-    assert.deepEqual(pages.map((p) => p.id), ['deskpro', 'scenes', 'av', 'desk', 'lights']);
+    assert.deepEqual(pages.map((p) => p.id), [
+      'deskpro',
+      'scenes',
+      'av',
+      'desk',
+      'combo',
+      'lights',
+    ]);
 
     const join = page('deskpro').items[0];
     assert.equal(join.type, 'button');
     assert.equal(join.wide, true);
     assert.equal(join.tone, 'accent');
-    assert.deepEqual(join.action, { kind: 'companion', page: 1, row: 0, column: 0 });
+    assert.deepEqual(join.actions, [{ kind: 'companion', page: 1, row: 0, column: 0 }]);
   });
 
   test('accept all three Companion coordinate spellings', () => {
     const [slashes, object, array] = page('deskpro').items;
-    assert.deepEqual(slashes.action, { kind: 'companion', page: 1, row: 0, column: 0 });
-    assert.deepEqual(object.action, { kind: 'companion', page: 1, row: 0, column: 1 });
-    assert.deepEqual(array.action, { kind: 'companion', page: 9, row: 9, column: 9 });
+    assert.deepEqual(slashes.actions, [{ kind: 'companion', page: 1, row: 0, column: 0 }]);
+    assert.deepEqual(object.actions, [{ kind: 'companion', page: 1, row: 0, column: 1 }]);
+    assert.deepEqual(array.actions, [{ kind: 'companion', page: 9, row: 9, column: 9 }]);
   });
 
   test('a bare `light:` item is a control, not a button', () => {
@@ -287,11 +294,9 @@ describe('control pages', () => {
 
   test('a scene button defaults to turn_on without a `service:`', () => {
     const movie = page('scenes').items[0];
-    assert.deepEqual(movie.action, {
-      kind: 'entity',
-      entity: 'scene.movie_night',
-      service: 'turn_on',
-    });
+    assert.deepEqual(movie.actions, [
+      { kind: 'entity', entity: 'scene.movie_night', service: 'turn_on' },
+    ]);
   });
 });
 
@@ -343,6 +348,42 @@ describe('Companion buttons', () => {
 
 /* ── Home Assistant ───────────────────────────────────────────────────────*/
 
+describe('a key with more than one action', () => {
+  /*
+   * One key is often one INTENTION carried out in several places: "power the
+   * office on" is a Companion macro AND a television Companion cannot reach.
+   * Splitting that across two keys makes the person pressing them responsible
+   * for remembering the pair.
+   */
+
+  test('runs every action, in order', async () => {
+    companion.presses.length = 0;
+    ha.webhooks.length = 0;
+    panel.press('combo.both');
+
+    await waitFor(
+      () => ha.webhooks.some((w) => w.id === 'combo_second'),
+      'the second action to run',
+    );
+    assert.equal(companion.presses.length, 1, 'and the first to have run too');
+  });
+
+  test('stops at the first failure', async () => {
+    // Carrying on would leave the room half-started while the panel reported
+    // only whatever the last action did.
+    ha.webhooks.length = 0;
+    const ref = panel.press('combo.stops');
+    const error = await panel.errorFor(ref);
+
+    assert.ok(error, 'the failure must reach the panel');
+    assert.equal(
+      ha.webhooks.some((w) => w.id === 'combo_never'),
+      false,
+      'the action after a failed one must not run',
+    );
+  });
+});
+
 describe('Home Assistant buttons', () => {
   test('fire a webhook', async () => {
     ha.webhooks.length = 0;
@@ -381,7 +422,7 @@ describe('media player keys', () => {
     assert.equal(input.type, 'sources');
     assert.equal(input.entity, 'media_player.tv');
     // No action: the panel opens a sheet, it does not send anything on tap.
-    assert.equal(input.action, undefined);
+    assert.equal(input.actions, undefined);
   });
 
   test('a `sources:` item aimed at a non-media_player is dropped', () => {

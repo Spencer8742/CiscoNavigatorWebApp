@@ -326,6 +326,14 @@ export type ControlAction =
   /** Drive an Elgato Key Light listed in `controls.keylights`. */
   | { kind: 'keylight'; light: string; op: KeyLightOp; value?: number }
   /**
+   * Drive a television listed in `controls.tvs`, over its own protocol.
+   *
+   * `power` decides its direction from whether the set answers; `input`
+   * switches to a named socket, and `next` cycles the configured inputs,
+   * which is what a two-input room actually wants from one key.
+   */
+  | { kind: 'tv'; tv: string; op: 'on' | 'off' | 'toggle' | 'input' | 'next'; input?: string }
+  /**
    * Call a Home Assistant service, exactly as a dashboard tile does.
    *
    * Goes through the same ServiceGuard as everything else, and the entity is
@@ -362,7 +370,16 @@ export interface ControlButton {
   tone: ControlTone;
   /** Twice the width in the grid, for a primary action like Join. */
   wide: boolean;
-  action: ControlAction;
+  /**
+   * What the press does. More than one runs in order, stopping at the first
+   * failure.
+   *
+   * A list because one key is often one INTENTION carried out in several
+   * places: "power the office on" is a Companion macro and a television that
+   * Companion cannot reach. Splitting that across two keys makes the person
+   * pressing them responsible for remembering the pair.
+   */
+  actions: ControlAction[];
 }
 
 /**
@@ -389,46 +406,6 @@ export interface ControlLight {
  * hand-written list would be a second copy of something the device already
  * knows, and second copies go stale.
  */
-/**
- * A key that drives a TV from `controls.tvs` directly.
- *
- * `action` is what the press does: `toggle` decides its direction from
- * whether the set answers, `on` sends a wake packet, `off` asks it to sleep.
- *
- * Unlike the Companion keys elsewhere, this one CAN be honest about state —
- * reachability is the power state on webOS — but it deliberately does not
- * poll for it. See tv/webos.ts: asking costs a TCP connection to a device
- * that may be asleep, and doing that every few seconds to a television is
- * worse manners than leaving the key stateless.
- */
-export interface ControlTv {
-  type: 'tv';
-  id: string;
-  name: string;
-  icon: string;
-  /** A tv id from `controls.tvs`. */
-  tv: string;
-  action: 'toggle' | 'on' | 'off';
-}
-
-/** A key that opens the input picker for a TV in `controls.tvs`. */
-export interface ControlTvInput {
-  type: 'tvInput';
-  id: string;
-  name: string;
-  icon: string;
-  tv: string;
-  /**
-   * The inputs to offer, copied from the TV's entry at load.
-   *
-   * Carried on the item so the panel can draw the picker without asking:
-   * a curated list is a static assertion about what is plugged in, and
-   * round-tripping to a television to render a menu would make the menu
-   * unopenable exactly when the set is off.
-   */
-  inputs: SourceRef[];
-}
-
 export interface ControlSources {
   type: 'sources';
   id: string;
@@ -596,13 +573,7 @@ export interface DeviceEntities {
   stopSharing?: string;
 }
 
-export type ControlItem =
-  | ControlButton
-  | ControlLight
-  | ControlSources
-  | ControlDevice
-  | ControlTv
-  | ControlTvInput;
+export type ControlItem = ControlButton | ControlLight | ControlSources | ControlDevice;
 
 export interface ControlPage {
   id: string;
@@ -747,7 +718,11 @@ export function allReferencedEntities(cfg: DashboardConfig): Set<string> {
   // permission to fire it, and nothing else does.
   for (const page of cfg.controls.pages) {
     for (const item of page.items) {
-      if (item.type === 'button' && item.action.kind === 'entity') add(item.action.entity);
+      if (item.type === 'button') {
+        for (const action of item.actions) {
+          if (action.kind === 'entity') add(action.entity);
+        }
+      }
       // A source picker both READS the entity (for source_list) and calls
       // select_source on it, so it needs the same allow-listing as a tile.
       if (item.type === 'sources') add(item.entity);
@@ -760,7 +735,9 @@ export function allReferencedEntities(cfg: DashboardConfig): Set<string> {
         // A tile's own keys are keys: one calling a service needs the same
         // allow-listing as one sitting in the grid below.
         for (const key of item.keys) {
-          if (key.action.kind === 'entity') add(key.action.entity);
+          for (const action of key.actions) {
+            if (action.kind === 'entity') add(action.entity);
+          }
         }
       }
     }
