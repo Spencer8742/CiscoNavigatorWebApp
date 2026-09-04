@@ -455,7 +455,7 @@ controls:
   #    # Worth setting whenever the keys come in pairs. Auto-fitting packs as
   #    # many 8rem keys per row as fit and wraps wherever it runs out — on an
   #    # eight-key page that left seven on one row and one stranded below, and
-  #    # put Camera Off beside Vol +, which have nothing to do with each other.
+  #    # put Shut Down beside Vol +, which have nothing to do with each other.
   #    # Naming the count puts the wrap where the meaning is.
   #    columns: 4
   #    # md | lg. `lg` roughly doubles the key height. A page of eight keys has
@@ -576,7 +576,7 @@ controls:
   #  #
   #  # Needs github.com/Spencer8742/HomeAssistantCiscoRoomOS in Home Assistant.
   #  #
-  #  # `prefix:` is the device's slug in Home Assistant and derives all 25
+  #  # `prefix:` is the device's slug in Home Assistant and derives all 26
   #  # entity ids from it — sensor.desk_pro_ambient_noise,
   #  # switch.desk_pro_microphone_mute, button.desk_pro_join_next_meeting and
   #  # so on. Any slot may be written out to override the guess, or set to
@@ -593,7 +593,7 @@ controls:
   #
   #          # Read:   standby noise people meetings uptime ip version alerts
   #          #         inCall sharing
-  #          # Toggle: mic speaker dnd selfview
+  #          # Toggle: mic camera speaker dnd selfview
   #          # Set:    volume shareSource
   #          # Press:  wake sleep answer hangUp join refreshMeetings
   #          #         shareLocal shareToCall stopSharing
@@ -602,14 +602,23 @@ controls:
   #          # volume: number.desk_pro_speaker_volume
   #          # selfview: null
   #
-  #      # Two things the integration does not expose, so the tile cannot:
-  #      #
-  #      #   CAMERA MUTE. It has `selfview`, which is the local preview, not
-  #      #   the outgoing video. If a Companion key turns your camera off
-  #      #   today, keep that key — like these two.
+  #          # Keys drawn INSIDE the tile, in the row with Mic and Speaker,
+  #          # for something the integration does not expose. They are
+  #          # ordinary keys — a Companion press has no feedback, so they
+  #          # confirm with a tick and claim nothing about the result.
+  #          #
+  #          # keys:
+  #          #   - { name: Lights, icon: bulb, companion: 1/3/0 }
+  #
+  #      # One gap the tile cannot close:
   #      #
   #      #   PER-MEETING JOIN. There is only `join_next_meeting`, so the tile
-  #      #   puts Join on the next booking's row alone. A Join on the 12:00 row
-  #      #   that started the 9:00 meeting is worse than no button.
-  #      - { name: Camera On,  icon: camera,    companion: 1/2/1 }
-  #      - { name: Camera Off, icon: cameraOff, companion: 1/2/0 }
+  #      #   puts Join on the row that button will actually dial, and only in
+  #      #   the five minutes before it starts. A Join on the 12:00 row that
+  #      #   started the 9:00 meeting is worse than no button.
+  #      #
+  #      # Camera mute USED to be a gap here, covered by two Companion keys.
+  #      # cisco_roomos 0.6.0 exposes switch.<device>_camera_mute, so the tile
+  #      # has a real Camera toggle and those keys should be deleted — a key
+  #      # that only says "the press was sent" is strictly worse than a toggle
+  #      # that reads the camera back.

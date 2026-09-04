@@ -568,7 +568,7 @@ export interface ControlPage {
    * Worth setting whenever a page's keys come in pairs. Auto-fitting packs
    * as many 8rem keys per row as fit and wraps wherever it runs out, which
    * on an eight-key page left seven on one row and one stranded on the next
-   * — and put Camera Off next to Vol +, which are not related to each other.
+   * — and put Shut Down next to Vol +, which are not related to each other.
    * Naming the count puts the wrap where the meaning is.
    */
   columns: number;

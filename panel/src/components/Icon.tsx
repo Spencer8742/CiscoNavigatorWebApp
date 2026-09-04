@@ -97,14 +97,6 @@ const ICONS: Record<string, PathSpec> = {
       'M8 20h8',
     ],
   },
-  /*
-   * Selfview — the local preview, drawn as picture-in-picture.
-   *
-   * It cannot be the `camera` glyph: with camera on/off keys sitting in the
-   * same row, Selfview and Camera On rendered as the identical icon, and the
-   * two mean very different things — one is what you see, the other is what
-   * the far end sees.
-   */
   /* Four corners pushing outward — the standard "go full screen" mark. Its
      pair, `collapse`, is the same corners pulled back in, so the two read as
      one control in two states rather than as two different buttons. */
@@ -124,6 +116,14 @@ const ICONS: Record<string, PathSpec> = {
       'M3.5 15H8a1 1 0 0 1 1 1v4.5',
     ],
   },
+  /*
+   * Selfview — the local preview, drawn as picture-in-picture.
+   *
+   * It cannot be the `camera` glyph, and that matters more now than when it
+   * was written: Selfview and the Camera toggle sit side by side in the same
+   * row, and they mean opposite things — one is what you see, the other is
+   * what the far end sees.
+   */
   pip: {
     d: [
       'M3.5 6.5h17a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-17a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z',
