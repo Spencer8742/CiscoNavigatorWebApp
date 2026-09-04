@@ -123,6 +123,28 @@
     Mask="true"/>
 
   <Config
+    Name="Sonos Speaker IP"
+    Target="SONOS_HOST"
+    Default=""
+    Mode=""
+    Description="The IP address of ONE Sonos speaker - for example 192.168.1.51. From any single player the panel learns your whole household: every room, every group and every other speaker's address. Find it in the Sonos app under Settings, System, About My System. Give the speaker a DHCP reservation on your router so the address does not change. UPnP must be enabled in the Sonos app under Settings, App Preferences, Privacy - it is on by default, and turning it off stops every local integration. Leave empty to disable Sonos."
+    Type="Variable"
+    Display="always"
+    Required="false"
+    Mask="false"/>
+
+  <Config
+    Name="Sonos Discovery"
+    Target="SONOS_DISCOVERY"
+    Default="0"
+    Mode=""
+    Description="Set to 1 to search the network for a speaker when Sonos Speaker IP is empty. Usually does NOT work in Docker: discovery uses multicast, which does not cross a bridge network. Prefer setting the address above."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false"/>
+
+  <Config
     Name="Companion URL"
     Target="COMPANION_URL"
     Default=""
