@@ -1422,6 +1422,19 @@
   font-size: 1.0625rem;
 }
 
+/* The live value under a key's name — which input a TV is actually on.
+   Quieter and smaller than the name: the name says what the key IS, this
+   says what the thing at the other end is doing, and mixing the two at one
+   weight makes the key hard to read at a glance. */
+.macro-btn-sub {
+  max-width: 100%;
+  margin-top: -0.125rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
 /* The glyph is sized by an SVG width/height attribute, which CSS outranks.
    A 1.75rem icon centred in a 9rem key reads as a mistake. */
 .macro-grid[data-size='lg'] .macro-btn-icon,

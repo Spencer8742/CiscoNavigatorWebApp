@@ -339,7 +339,7 @@ function validate(raw: unknown): DashboardConfig {
     controls: {
       keylights: keyLightList(controlsRaw['keylights']),
       tvs: tvsParsed,
-      pages: linkTvInputs(controlPages(controlsRaw['pages']), tvsParsed),
+      pages: controlPages(controlsRaw['pages']),
       // 15s is a compromise: fast enough that turning a light off at the
       // light is reflected before anyone reaches the panel, slow enough that
       // two lights cost four requests a minute.
@@ -443,47 +443,6 @@ function displayList(v: unknown): CastDisplay[] {
    understood is DROPPED with a warning rather than defaulted, because there
    is no sensible default for "what should this button do" and a button that
    silently does the wrong thing is worse than one that is missing. */
-
-/**
- * Copy each TV's curated inputs onto the pickers that point at it.
- *
- * Done here rather than in controlItems() because a page is parsed before the
- * registry it references — the pages section may even sit above `tvs:` in the
- * file, and config should not depend on the order things are written in.
- *
- * A picker whose TV has no `inputs:` is left empty and warned about. It would
- * otherwise render a menu with nothing in it, which reads as a broken panel
- * rather than as an unfinished config.
- */
-function linkTvInputs(pages: ControlPage[], tvs: TvConfig[]): ControlPage[] {
-  const byId = new Map(tvs.map((t) => [t.id, t]));
-
-  for (const page of pages) {
-    for (const item of page.items) {
-      if (item.type !== 'tvInput' && item.type !== 'tv') continue;
-
-      const tv = byId.get(item.tv);
-      if (!tv) {
-        log.warn(
-          `controls.pages: "${item.id}" points at tv "${item.tv}", which is not in controls.tvs`,
-        );
-        continue;
-      }
-      if (item.type !== 'tvInput') continue;
-
-      if (tv.inputs.length === 0) {
-        log.warn(
-          `controls.pages: "${item.id}" opens an input picker for "${tv.id}", ` +
-            'which lists no `inputs:` — the picker will ask the TV, and will be ' +
-            'empty while it is off',
-        );
-      }
-      item.inputs = tv.inputs;
-    }
-  }
-
-  return pages;
-}
 
 function tvList(v: unknown): TvConfig[] {
   if (v === undefined || v === null) return [];
@@ -696,47 +655,6 @@ function controlItems(
     }
 
     /*
-     * `tv:` points at an entry in `controls.tvs` and makes this key drive
-     * that television directly. Checked before the action forms because
-     * `tv: office_lg` is the same shape as an `entity:` key and would
-     * otherwise be read as one.
-     */
-    const tv = raw['tv'];
-    if (typeof tv === 'string' && tv.trim()) {
-      const target = tv.trim();
-      seen.add(id);
-
-      // With an `action:` it is a power key; without one it is the input
-      // picker. Naming the action is what distinguishes them, because "press
-      // this to open a menu" and "press this to turn the TV off" should not
-      // look identical in YAML.
-      const action = raw['action'];
-      if (action === undefined || action === null) {
-        out.push({
-          type: 'tvInput',
-          id,
-          tv: target,
-          name: str(raw['name'], 'Input', `${itemPath}.name`),
-          icon: str(raw['icon'], 'input', `${itemPath}.icon`),
-          // Resolved later, once controls.tvs is parsed — the pages are read
-          // before the registry they point at.
-          inputs: [],
-        });
-        return;
-      }
-
-      out.push({
-        type: 'tv',
-        id,
-        tv: target,
-        name: str(raw['name'], 'TV', `${itemPath}.name`),
-        icon: str(raw['icon'], 'tv', `${itemPath}.icon`),
-        action: oneOf(action, ['toggle', 'on', 'off'] as const, 'toggle', `${itemPath}.action`),
-      });
-      return;
-    }
-
-    /*
      * `sources:` names a media player and makes this key a picker rather
      * than a button. Checked before the action forms because it is the same
      * shape as one and would otherwise be read as an `entity:` key.
@@ -773,18 +691,37 @@ function controlItems(
       return;
     }
 
-    const action = controlAction(raw, itemPath);
-    if (!action) return;
+    /*
+     * One key, one or more actions.
+     *
+     * `actions:` is a list of the same shapes a single key takes, so
+     * everything below reads the same whether it appears once or in a list.
+     * A key with neither is not a key.
+     */
+    const listed = raw['actions'];
+    const actions: ControlAction[] = [];
+
+    if (Array.isArray(listed)) {
+      listed.forEach((entry, n) => {
+        const one = controlAction(obj(entry), `${itemPath}.actions[${n}]`);
+        if (one) actions.push(one);
+      });
+    } else {
+      const single = controlAction(raw, itemPath);
+      if (single) actions.push(single);
+    }
+
+    if (actions.length === 0) return;
 
     seen.add(id);
     out.push({
       type: 'button',
       id,
       name: str(raw['name'], id, `${itemPath}.name`),
-      icon: str(raw['icon'], defaultIcon(action), `${itemPath}.icon`),
+      icon: str(raw['icon'], defaultIcon(actions[0]), `${itemPath}.icon`),
       tone: oneOf(raw['tone'], CONTROL_TONES, 'default', `${itemPath}.tone`),
       wide: bool(raw['wide'], false, `${itemPath}.wide`),
-      action,
+      actions,
     });
   });
 
@@ -792,8 +729,10 @@ function controlItems(
 }
 
 /** So a page of buttons is legible without an `icon:` on every line. */
-function defaultIcon(action: ControlAction): string {
-  switch (action.kind) {
+function defaultIcon(action: ControlAction | undefined): string {
+  switch (action?.kind) {
+    case 'tv':
+      return 'tv';
     case 'companion':
       return 'grid';
     case 'webhook':
@@ -802,6 +741,10 @@ function defaultIcon(action: ControlAction): string {
       return 'bulb';
     case 'entity':
       return action.entity.startsWith('scene.') ? 'scene' : 'script';
+    default:
+      // No action, or one added without a glyph. `grid` is the fallback the
+      // panel already draws for an unknown icon, so this matches it.
+      return 'grid';
   }
 }
 
@@ -830,6 +773,28 @@ function controlAction(raw: Raw, path: string): ControlAction | null {
       return null;
     }
     return { kind: 'webhook', id };
+  }
+
+  /*
+   * A television from `controls.tvs`.
+   *
+   *   { tv: office_lg, action: on }      power
+   *   { tv: office_lg, action: next }    step through the configured inputs
+   *   { tv: office_lg, input: HDMI_2 }   one named input
+   */
+  const tvRef = raw['tv'];
+  if (typeof tvRef === 'string' && tvRef.trim()) {
+    const tv = tvRef.trim();
+    const input = str(raw['input'], '', `${path}.input`);
+    if (input) return { kind: 'tv', tv, op: 'input', input };
+
+    const op = oneOf(
+      raw['action'],
+      ['toggle', 'on', 'off', 'next'] as const,
+      'toggle',
+      `${path}.action`,
+    );
+    return { kind: 'tv', tv, op };
   }
 
   const keylight = raw['keylight'];

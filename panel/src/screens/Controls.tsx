@@ -1,11 +1,11 @@
-import { controlPages } from '~/config/index.ts';
+import { controlPages, controlsConfig } from '~/config/index.ts';
 import { Empty } from '~/components/Empty.tsx';
 import { Icon, hasIcon } from '~/components/Icon.tsx';
 import { Pressable } from '~/components/Pressable.tsx';
 import { Slider } from '~/components/Slider.tsx';
-import { controlPage, kiosk, markActivity, openSources, openTvInput } from '~/state/ui.ts';
+import { controlPage, kiosk, markActivity, openSources } from '~/state/ui.ts';
 import { entity } from '~/state/entities.ts';
-import { keyLightFor, pressed } from '~/state/controls.ts';
+import { keyLightFor, pressed, tvInputOf } from '~/state/controls.ts';
 import { pressControl, setKeyLight } from '~/net/socket.ts';
 import { KEY_LIGHT_MAX_KELVIN, KEY_LIGHT_MIN_KELVIN } from '@shared/protocol.ts';
 import { DeviceTile } from '~/components/DeviceTile.tsx';
@@ -15,8 +15,6 @@ import type {
   ControlLight,
   ControlPage,
   ControlSources,
-  ControlTv,
-  ControlTvInput,
 } from '@shared/config.ts';
 import type { KeyLightState } from '@shared/protocol.ts';
 
@@ -134,15 +132,8 @@ function Page({ page }: { page: ControlPage }) {
    */
   // Source pickers sit in the key grid: they look like keys and are pressed
   // like keys. Only what happens next differs.
-  const keys = page.items.filter(
-    (i): i is ControlButton | ControlSources | ControlTv | ControlTvInput =>
-      i.type === 'button' ||
-      i.type === 'sources' ||
-      // A TV key is pressed like a key and looks like one. Only where the
-      // press goes differs — straight to the television rather than through
-      // Home Assistant.
-      i.type === 'tv' ||
-      i.type === 'tvInput',
+  const keys = page.items.filter((i): i is ControlButton | ControlSources =>
+    i.type === 'button' || i.type === 'sources',
   );
   const lights = page.items.filter(isLight);
   const devices = page.items.filter((i): i is ControlDevice => i.type === 'device');
@@ -171,10 +162,6 @@ function Page({ page }: { page: ControlPage }) {
           {keys.map((item) =>
             item.type === 'sources' ? (
               <SourcesButton key={item.id} item={item} />
-            ) : item.type === 'tvInput' ? (
-              <TvInputButton key={item.id} item={item} />
-            ) : item.type === 'tv' ? (
-              <TvPowerButton key={item.id} item={item} />
             ) : (
               <MacroButton key={item.id} button={item} />
             ),
@@ -191,6 +178,7 @@ function Page({ page }: { page: ControlPage }) {
 
 function MacroButton({ button }: { button: ControlButton }) {
   const confirming = pressed.value.has(button.id);
+  const live = tvLabel(button);
 
   return (
     <Pressable
@@ -217,8 +205,33 @@ function MacroButton({ button }: { button: ControlButton }) {
         <Icon name="check" size="1.75rem" weight={2.2} class="macro-btn-tick" />
       </span>
       <span class="macro-btn-name truncate">{button.name}</span>
+      {/* What the television is actually on, under the key's own name. Only
+          for a key that steps through inputs: everywhere else the panel has
+          nothing to report and a second line would be decoration. */}
+      {live !== undefined ? <span class="macro-btn-sub truncate">{live}</span> : null}
     </Pressable>
   );
+}
+
+/**
+ * The current input, for a key that cycles them. Undefined for every other
+ * key, so nothing else grows a second line.
+ *
+ * An em dash when the TV is off or on something that is not an input. That is
+ * the honest answer: keeping the last input would leave a confident, wrong
+ * label on the button precisely when somebody has changed it elsewhere.
+ */
+function tvLabel(button: ControlButton): string | undefined {
+  const action = button.actions.find((a) => a.kind === 'tv' && a.op === 'next');
+  if (!action || action.kind !== 'tv') return undefined;
+
+  const current = tvInputOf(action.tv);
+  if (!current) return '—';
+
+  // Named the way the room names it, falling back to the socket id.
+  const tv = controlsConfig.value.tvs.find((t) => t.id === action.tv);
+  const named = tv?.inputs.find((i) => i.source === current);
+  return named?.name ?? named?.source ?? current;
 }
 
 /**
@@ -344,67 +357,6 @@ function SourcesButton({ item }: { item: ControlSources }) {
           instead was tried and is worse: the label stops saying what the key
           IS, and it changes identity when the TV reports nothing. The live
           value belongs in the sheet, which has room for it. */}
-      <span class="macro-btn-name truncate">{item.name}</span>
-    </Pressable>
-  );
-}
-
-/**
- * A key that powers a television directly.
- *
- * Keeps the confirmation tick of any other macro key rather than showing
- * on/off state. The backend CAN tell whether the set is reachable, but only
- * by opening a connection to it — so a lit key here would mean polling a
- * television every few seconds to keep a light accurate, which is a lot of
- * knocking on a device that is trying to be asleep.
- */
-function TvPowerButton({ item }: { item: ControlTv }) {
-  const confirming = pressed.value.has(item.id);
-
-  return (
-    <Pressable
-      class="macro-btn p-lg"
-      onPress={() => {
-        pressControl(item.id);
-        markActivity();
-      }}
-      ariaLabel={item.name}
-    >
-      <span class="macro-btn-face" data-confirm={confirming ? '' : undefined}>
-        <Icon
-          name={hasIcon(item.icon) ? item.icon : 'tv'}
-          size="1.75rem"
-          weight={1.6}
-          class="macro-btn-icon"
-        />
-        <Icon name="check" size="1.75rem" weight={2.2} class="macro-btn-tick" />
-      </span>
-      <span class="macro-btn-name truncate">{item.name}</span>
-    </Pressable>
-  );
-}
-
-/** A key that opens the input picker for a directly-driven television. */
-function TvInputButton({ item }: { item: ControlTvInput }) {
-  return (
-    <Pressable
-      class="macro-btn p-lg"
-      onPress={() => {
-        openTvInput.value = item.id;
-        markActivity();
-      }}
-      ariaLabel={`${item.name}: choose input`}
-    >
-      {/* No confirmation tick: opening a menu is its own feedback, and a tick
-          would claim a press went somewhere when nothing has been sent. */}
-      <span class="macro-btn-face">
-        <Icon
-          name={hasIcon(item.icon) ? item.icon : 'input'}
-          size="1.75rem"
-          weight={1.6}
-          class="macro-btn-icon"
-        />
-      </span>
       <span class="macro-btn-name truncate">{item.name}</span>
     </Pressable>
   );

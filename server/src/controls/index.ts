@@ -3,7 +3,7 @@ import { CompanionClient } from '~/controls/companion.ts';
 import { KeyLight } from '~/controls/keylight.ts';
 import { WebosClient } from '~/tv/webos.ts';
 import type { ControlAction, ControlItem, DashboardConfig, KeyLightOp } from '@shared/config.ts';
-import type { EntityState, KeyLightState } from '@shared/protocol.ts';
+import type { EntityState, KeyLightState, TvState } from '@shared/protocol.ts';
 
 const log = logger('controls');
 
@@ -46,6 +46,8 @@ export interface ControlsDeps {
   getEntity: (entityId: string) => EntityState | null;
   /** Called whenever any key light's state changes. */
   onLights: (lights: KeyLightState[]) => void;
+  /** Called whenever a television's input changes. */
+  onTvs: (tvs: TvState[]) => void;
   /** Whether any panel is connected. Polling is pointless when none is. */
   hasPanels: () => boolean;
   /**
@@ -125,15 +127,16 @@ export class Controls {
         continue;
       }
       void existing?.stop();
-      nextTvs.set(
-        tv.id,
-        new WebosClient({
-          host: tv.host,
-          ...(tv.mac ? { mac: tv.mac } : {}),
-          ...(tv.broadcast ? { broadcast: tv.broadcast } : {}),
-          keyFile: this.#deps.tvKeyFile,
-        }),
-      );
+      const client = new WebosClient({
+        host: tv.host,
+        ...(tv.mac ? { mac: tv.mac } : {}),
+        ...(tv.broadcast ? { broadcast: tv.broadcast } : {}),
+        keyFile: this.#deps.tvKeyFile,
+      });
+      // Pushed rather than polled: the TV tells us when the input changes,
+      // including when somebody uses its own remote.
+      client.onInputChange(() => this.#deps.onTvs(this.tvSnapshot()));
+      nextTvs.set(tv.id, client);
     }
     for (const [id, client] of this.#tvs) {
       if (!nextTvs.has(id)) void client.stop();
@@ -151,6 +154,11 @@ export class Controls {
   /** Every light's current state, for `hello`. */
   snapshot(): KeyLightState[] {
     return [...this.#lights.values()].map((l) => l.state);
+  }
+
+  /** Every television's current state, for `hello`. */
+  tvSnapshot(): TvState[] {
+    return [...this.#tvs.entries()].map(([id, tv]) => ({ id, input: tv.currentInput ?? null }));
   }
 
   stop(): void {
@@ -173,11 +181,8 @@ export class Controls {
       log.warn(`Refused control "${buttonId}": not in dashboard.yaml`);
       return 'Unknown button';
     }
-    // A TV power key is a button as far as the panel is concerned; it just
-    // goes somewhere else.
-    if (item.type === 'tv') return this.#tvPower(item.tv, item.action);
     if (item.type !== 'button') return 'Not a button';
-    return this.#run(item.action, item.name);
+    return this.#runAll(item.actions, item.name);
   }
 
   /* ── Televisions ───────────────────────────────────────────────────────*/
@@ -190,6 +195,54 @@ export class Controls {
    * webOS has no toggle of its own, and guessing wrong here means turning off
    * a television somebody is watching.
    */
+  /** Any TV operation from a key's action list. */
+  async #tvAction(
+    tvId: string,
+    op: 'on' | 'off' | 'toggle' | 'input' | 'next',
+    input?: string,
+  ): Promise<string | null> {
+    if (op === 'input') {
+      if (!input) return 'No input named';
+      return this.#tvSwitch(tvId, input);
+    }
+    if (op === 'next') return this.#tvNext(tvId);
+    return this.#tvPower(tvId, op);
+  }
+
+  /**
+   * Move to the next configured input, wrapping.
+   *
+   * Where the TV is on an input we know, this steps past it. Where it is off,
+   * showing an app, or simply not answering, it goes to the FIRST configured
+   * input rather than guessing — which is what somebody pressing the key in
+   * that state almost certainly wants.
+   */
+  async #tvNext(tvId: string): Promise<string | null> {
+    const cfg = this.#deps.getConfig().controls.tvs.find((t) => t.id === tvId);
+    const tv = this.#tvs.get(tvId);
+    if (!cfg || !tv) return 'Unknown TV';
+    if (cfg.inputs.length === 0) return 'No inputs configured for this TV';
+
+    const current = tv.currentInput;
+    const at = current ? cfg.inputs.findIndex((i) => i.source === current) : -1;
+    const next = cfg.inputs[(at + 1) % cfg.inputs.length];
+    if (!next) return 'No inputs configured for this TV';
+
+    return tv.switchInput(next.source);
+  }
+
+  /** Switch to one named input, checked against what the config offers. */
+  async #tvSwitch(tvId: string, input: string): Promise<string | null> {
+    const cfg = this.#deps.getConfig().controls.tvs.find((t) => t.id === tvId);
+    const tv = this.#tvs.get(tvId);
+    if (!cfg || !tv) return 'Unknown TV';
+    if (cfg.inputs.length > 0 && !cfg.inputs.some((i) => i.source === input)) {
+      log.warn(`Refused input "${input}" for ${tvId}: not one it offers`);
+      return 'Not an input this TV offers';
+    }
+    return tv.switchInput(input);
+  }
+
   async #tvPower(tvId: string, action: 'toggle' | 'on' | 'off'): Promise<string | null> {
     const tv = this.#tvs.get(tvId);
     if (!tv) {
@@ -204,52 +257,6 @@ export class Controls {
     return want === 'on' ? tv.turnOn() : tv.turnOff();
   }
 
-  /**
-   * The inputs to offer for a `tv:` picker.
-   *
-   * A configured list wins outright and is not merged with the TV's: it is an
-   * assertion about what is plugged in, so it still answers while the set is
-   * off — which is exactly when the TV cannot be asked and when somebody is
-   * most likely to be choosing where to look.
-   */
-  async tvInputs(itemId: string): Promise<{ id: string; label: string }[]> {
-    const item = this.#find(itemId);
-    if (!item || item.type !== 'tvInput') return [];
-
-    const cfg = this.#deps.getConfig().controls.tvs.find((t) => t.id === item.tv);
-    if (cfg && cfg.inputs.length > 0) {
-      return cfg.inputs.map((i) => ({ id: i.source, label: i.name ?? i.source }));
-    }
-
-    const tv = this.#tvs.get(item.tv);
-    if (!tv) return [];
-    return (await tv.listInputs()).map((i) => ({ id: i.id, label: i.label }));
-  }
-
-  /**
-   * Switch a TV to an input.
-   *
-   * The id is checked against what the config offers, or against what the TV
-   * reports when nothing is configured. Same rule as the `sources:` picker:
-   * the panel names a CHOICE, never a raw value to push at a device.
-   */
-  async tvInput(itemId: string, inputId: string): Promise<string | null> {
-    const item = this.#find(itemId);
-    if (!item || item.type !== 'tvInput') {
-      log.warn(`Refused TV input "${itemId}": not a tv picker in dashboard.yaml`);
-      return 'Unknown control';
-    }
-
-    const allowed = await this.tvInputs(itemId);
-    if (!allowed.some((i) => i.id === inputId)) {
-      log.warn(`Refused input "${inputId}" for ${item.tv}: not one it offers`);
-      return 'Not an input this TV offers';
-    }
-
-    const tv = this.#tvs.get(item.tv);
-    if (!tv) return 'Unknown TV';
-    return tv.switchInput(inputId);
-  }
 
   /**
    * Choose an input on a `sources:` key.
@@ -297,6 +304,21 @@ export class Controls {
     });
   }
 
+  /**
+   * Run a key's actions in order, stopping at the first failure.
+   *
+   * Stopping matters: "power the office on" is a Companion macro AND a
+   * television, and carrying on after the macro failed would leave the room
+   * half-started while the panel reported only the last thing that happened.
+   */
+  async #runAll(actions: ControlAction[], label: string): Promise<string | null> {
+    for (const action of actions) {
+      const problem = await this.#run(action, label);
+      if (problem) return problem;
+    }
+    return null;
+  }
+
   async #run(action: ControlAction, label: string): Promise<string | null> {
     switch (action.kind) {
       case 'companion':
@@ -307,6 +329,9 @@ export class Controls {
 
       case 'keylight':
         return this.keyLight(action.light, action.op, action.value);
+
+      case 'tv':
+        return this.#tvAction(action.tv, action.op, action.input);
 
       case 'entity': {
         const domain = action.entity.slice(0, action.entity.indexOf('.'));

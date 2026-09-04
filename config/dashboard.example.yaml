@@ -478,15 +478,27 @@ controls:
   #      - { source: HDMI_2, name: Laptop }
   #      - { source: HDMI_3, name: Mac Studio }
   #
-  # On a page, `tv:` points at one of these:
+  # On a page, `tv:` is an ACTION a key can take:
   #
   #   - { name: LG Power, icon: tv,    tv: office_lg, action: toggle }
-  #   - { name: LG Input, icon: input, tv: office_lg }
+  #   - { name: LG Input, icon: input, tv: office_lg, action: next }
+  #   - { name: Laptop,   icon: input, tv: office_lg, input: HDMI_2 }
   #
-  # `action:` makes it a power key — toggle | on | off. `toggle` asks whether
-  # the set answers and does the opposite, so it cannot drift the way a
-  # latching Companion key does. Omit `action:` and the key opens the input
-  # picker instead.
+  # `action:` is toggle | on | off | next. `toggle` asks whether the set
+  # answers and does the opposite, so it cannot drift the way a latching
+  # Companion key does. `next` steps through the inputs listed above, and
+  # draws the CURRENT one under the key's name — pushed by the TV, so it
+  # follows the television's own remote too, and reads "—" when the set is
+  # off or showing something that is not an input.
+  #
+  # A key may carry SEVERAL actions, run in order and stopped at the first
+  # failure. One key is often one intention in more than one place:
+  #
+  #   - name: Office Power
+  #     icon: power
+  #     actions:
+  #       - { companion: 1/2/4 }
+  #       - { tv: office_lg, action: on }
 
   # Seconds between key light state polls. 0 stops polling.
   #

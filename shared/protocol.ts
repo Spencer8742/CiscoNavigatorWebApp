@@ -313,6 +313,19 @@ export const SEARCH_LIMIT = 12;
  * value the light actually speaks. The panel should never have to know that
  * 213 means 4700 K, and the conversion has exactly one home.
  */
+/**
+ * What a television in `controls.tvs` is doing, as far as the backend knows.
+ *
+ * `input` is the socket it is showing — HDMI_2 — or null when it is off, or
+ * showing an app rather than an input. Null is a real answer and is drawn as
+ * one: a key that keeps the last label would be confidently wrong exactly
+ * when somebody has changed the input with the TV's own remote.
+ */
+export interface TvState {
+  id: string;
+  input: string | null;
+}
+
 export interface KeyLightState {
   id: string;
   name: string;
@@ -345,6 +358,7 @@ export type ServerMessage =
       queues: MassQueue[];
       /** Every Elgato Key Light named in `controls.keylights`. */
       keylights: KeyLightState[];
+      tvs: TvState[];
     }
   /** Incremental entity state. */
   | { t: 'patch'; patch: StatePatch }
@@ -364,6 +378,7 @@ export type ServerMessage =
    * is four fields. A diff would be larger than the thing it describes.
    */
   | { t: 'keylights'; lights: KeyLightState[] }
+  | { t: 'tvs'; tvs: TvState[] }
   /** Config file changed on disk and revalidated. */
   | { t: 'config'; config: DashboardConfig }
   /** Backend link health changed. */
@@ -442,15 +457,6 @@ export type ClientMessage =
    * that no page put there.
    */
   | { t: 'source'; id: number; item: string; value: string }
-  /**
-   * Choose an input on a `tv:` picker, which talks to the television
-   * directly rather than through Home Assistant.
-   *
-   * Carries the item id and the TV's own input id (HDMI_2, not "HDMI 2").
-   * The backend still resolves both against the config — the panel names a
-   * choice the config offers, never an address and never a raw value.
-   */
-  | { t: 'tvinput'; id: number; item: string; input: string }
   /** Heartbeat. Detects half-open sockets that TCP will not report. */
   | { t: 'ping'; id: number }
   /**

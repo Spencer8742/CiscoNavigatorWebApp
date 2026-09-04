@@ -265,10 +265,10 @@ async function main(): Promise<void> {
     onBrowse: (req) => massBrowser.browse(req),
 
     getKeyLights: () => controls.snapshot(),
+    getTvs: () => controls.tvSnapshot(),
     onControl: (button) => controls.press(button),
     onKeyLight: (light, op, value) => controls.keyLight(light, op, value),
     onSource: (item, value) => controls.selectSource(item, value),
-    onTvInput: (item, input) => controls.tvInput(item, input),
 
     onPhotos: async (count) => {
       const photos = await playlist.take(count);
@@ -297,6 +297,7 @@ async function main(): Promise<void> {
     callService: (call) => services.call(call),
     getEntity: (entityId) => store.get(entityId),
     onLights: (lights) => hub.broadcastKeyLights(lights),
+    onTvs: (tvs) => hub.broadcastTvs(tvs),
     // Nothing is polled while no panel is connected. A wall panel that has
     // gone to sleep, or a container running before the device is provisioned,
     // should not be talking to the lights every fifteen seconds.

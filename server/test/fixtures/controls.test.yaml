@@ -114,6 +114,25 @@ controls:
           device:
             name: Nothing
 
+    - id: combo
+      name: Combined
+      items:
+        # One key, two places. The Companion location exists in the mock; the
+        # webhook is what proves the SECOND action ran.
+        - id: combo.both
+          name: Office Power
+          actions:
+            - { companion: 1/0/0 }
+            - { webhook: combo_second }
+        # The first action fails (no button at 9/9/9), so the second must not
+        # run — a half-started room reported as a success is the failure this
+        # guards.
+        - id: combo.stops
+          name: Stops Early
+          actions:
+            - { companion: 9/9/9 }
+            - { webhook: combo_never }
+
     - id: lights
       name: Lights
       icon: bulb

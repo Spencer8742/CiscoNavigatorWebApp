@@ -1,5 +1,5 @@
 import { signal, computed } from '@preact/signals';
-import type { KeyLightState } from '@shared/protocol.ts';
+import type { KeyLightState, TvState } from '@shared/protocol.ts';
 
 /**
  * Macro-page state: the Elgato Key Lights, and which button is mid-press.
@@ -49,6 +49,23 @@ export const allKeyLights = computed<KeyLightState | null>(() => {
     temperature: mean((l) => l.temperature),
   };
 });
+
+/**
+ * What each television is showing, by config id.
+ *
+ * Pushed by the backend, which subscribes to the set rather than polling it —
+ * so this follows the TV's own remote as well as the panel's keys. A missing
+ * entry, or a null input, means the panel genuinely does not know: the set is
+ * off, or on something that is not an input.
+ */
+export const tvs = signal<TvState[]>([]);
+
+export const tvsById = computed(() => new Map(tvs.value.map((t) => [t.id, t])));
+
+/** The input a `tv:` key's television is on, or null when unknown. */
+export function tvInputOf(id: string): string | null {
+  return tvsById.value.get(id)?.input ?? null;
+}
 
 /** Resolve what a `light:` item addresses — one light, or all of them. */
 export function keyLightFor(id: string): KeyLightState | null {

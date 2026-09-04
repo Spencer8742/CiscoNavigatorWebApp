@@ -128,6 +128,12 @@ export class MockWebosTv {
       return;
     }
 
+    if (msg.type === 'subscribe') {
+      this.subscribeId = msg.id;
+      reply({ id: msg.id, type: 'response', payload: { returnValue: true } });
+      return;
+    }
+
     if (msg.type !== 'request') return;
 
     // Registered but not authorised: the set answers, and refuses everything.
@@ -147,12 +153,38 @@ export class MockWebosTv {
       return;
     }
 
+    /*
+     * Switching an input makes the TV report a new foreground app, because
+     * an external input IS an app to webOS. A mock that accepts the command
+     * and says nothing back would let a client that never subscribes look
+     * exactly like one that does.
+     */
+    if (msg.uri === 'ssap://tv/switchInput' && this.subscribeId) {
+      const id = String(msg.payload?.inputId ?? '');
+      const n = /^HDMI_(\d+)$/i.exec(id)?.[1];
+      if (n) {
+        reply({ id: msg.id, type: 'response', payload: { returnValue: true } });
+        reply({
+          id: this.subscribeId,
+          type: 'response',
+          payload: { returnValue: true, appId: `com.webos.app.hdmi${n}` },
+        });
+        // Already recorded above, with every other request.
+        return;
+      }
+    }
+
     if (msg.uri === 'ssap://tv/getExternalInputList') {
       reply({ id: msg.id, type: 'response', payload: { returnValue: true, devices: this.inputs } });
       return;
     }
 
     reply({ id: msg.id, type: 'response', payload: { returnValue: true } });
+  }
+
+  /** Open sockets, for a harness that wants to push a subscription update. */
+  rawClients() {
+    return this.#server ? [...this.#server.clients] : [];
   }
 
   async stop() {
