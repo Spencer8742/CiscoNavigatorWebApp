@@ -1732,6 +1732,110 @@
   color: var(--accent);
 }
 
+/* ── The five-minutes-to-go join prompt ───────────────────────────────────
+   Fixed, but NOT viewport-fixed: `.screen` sets `will-change: transform`,
+   which makes it the containing block for fixed descendants. So this covers
+   the screen area and leaves the nav bar reachable — which is what we want,
+   since the prompt is about one device and the panel is not only that. */
+.joinprompt {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--s-6);
+  background: rgba(6, 8, 12, 0.72);
+  animation: joinprompt-in var(--t-base) var(--ease);
+}
+
+.joinprompt-card {
+  width: min(30rem, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-6);
+  border-radius: var(--r-xl);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  text-align: center;
+  align-items: center;
+}
+
+.joinprompt-when {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  color: var(--accent);
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.joinprompt-title {
+  font-size: 1.375rem;
+  font-weight: 620;
+  letter-spacing: -0.01em;
+  /* Wraps: a meeting title is the one thing here that must be readable in
+     full, and these run long. */
+  text-wrap: balance;
+}
+
+.joinprompt-org {
+  max-width: 100%;
+  color: var(--text-dim);
+  font-size: 0.9375rem;
+}
+
+.joinprompt-actions {
+  display: flex;
+  gap: var(--s-3);
+  margin-top: var(--s-4);
+  width: 100%;
+}
+
+.joinprompt-join,
+.joinprompt-later {
+  flex: 1 1 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+  height: 3.5rem;
+  border-radius: var(--r-md);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+/* Join is the reason the card is on screen; "Not now" is the way past it.
+   Weighting them equally would make it a question rather than an offer. */
+.joinprompt-join[data-tone='ok'] {
+  flex: 1.6 1 0;
+  background: rgba(52, 211, 153, 0.16);
+  border: 1px solid rgba(52, 211, 153, 0.4);
+  color: var(--ok);
+}
+
+.joinprompt-later {
+  background: var(--surface-3);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-dim);
+}
+
+@keyframes joinprompt-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .joinprompt {
+    animation: none;
+  }
+}
+
 /* The Join badge cannot be trusted while the device's list is stale. */
 .devtile-stale {
   display: flex;

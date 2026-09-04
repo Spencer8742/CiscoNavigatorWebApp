@@ -84,6 +84,16 @@ export const openDeviceAlerts = signal<string | null>(null);
  */
 export const kiosk = signal(false);
 
+/**
+ * The meeting whose join prompt has been waved away, by `start_time|title`.
+ *
+ * One at a time is enough: the prompt only ever offers the next meeting, so
+ * dismissing one and being shown the one after it is the wanted behaviour.
+ * Not persisted — a dismissal should not outlive the meeting it was about,
+ * and tomorrow's 9am is a different meeting with the same name.
+ */
+export const dismissedJoin = signal<string | null>(null);
+
 export function navigate(to: Route): void {
   // Belt and braces: the nav is hidden under the kiosk lock, but nothing else
   // should be able to move the panel off the page it is locked to either.

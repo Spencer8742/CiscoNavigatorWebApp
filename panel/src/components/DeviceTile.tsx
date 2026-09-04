@@ -6,6 +6,7 @@ import { toggle, pressButton, setEntityNumber } from '~/state/actions.ts';
 import { pressed } from '~/state/controls.ts';
 import { pressControl } from '~/net/socket.ts';
 import {
+  dismissedJoin,
   health,
   kiosk,
   markActivity,
@@ -70,8 +71,108 @@ export function DeviceTile({ item, compact }: { item: ControlDevice; compact?: b
       </div>
 
       <Foot entities={e} />
+
+      {/* Rendered by the tile, so it exists only while this device's page is
+          the one on screen — a prompt about the Desk Pro has no business
+          appearing over the Lights page. It covers the screen area rather
+          than the whole viewport, which leaves the nav reachable when the
+          panel is not locked. */}
+      {blind ? null : <JoinPrompt entities={e} />}
     </div>
   );
+}
+
+/**
+ * The five-minutes-to-go prompt.
+ *
+ * A badge on a row in a list is easy to walk past. This is the same offer
+ * made unmissable, for the one moment it matters: somebody is at the desk and
+ * a meeting is about to start.
+ *
+ * It takes itself away rather than needing to be managed. Four things close
+ * it, and only one of them is the dismiss button:
+ *
+ *  - the meeting starts being joined (`inCall` goes on),
+ *  - the meeting ends,
+ *  - the device stops offering it as the joinable one,
+ *  - or somebody says not now.
+ *
+ * The same honesty rule as the row badge applies: `join_next_meeting` takes
+ * no argument, so if the device would dial a meeting that has already
+ * finished, this offers nothing at all rather than naming one meeting and
+ * starting another.
+ */
+function JoinPrompt({ entities: e }: { entities: DeviceEntities }) {
+  const meetings = readMeetings(useState(e.meetings));
+  const inCall = useState(e.inCall);
+  const dismissed = dismissedJoin.value;
+  const at = now.value;
+  const t = timeOpts.value;
+
+  if (!e.join || inCall?.s === 'on') return null;
+
+  const target = meetings.find((m) => m.joinable);
+  if (!target || isOver(target, at) || !isDue(target, at)) return null;
+  if (dismissed === keyOf(target)) return null;
+
+  return (
+    <div class="joinprompt">
+      <div class="joinprompt-card">
+        <div class="joinprompt-when">
+          <Icon name="clock" size="1rem" weight={1.9} />
+          <span>{startsIn(target, at, t)}</span>
+        </div>
+
+        <div class="joinprompt-title">{target.title}</div>
+        {target.organizer ? (
+          <div class="joinprompt-org truncate">{target.organizer}</div>
+        ) : null}
+
+        <div class="joinprompt-actions">
+          <Pressable
+            class="joinprompt-join"
+            tone="ok"
+            onPress={() => {
+              pressButton(e.join!);
+              // Waved away as well as joined: the device takes a moment to
+              // report the call, and the prompt should not sit there through
+              // it looking as though the press did nothing.
+              dismissedJoin.value = keyOf(target);
+              markActivity();
+            }}
+            ariaLabel={`Join ${target.title}`}
+          >
+            <Icon name="camera" size="1.25rem" weight={1.8} />
+            <span>Join</span>
+          </Pressable>
+
+          <Pressable
+            class="joinprompt-later"
+            onPress={() => {
+              dismissedJoin.value = keyOf(target);
+              markActivity();
+            }}
+            ariaLabel="Dismiss"
+          >
+            <span>Not now</span>
+          </Pressable>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** "Starts in 4 min" / "Started 10:30 AM" — never a bare countdown to zero. */
+function startsIn(m: Meeting, at: Date, t: TimeOpts): string {
+  const start = m.start_time ? Date.parse(m.start_time) : NaN;
+  if (!Number.isFinite(start)) return 'Starting now';
+
+  const mins = Math.round((start - at.getTime()) / 60_000);
+  if (mins > 1) return `Starts in ${mins} min`;
+  if (mins >= 0) return 'Starts now';
+  // Already running. The clock is more use than "3 minutes ago" for somebody
+  // working out whether they are the one holding it up.
+  return `Started ${clockOf(m.start_time, t)}`;
 }
 
 /**
@@ -204,10 +305,7 @@ interface Meeting {
 
 function Meetings({ entities: e }: { entities: DeviceEntities }) {
   const state = useState(e.meetings);
-  const raw = state?.a['meetings'];
-  const all: Meeting[] = Array.isArray(raw)
-    ? (raw.filter((m) => m && typeof m === 'object') as Meeting[])
-    : [];
+  const all = readMeetings(state);
 
   /*
    * Meetings that have already finished are dropped.
@@ -241,7 +339,10 @@ function Meetings({ entities: e }: { entities: DeviceEntities }) {
    */
   const deviceTarget = all.find((m) => m.joinable);
   const stale = deviceTarget !== undefined && isOver(deviceTarget, at);
-  const joinRow = deviceTarget && !stale ? meetings.indexOf(deviceTarget) : -1;
+  // And not until it is nearly time. A Join that has been sitting there since
+  // breakfast is furniture; one that appears five minutes out is a prompt.
+  const joinRow =
+    deviceTarget && !stale && isDue(deviceTarget, at) ? meetings.indexOf(deviceTarget) : -1;
 
   const t = timeOpts.value;
 
@@ -317,6 +418,40 @@ function Meetings({ entities: e }: { entities: DeviceEntities }) {
       )}
     </div>
   );
+}
+
+/**
+ * How long before a meeting starts its Join offer appears.
+ *
+ * Five minutes: long enough to be in the room and ready, short enough that
+ * the button on screen always means the meeting you are about to walk into.
+ * A Join sitting there all morning is the thing that made it ignorable.
+ */
+const JOIN_LEAD_MS = 5 * 60_000;
+
+/** The meetings a device is reporting, newest parse of a live attribute. */
+function readMeetings(state: EntityState | null): Meeting[] {
+  const raw = state?.a['meetings'];
+  return Array.isArray(raw) ? (raw.filter((m) => m && typeof m === 'object') as Meeting[]) : [];
+}
+
+/**
+ * Is this meeting close enough to start that Join should be offered?
+ *
+ * An unreadable or missing start time counts as due, for the same reason a
+ * missing end time counts as not-over: a meeting we cannot place in time
+ * should be joinable rather than silently un-joinable.
+ */
+function isDue(m: Meeting, at: Date): boolean {
+  if (!m.start_time) return true;
+  const start = Date.parse(m.start_time);
+  if (!Number.isFinite(start)) return true;
+  return start - at.getTime() <= JOIN_LEAD_MS;
+}
+
+/** Identity for "this exact booking", for remembering a dismissal. */
+function keyOf(m: Meeting): string {
+  return `${m.start_time ?? ''}|${m.title}`;
 }
 
 /**
