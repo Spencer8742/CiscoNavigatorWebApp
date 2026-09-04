@@ -3,11 +3,12 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { logger } from '~/lib/log.ts';
 import {
-  MANIFEST,
   URI,
   endpointsFor,
   failureOf,
   inputsOf,
+  isAuthFailure,
+  registerPayload,
   type SsapFrame,
   type TvInput,
 } from '~/tv/protocol.ts';
@@ -141,13 +142,52 @@ export class WebosClient {
   /* ── Transport ─────────────────────────────────────────────────────────*/
 
   async #command(uri: string, payload?: Record<string, unknown>): Promise<string | null> {
+    const once = async (): Promise<string | null> => {
+      try {
+        const frame = await this.#request(uri, payload);
+        return failureOf(frame);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        log.warn(`${uri} failed on ${this.#opts.host}: ${message}`);
+        return message;
+      }
+    };
+
+    const failure = await once();
+    if (!failure || !isAuthFailure(failure) || !this.#clientKey) return failure;
+
+    /*
+     * The television knows us but will not let us do anything. That means the
+     * key on disk is no good — and it is offered again on every reconnect, so
+     * without this the panel is stuck saying "insufficient permissions"
+     * forever with no way out except deleting a file inside the container.
+     *
+     * Throw the key away and try once more, which registers from scratch and
+     * puts the pairing prompt back on the TV.
+     */
+    log.warn(
+      `${this.#opts.host} refused the stored pairing key (${failure}) — ` +
+        'discarding it and asking to pair again. Accept the prompt on the TV.',
+    );
+    await this.#forgetKey();
+    return once();
+  }
+
+  /** Drop the pairing key, in memory and on disk, and close the socket. */
+  async #forgetKey(): Promise<void> {
+    this.#clientKey = undefined;
+    this.#socket?.close();
+    this.#socket = undefined;
+
     try {
-      const frame = await this.#request(uri, payload);
-      return failureOf(frame);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      log.warn(`${uri} failed on ${this.#opts.host}: ${message}`);
-      return message;
+      const stored = JSON.parse(await readFile(this.#opts.keyFile, 'utf8')) as Record<
+        string,
+        unknown
+      >;
+      delete stored[this.#opts.host];
+      await writeFile(this.#opts.keyFile, JSON.stringify(stored, null, 2));
+    } catch {
+      // No file, or unreadable. Either way there is no key left to offer.
     }
   }
 
@@ -320,8 +360,7 @@ export class WebosClient {
    */
   async #register(socket: WebSocket): Promise<void> {
     const id = String(this.#nextId++);
-    const payload: Record<string, unknown> = { ...MANIFEST };
-    if (this.#clientKey) payload['client-key'] = this.#clientKey;
+    const payload = registerPayload(this.#clientKey);
 
     let waitingOnPrompt = false;
 

@@ -38,6 +38,8 @@ export class MockWebosTv {
   clientKey = 'mock-client-key';
   /** URIs to refuse with returnValue:false. */
   refuse = new Set();
+  /** Keys the set refuses outright, whatever manifest comes with them. */
+  rejectKeys = new Set();
 
   inputs = [
     { id: 'HDMI_1', label: 'HDMI 1', connected: true },
@@ -90,7 +92,28 @@ export class MockWebosTv {
 
     if (msg.type === 'register') {
       const offered = msg.payload?.['client-key'];
-      this.registrations.push({ clientKey: offered });
+      const manifest = msg.payload?.manifest;
+      this.registrations.push({ clientKey: offered, manifest });
+
+      /*
+       * A real television checks the manifest, and this mock did not — which
+       * is exactly how a handshake that sent the manifest FLAT (rather than
+       * nested under `manifest`) passed every test here and then failed on
+       * the actual set. The TV registered the client, handed back a key, and
+       * granted nothing; every command came back 401.
+       *
+       * So the contract is enforced: no nested manifest with permissions
+       * means the client is registered but authorised for nothing, which is
+       * what the set really does.
+       */
+      // Two separate reasons a command can come back 401, kept apart because
+      // conflating them let a good manifest clear a key the test had
+      // deliberately blacklisted:
+      //
+      //   - the manifest granted nothing (a per-connection property), or
+      //   - this key is one the set refuses outright (a test fixture).
+      const granted = Array.isArray(manifest?.permissions) && manifest.permissions.length > 0;
+      socket.authorised = granted && !this.rejectKeys.has(offered);
 
       // A known key pairs straight through; an unknown one has to be accepted
       // on the television first.
@@ -106,6 +129,13 @@ export class MockWebosTv {
     }
 
     if (msg.type !== 'request') return;
+
+    // Registered but not authorised: the set answers, and refuses everything.
+    if (socket.authorised === false) {
+      reply({ id: msg.id, type: 'error', error: '401 insufficient permissions' });
+      return;
+    }
+
     this.commands.push({ uri: msg.uri, payload: msg.payload });
 
     if (this.refuse.has(msg.uri)) {
