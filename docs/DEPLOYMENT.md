@@ -159,6 +159,7 @@ and every environment variable are filled in with descriptions.
 | Home Assistant URL | `http://192.168.1.x:8123` (no trailing slash) |
 | Home Assistant Token | a long-lived access token — see [Getting the credentials](#getting-the-credentials) |
 | Immich URL / API Key | optional; leave blank to disable photos |
+| Sonos Speaker IP | optional; **one** speaker's address — see [Sonos](#sonos) |
 
 <details>
 <summary><strong>No terminal access? Fill the form in by hand instead.</strong></summary>
@@ -189,8 +190,9 @@ each row:
 
 `IMMICH_URL` and `IMMICH_API_KEY` are optional, as is `COMPANION_URL` — set
 that one to your Bitfocus Companion (`http://192.168.1.x:8000`) if you want
-the `companion:` buttons on the Controls screen. Key lights are configured in
-`dashboard.yaml`, not here.
+the `companion:` buttons on the Controls screen. `SONOS_HOST` is optional too;
+see [Sonos](#sonos) below. Key lights are configured in `dashboard.yaml`, not
+here.
 
 </details>
 
@@ -268,6 +270,86 @@ chmod -R 0775 /mnt/user/appdata/navigator-panel
 
 The panel still starts in that state — it just shows an empty dashboard rather
 than going dark.
+
+---
+
+## 1b. Sonos
+
+Optional, and independent of everything above: skip it and the panel is
+unchanged. Set it and your Sonos rooms appear on the Media screen.
+
+The panel talks to Sonos **directly on your LAN** — no cloud account, no
+developer key, no Home Assistant in the middle. Why the local protocol rather
+than Sonos's cloud API is in [`SONOS.md`](./SONOS.md) §2.
+
+> **Currently read-only.** Rooms, groups, volumes and what is playing. The
+> transport buttons on a Sonos player do not work yet — they arrive in phase 3
+> ([`SONOS.md`](./SONOS.md) §15).
+
+### One address is all it needs
+
+```bash
+SONOS_HOST=192.168.1.51
+```
+
+From any single speaker the backend reads the whole household: every room,
+every group, and every other speaker's address. So this is one line no matter
+how many speakers you own, and unplugging the one you named does not break
+anything — the others are already known.
+
+**Find it** in the Sonos app: *Settings → System → About My System*, which
+lists every product with its IP address. Any of them will do.
+
+**Then give that speaker a DHCP reservation** on your router. This is the one
+piece of setup outside the panel, and it matters: without it the address can
+change on a lease renewal and the Media screen empties out for no visible
+reason.
+
+### Check UPnP is on
+
+*Settings → App Preferences → Privacy → UPnP* in the Sonos app. It ships
+enabled, but it is a toggle, and switching it off stops **every** local
+integration — this panel, Home Assistant's Sonos integration, SoCo, all of
+them. It is the first thing to check if nothing appears.
+
+### Did it work?
+
+*Settings* on the panel, under **Connection**:
+
+| Row says | Meaning |
+|---|---|
+| `Backend → Sonos: connected` | Working. Rooms are on the Media screen |
+| `Backend → Sonos: disabled` | `SONOS_HOST` is empty |
+| `Backend → Sonos: disconnected` | Read the **Sonos says** row beneath it — it names the actual reason rather than leaving you to guess |
+
+The container log says the same thing on startup:
+
+```
+INFO [sonos] Sonos household: 4 zones (Bedroom, Kitchen, Living Room, Study)
+```
+
+### Networking
+
+Phase 1 only makes **outbound** connections to port 1400 on your speakers, so
+bridge networking is fine and nothing needs opening.
+
+`SONOS_DISCOVERY=1` searches the network instead of naming an address, and is
+best treated as a laptop convenience: discovery uses multicast, which does not
+cross Docker's default bridge network, so in a container it usually finds
+nothing — and the failure looks like an empty Media screen rather than an
+error. Name the address.
+
+> **This changes in phase 2.** Live updates use UPnP event subscriptions, where
+> the speakers connect **inbound** to the panel. That needs either host
+> networking or an explicit callback address, and is the one part of this
+> integration that bridge networking breaks silently. Flagged here so it is not
+> a surprise; nothing to do about it yet.
+
+### Running it alongside Music Assistant
+
+Supported, and the intended path while you decide. Speakers that Music
+Assistant also knows about will be **listed twice** — once per source — and the
+container warns about it at startup. Removing Music Assistant is phase 6.
 
 ---
 
@@ -709,6 +791,12 @@ worth taking literally:
 | Speakers missing from the Media screen | Not Music Assistant players | Discovery keys on MA's own `mass_player_type` attribute. A plain Sonos/Chromecast entity is not discovered — list it under `media.players` |
 | A speaker cannot be grouped | It does not advertise GROUPING | Music Assistant only sets that feature on players that support it; those are shown but not offered in the group sheet |
 | Grouping does nothing | The join was refused | Check the log: every id in `group_members` is validated against the same allow-list as the target |
+| No Sonos rooms at all | Several possible causes | Settings → Connection names the actual one in the **Sonos says** row. Start there, not here |
+| Sonos: "refused the connection" | `SONOS_HOST` is wrong, or the speaker moved | Re-read the address in the Sonos app (Settings → System → About My System) and give it a DHCP reservation |
+| Sonos: connected, then empty later | The speaker's DHCP lease changed | Same fix: a reservation. Any speaker's address works, so pick one that is never unplugged |
+| Sonos rooms appear but buttons say "Not permitted" | Expected — phase 1 is read-only | Transport and grouping arrive in phase 3, see [`SONOS.md`](./SONOS.md) §15 |
+| Every speaker listed twice | Music Assistant and Sonos both configured | Expected during the migration; the container warns at startup. Unset `MASS_URL`, or wait for phase 6 |
+| A sub or "(R)" speaker in the picker | Should not happen — bonded members are filtered | If one appears, it is a real bug: the filter keys on `Invisible="1"` |
 | Config edit does nothing | YAML failed to parse | `docker compose logs` — the last good config is still running, on purpose |
 | Photos never load | Several possible causes | The Photos screen now names the actual one — it shows Immich's own error, not a guess. Start there |
 | Photos: "API key rejected" | Key wrong, revoked, or too narrow | Needs `asset.read`, plus `album.read` for album sources |
