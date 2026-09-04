@@ -49,11 +49,20 @@ export class MockWebosTv {
   /** Keys the set refuses outright, whatever manifest comes with them. */
   rejectKeys = new Set();
 
+  /*
+   * `appId` is the set's own answer to "which app means which socket", and a
+   * real television publishes it here. Overwrite it to model a set that names
+   * its inputs something the naming pattern cannot read — which is the case
+   * the client has to get right from this table rather than by guessing.
+   */
   inputs = [
-    { id: 'HDMI_1', label: 'HDMI 1', connected: true },
-    { id: 'HDMI_2', label: 'Laptop', connected: true },
-    { id: 'HDMI_3', label: 'Mac Studio', connected: true },
+    { id: 'HDMI_1', label: 'HDMI 1', connected: true, appId: 'com.webos.app.hdmi1' },
+    { id: 'HDMI_2', label: 'Laptop', connected: true, appId: 'com.webos.app.hdmi2' },
+    { id: 'HDMI_3', label: 'Mac Studio', connected: true, appId: 'com.webos.app.hdmi3' },
   ];
+
+  /** Drop `appId` from the input list, like a set that does not publish it. */
+  hideInputAppIds = false;
 
   /**
    * `tls` serves wss, the way a 2020-or-later set does on 3001. A modern TV
@@ -169,15 +178,13 @@ export class MockWebosTv {
      */
     if (msg.uri === 'ssap://tv/switchInput' && this.subscribeId) {
       const id = String(msg.payload?.inputId ?? '');
-      const n = /^HDMI_(\d+)$/i.exec(id)?.[1];
-      if (n && this.reportsInput) {
-        this.foregroundAppId = `com.webos.app.hdmi${n}`;
+      // The set reports the app id IT publishes for that socket, which is not
+      // necessarily one anybody could have guessed from the socket's name.
+      const appId = this.inputs.find((i) => i.id === id)?.appId;
+      if (appId && this.reportsInput) {
+        this.foregroundAppId = appId;
         reply({ id: msg.id, type: 'response', payload: { returnValue: true } });
-        reply({
-          id: this.subscribeId,
-          type: 'response',
-          payload: { returnValue: true, appId: `com.webos.app.hdmi${n}` },
-        });
+        reply({ id: this.subscribeId, type: 'response', payload: { returnValue: true, appId } });
         // Already recorded above, with every other request.
         return;
       }
@@ -198,7 +205,10 @@ export class MockWebosTv {
     }
 
     if (msg.uri === 'ssap://tv/getExternalInputList') {
-      reply({ id: msg.id, type: 'response', payload: { returnValue: true, devices: this.inputs } });
+      const devices = this.hideInputAppIds
+        ? this.inputs.map(({ appId: _drop, ...rest }) => rest)
+        : this.inputs;
+      reply({ id: msg.id, type: 'response', payload: { returnValue: true, devices } });
       return;
     }
 

@@ -491,6 +491,12 @@ controls:
   # follows the television's own remote too, and reads "—" when the set is
   # off or showing something that is not an input.
   #
+  # Some sets never report what they are showing. On those the line falls
+  # back to the input this panel last selected and is drawn in italics, to
+  # say that it is where the TV was SENT rather than where it says it is.
+  # Note the YAML: `on` and `off` are booleans in YAML 1.1, and are read here
+  # as the words they look like.
+  #
   # A key may carry SEVERAL actions, run in order and stopped at the first
   # failure. One key is often one intention in more than one place:
   #

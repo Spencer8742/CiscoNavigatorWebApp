@@ -62,9 +62,9 @@ export const tvs = signal<TvState[]>([]);
 
 export const tvsById = computed(() => new Map(tvs.value.map((t) => [t.id, t])));
 
-/** The input a `tv:` key's television is on, or null when unknown. */
-export function tvInputOf(id: string): string | null {
-  return tvsById.value.get(id)?.input ?? null;
+/** What a `tv:` key's television is showing, or null when nothing is known. */
+export function tvStateOf(id: string): TvState | null {
+  return tvsById.value.get(id) ?? null;
 }
 
 /** Resolve what a `light:` item addresses — one light, or all of them. */
