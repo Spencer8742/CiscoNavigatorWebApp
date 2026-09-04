@@ -1,6 +1,7 @@
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MockWebosTv } from './mock-webos.mjs';
@@ -17,11 +18,30 @@ const { WebosClient, endpointsFor } = await import('../dist/testkit.js');
 const PORT = 19810;
 let tv;
 let keyDir;
+let certPath;
+let tlsKeyPath;
 
 before(async () => {
   tv = new MockWebosTv(PORT);
   await tv.start();
   keyDir = await mkdtemp(join(tmpdir(), 'webos-'));
+
+  /*
+   * A throwaway self-signed certificate, generated here rather than
+   * committed.
+   *
+   * The TLS test needs a server whose certificate cannot be verified —
+   * which is the whole point, since that is what a television presents.
+   * Generating it per run keeps a private key out of the repository, and
+   * out of the way of anything that scans for one.
+   */
+  certPath = join(keyDir, 'tv-cert.pem');
+  tlsKeyPath = join(keyDir, 'tv-key.pem');
+  execFileSync('openssl', [
+    'req', '-x509', '-newkey', 'rsa:2048',
+    '-keyout', tlsKeyPath, '-out', certPath,
+    '-days', '1', '-nodes', '-subj', '/CN=127.0.0.1',
+  ], { stdio: 'ignore' });
 });
 
 after(async () => {
@@ -177,11 +197,7 @@ describe('finding the TV', () => {
   test('connects over TLS to a set that only serves 3001', async () => {
     // The real 192.168.1.67 case. The TV's certificate is self-signed and
     // issued to itself, so this only works because verification is off.
-    const secure = new MockWebosTv(19831, {
-      tls: true,
-      cert: '/tmp/claude-0/tvcert.pem',
-      key: '/tmp/claude-0/tvkey.pem',
-    });
+    const secure = new MockWebosTv(19831, { tls: true, cert: certPath, key: tlsKeyPath });
     await secure.start();
 
     const c = new WebosClient({
