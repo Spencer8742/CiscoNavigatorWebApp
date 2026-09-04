@@ -1,6 +1,7 @@
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MockWebosTv } from './mock-webos.mjs';
@@ -12,16 +13,35 @@ import { MockWebosTv } from './mock-webos.mjs';
  * the source is TypeScript with path aliases, and testing what actually ships
  * beats testing something transpiled a second way.
  */
-const { WebosClient } = await import('../dist/testkit.js');
+const { WebosClient, endpointsFor } = await import('../dist/testkit.js');
 
 const PORT = 19810;
 let tv;
 let keyDir;
+let certPath;
+let tlsKeyPath;
 
 before(async () => {
   tv = new MockWebosTv(PORT);
   await tv.start();
   keyDir = await mkdtemp(join(tmpdir(), 'webos-'));
+
+  /*
+   * A throwaway self-signed certificate, generated here rather than
+   * committed.
+   *
+   * The TLS test needs a server whose certificate cannot be verified —
+   * which is the whole point, since that is what a television presents.
+   * Generating it per run keeps a private key out of the repository, and
+   * out of the way of anything that scans for one.
+   */
+  certPath = join(keyDir, 'tv-cert.pem');
+  tlsKeyPath = join(keyDir, 'tv-key.pem');
+  execFileSync('openssl', [
+    'req', '-x509', '-newkey', 'rsa:2048',
+    '-keyout', tlsKeyPath, '-out', certPath,
+    '-days', '1', '-nodes', '-subj', '/CN=127.0.0.1',
+  ], { stdio: 'ignore' });
 });
 
 after(async () => {
@@ -142,5 +162,73 @@ describe('a television that is off', () => {
     const c = client({ host: '127.0.0.1:19811' });
     const error = await c.turnOff();
     assert.ok(error, 'turning off an unreachable TV is not a success');
+  });
+});
+
+/* ── Which port, and over what ────────────────────────────────────────────*/
+
+describe('finding the TV', () => {
+  /*
+   * The bug this exists for, reported from a real set: every command failed
+   * with ECONNRESET. Not a network fault — sets from roughly 2020 on serve
+   * SSAP over TLS on 3001 and leave 3000 closed, and a modern TV ACCEPTS the
+   * connection on 3000 and immediately resets it. The error names the
+   * symptom and hides the cause completely.
+   */
+
+  test('tries the modern TLS port first, then the old plain one', () => {
+    assert.deepEqual(endpointsFor('192.168.1.67'), [
+      'wss://192.168.1.67:3001',
+      'ws://192.168.1.67:3000',
+    ]);
+  });
+
+  test('a written port is honoured, but the scheme is still discovered', () => {
+    // The port is an instruction. The scheme is not: choosing it from the
+    // port number makes 3001 magic and silently downgrades anything on a
+    // non-standard port to plaintext, which fails in exactly the unreadable
+    // way this is meant to prevent.
+    assert.deepEqual(endpointsFor('192.168.1.67', 8888), [
+      'wss://192.168.1.67:8888',
+      'ws://192.168.1.67:8888',
+    ]);
+  });
+
+  test('connects over TLS to a set that only serves 3001', async () => {
+    // The real 192.168.1.67 case. The TV's certificate is self-signed and
+    // issued to itself, so this only works because verification is off.
+    const secure = new MockWebosTv(19831, { tls: true, cert: certPath, key: tlsKeyPath });
+    await secure.start();
+
+    const c = new WebosClient({
+      host: '127.0.0.1:19831',
+      keyFile: join(keyDir, 'tls.json'),
+    });
+    const error = await c.switchInput('HDMI_2');
+
+    assert.equal(error, null, 'a wss-only TV must be reachable');
+    assert.ok(
+      secure.commands.some((cmd) => cmd.uri === 'ssap://tv/switchInput'),
+      'and the command must actually arrive',
+    );
+
+    await c.stop();
+    await secure.stop();
+  });
+
+  test('falls back to plaintext when TLS is not what is being served', async () => {
+    // The opposite shape: an older set with no TLS listener. The client must
+    // try wss, fail, and go on rather than giving up — which is what it did
+    // before, reporting the TV as simply unreachable.
+    const plain = new MockWebosTv(19832);
+    await plain.start();
+
+    const c = new WebosClient({ host: '127.0.0.1:19832', keyFile: join(keyDir, 'plain.json') });
+    const error = await c.switchInput('HDMI_1');
+
+    assert.equal(error, null, 'plaintext must be reached after TLS fails');
+    assert.ok(plain.commands.some((cmd) => cmd.uri === 'ssap://tv/switchInput'));
+    await c.stop();
+    await plain.stop();
   });
 });

@@ -2,7 +2,15 @@ import { WebSocket } from 'ws';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { logger } from '~/lib/log.ts';
-import { MANIFEST, URI, failureOf, inputsOf, type SsapFrame, type TvInput } from '~/tv/protocol.ts';
+import {
+  MANIFEST,
+  URI,
+  endpointsFor,
+  failureOf,
+  inputsOf,
+  type SsapFrame,
+  type TvInput,
+} from '~/tv/protocol.ts';
 import { wake } from '~/tv/wol.ts';
 import { splitHost } from '~/cast/keeper.ts';
 
@@ -53,6 +61,8 @@ export class WebosClient {
   #pending = new Map<string, (frame: SsapFrame) => void>();
   /** In-flight connect, so concurrent presses share one handshake. */
   #connecting: Promise<void> | undefined;
+  /** The endpoint that last worked, tried first next time. */
+  #endpoint: string | undefined;
 
   constructor(opts: WebosOptions) {
     this.#opts = opts;
@@ -195,16 +205,84 @@ export class WebosClient {
   async #openAndRegister(): Promise<void> {
     await this.#loadKey();
 
-    // webOS listens on 3000, but the address is split rather than
-    // concatenated: `host` follows the same convention as the key lights and
-    // cast displays, where an explicit `:port` is allowed and wins. Appending
-    // the port unconditionally produced `ws://host:19810:3000`, which fails
-    // as an invalid URL and reads exactly like the TV being off.
-    const { host, port } = splitHost(this.#opts.host, 3000);
-    const socket = new WebSocket(`ws://${host}:${port}`, {
+    // The address is split rather than concatenated: `host` follows the same
+    // convention as the key lights and cast displays, where an explicit
+    // `:port` is allowed and wins. Appending a port unconditionally produced
+    // `ws://host:19810:3000`, which fails as an invalid URL and reads exactly
+    // like the TV being off.
+    //
+    // Port 0 is the sentinel for "not written down" — splitHost always
+    // returns one, and which endpoints to try depends on whether the config
+    // actually pinned it.
+    const { host, port } = splitHost(this.#opts.host, 0);
+    const candidates = endpointsFor(host, port === 0 ? undefined : port);
+
+    // The one that worked last time goes first. Without this every command
+    // after a TV reboot pays for a failed 3001 attempt before falling back.
+    const ordered = this.#endpoint
+      ? [this.#endpoint, ...candidates.filter((c) => c !== this.#endpoint)]
+      : candidates;
+
+    let socket: WebSocket | undefined;
+    let lastError: Error | undefined;
+
+    for (const url of ordered) {
+      try {
+        socket = await this.#open(url);
+        this.#endpoint = url;
+        break;
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        log.debug(`${url} did not answer: ${lastError.message}`);
+      }
+    }
+
+    if (!socket) {
+      throw lastError ?? new Error('The TV is not reachable — it is probably off');
+    }
+
+    this.#socket = socket;
+    this.#attach(socket);
+    await this.#register(socket);
+  }
+
+  /** Open one endpoint, or throw. */
+  #open(url: string): Promise<WebSocket> {
+    const socket = new WebSocket(url, {
       handshakeTimeout: CONNECT_TIMEOUT_MS,
+      /*
+       * The TV's certificate is self-signed, issued to itself, and never
+       * rotated — and the config names an IP, so there is no name to check it
+       * against even in principle. Verification cannot succeed, so this
+       * connection is encrypted but not authenticated.
+       *
+       * Scoped to this socket deliberately: it is one LAN device the operator
+       * named by address, not a global relaxation of TLS anywhere else in
+       * this process.
+       */
+      rejectUnauthorized: false,
     });
 
+    return new Promise<WebSocket>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        socket.terminate();
+        reject(new Error('The TV is not reachable — it is probably off'));
+      }, CONNECT_TIMEOUT_MS);
+
+      socket.once('open', () => {
+        clearTimeout(timer);
+        resolve(socket);
+      });
+      socket.once('error', (err) => {
+        clearTimeout(timer);
+        socket.terminate();
+        reject(new Error(`Could not reach the TV: ${err.message}`));
+      });
+    });
+  }
+
+  /** Wire the long-lived handlers onto a socket that is already open. */
+  #attach(socket: WebSocket): void {
     socket.on('message', (data) => {
       let frame: SsapFrame;
       try {
@@ -231,24 +309,6 @@ export class WebosClient {
       log.warn(`Socket error to ${this.#opts.host}:`, err.message);
     });
 
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        socket.terminate();
-        reject(new Error('The TV is not reachable — it is probably off'));
-      }, CONNECT_TIMEOUT_MS);
-
-      socket.once('open', () => {
-        clearTimeout(timer);
-        resolve();
-      });
-      socket.once('error', (err) => {
-        clearTimeout(timer);
-        reject(new Error(`Could not reach the TV: ${err.message}`));
-      });
-    });
-
-    this.#socket = socket;
-    await this.#register(socket);
   }
 
   /**

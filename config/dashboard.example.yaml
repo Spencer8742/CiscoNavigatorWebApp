@@ -444,6 +444,15 @@ controls:
   # control on a panel sitting in front of the thing it drives, and every hop
   # is somewhere the press can die.
   #
+  # PORT AND TLS ARE DISCOVERED, so `host:` is just the address. Sets from
+  # about 2020 on (webOS 5+) serve over TLS on 3001 and leave 3000 closed;
+  # older ones do the reverse. A modern set ACCEPTS a connection on 3000 and
+  # immediately resets it, which surfaces as ECONNRESET and reads like a
+  # network fault rather than a wrong port — so both are tried, newest first.
+  # The certificate is self-signed and issued to the TV itself, so the
+  # connection is encrypted but not authenticated; there is nothing to verify
+  # it against when the config names an IP.
+  #
   # PAIRING is a physical act. The first connection puts a prompt on the TV
   # and somebody has to accept it with the remote. The key the TV hands back
   # is written to `tv-keys.json` beside this file, so it survives restarts —
@@ -459,7 +468,7 @@ controls:
   tvs: []
   #  - id: office_lg
   #    name: Office LG
-  #    host: 192.168.1.67          # :3000 is implied
+  #    host: 192.168.1.67          # port and TLS are discovered
   #    mac: a8:23:fe:00:11:22
   #    broadcast: 192.168.1.255    # only if the panel is on another subnet
   #    # webOS names inputs by socket id — HDMI_2, not "HDMI 2". Listing them

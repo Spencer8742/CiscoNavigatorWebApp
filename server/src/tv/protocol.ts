@@ -50,6 +50,36 @@ export const URI = {
   foregroundApp: 'ssap://com.webos.applicationManager/getForegroundAppInfo',
 } as const;
 
+/**
+ * Where to try, in order.
+ *
+ * webOS moved: sets from roughly 2020 on (webOS 5 and later) serve SSAP over
+ * TLS on 3001 and leave 3000 closed, while older ones do the opposite. A set
+ * on the new firmware ACCEPTS a connection on 3000 and immediately resets it,
+ * which surfaces as ECONNRESET — a message that reads like a network fault
+ * rather than "wrong port", and sent me looking at the LAN first.
+ *
+ * So both are tried, newest first, unless the config pins a port — in which
+ * case that is an instruction, not a hint, and it is the only thing tried.
+ *
+ * The certificate on 3001 is self-signed, issued to the TV itself, and LG
+ * never rotates it. It cannot be verified and there is nothing to verify it
+ * against: the config names an IP on the user's own LAN. So the connection is
+ * encrypted but NOT authenticated, which is what every webOS client does and
+ * is worth being explicit about rather than quietly passing a flag.
+ */
+export function endpointsFor(host: string, explicitPort?: number): string[] {
+  // A written port is honoured exactly — but the SCHEME is still discovered.
+  // Picking it from the port number was the first attempt and it is wrong
+  // twice over: it makes 3001 magic, and it silently downgrades anything
+  // behind a proxy or on a non-standard port to plaintext, which then fails
+  // in the same unreadable way this function exists to prevent.
+  if (explicitPort !== undefined) {
+    return [`wss://${host}:${explicitPort}`, `ws://${host}:${explicitPort}`];
+  }
+  return [`wss://${host}:3001`, `ws://${host}:3000`];
+}
+
 export interface SsapFrame {
   id?: string;
   type?: string;
