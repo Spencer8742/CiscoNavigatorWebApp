@@ -86,6 +86,63 @@ describe('pairing', () => {
     await c.stop();
   });
 
+  test('sends the manifest NESTED, or the TV grants nothing', async () => {
+    /*
+     * The bug this pins, seen on the real set: the manifest was sent flat
+     * rather than under `manifest`. The television still registered the
+     * client and still handed back a key — it just authorised nothing, so
+     * every command came back `401 insufficient permissions` from a client
+     * that believed it was paired. The handshake looks entirely successful.
+     */
+    tv.registrations.length = 0;
+    const c = client({ keyFile: join(keyDir, 'manifest.json') });
+    await c.listInputs();
+
+    const reg = tv.registrations.at(-1);
+    assert.ok(reg.manifest, 'the payload must carry a `manifest` key');
+    assert.ok(
+      Array.isArray(reg.manifest.permissions) && reg.manifest.permissions.length > 0,
+      'and that manifest must ask for permissions',
+    );
+    assert.ok(
+      reg.manifest.permissions.includes('CONTROL_POWER'),
+      'including the ones this panel actually uses',
+    );
+    await c.stop();
+  });
+
+  test('a key the TV will not honour is discarded, and pairing starts again', async () => {
+    /*
+     * Recovery from the above. A bad key sits on disk and is offered again on
+     * every reconnect, so without this the panel says "insufficient
+     * permissions" forever and the only fix is deleting a file inside the
+     * container.
+     */
+    const keyFile = join(keyDir, 'stale.json');
+    await writeFile(keyFile, JSON.stringify({ [`127.0.0.1:${PORT}`]: 'stale-key' }));
+
+    // The set knows this key and refuses everything done with it.
+    tv.rejectKeys.add('stale-key');
+
+    const c = client({ keyFile });
+    await c.turnOff();
+
+    const stored = JSON.parse(await readFile(keyFile, 'utf8'));
+    assert.notEqual(
+      stored[`127.0.0.1:${PORT}`],
+      'stale-key',
+      'the rejected key must not be left on disk to be offered again',
+    );
+    // Recovery is complete rather than merely clean: the retry re-registers,
+    // so a working key is already in place and the next command succeeds
+    // without anybody touching anything.
+    assert.equal(stored[`127.0.0.1:${PORT}`], 'mock-client-key');
+    assert.equal(await c.turnOff(), null, 'and the TV obeys again');
+
+    tv.rejectKeys.clear();
+    await c.stop();
+  });
+
   test('waits through the on-screen prompt instead of taking it for an answer', async () => {
     // An unpaired TV answers `pairingType: PROMPT` first and `registered`
     // only once somebody accepts. Treating the first frame as the reply

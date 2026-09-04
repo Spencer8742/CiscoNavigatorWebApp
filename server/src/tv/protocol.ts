@@ -14,31 +14,91 @@
  * a refusal as a success.
  */
 
-/** The permissions asked for at registration. */
-export const MANIFEST = {
-  manifestVersion: 1,
-  appVersion: '1.0',
-  signed: {
-    created: '20240101',
-    appId: 'com.navigator.panel',
-    vendorId: '',
-    localizedAppNames: { '': 'Room Navigator' },
-    localizedVendorNames: { '': '' },
-    permissions: ['TEST_SECURE', 'CONTROL_INPUT_TEXT', 'CONTROL_POWER', 'CONTROL_INPUT_TV'],
-    serial: '0123456789abcdef',
-  },
-  permissions: [
-    'CONTROL_POWER',
-    'CONTROL_INPUT_TV',
-    'READ_INPUT_DEVICE_LIST',
-    'READ_TV_CURRENT_CHANNEL',
-    'READ_CURRENT_CHANNEL',
-    'CONTROL_AUDIO',
-    'READ_INSTALLED_APPS',
-    'LAUNCH',
-  ],
-  signatures: [],
-} as const;
+/**
+ * The registration payload, in the shape webOS expects.
+ *
+ * The manifest is NESTED under `manifest`, and that detail is the whole
+ * difference between working and not. Sent flat, the television still
+ * registers the client and still hands back a key — it just grants no
+ * permissions, so every command afterwards comes back `401 insufficient
+ * permissions` from a client that believes it is paired. Nothing about the
+ * handshake looks wrong; only the commands fail.
+ *
+ * `signatures` carries the well-known signature every webOS client sends. It
+ * is a public constant, not a credential: LG's own SDK shipped it, and the
+ * TV checks it against a key it already has.
+ */
+const SIGNATURE =
+  'eyJhbGdvcml0aG0iOiJSU0EtU0hBMjU2Iiwia2V5SWQiOiJ0ZXN0LXNpZ25pbmctY2VydCIsIn' +
+  'NpZ25hdHVyZVZlcnNpb24iOjF9.hrVRgjCwXVvE2OOSpDZ58hR+59aFNwYDyjQgKk3auukd7pce' +
+  'gmE2CzPCa0bJ0ZsRAcKkCTJrWo5iDzNhMBWRyaMOv5zWSrthlf7G128qvIlpMT0YNY+n/FaOHE73' +
+  'uLrS/g7swl3/qH/BGFG2Hu4RlL48eb3lLKqTt2xKHdCs6Cd4RMfJPYnzgvI4BNrFUKsjkcu+WD4O' +
+  'O2A27Pq1n50cMchmcaXadJhGrOqH5YmHdOCj5NSHzJYrsW0HPlpuAx/ECMeIZYDh6RMqaFM2DXzd' +
+  'KX9NmmyqzJ3o/0lkk/N97gfVRLW5hA29yeAwaCViZNCP8iC9aO0q9fQojoa7NQnAtw==';
+
+const PERMISSIONS = [
+  'LAUNCH',
+  'LAUNCH_WEBAPP',
+  'APP_TO_APP',
+  'CONTROL_AUDIO',
+  'CONTROL_DISPLAY',
+  'CONTROL_INPUT_JOYSTICK',
+  'CONTROL_INPUT_MEDIA_RECORDING',
+  'CONTROL_INPUT_MEDIA_PLAYBACK',
+  'CONTROL_INPUT_TV',
+  'CONTROL_POWER',
+  'READ_APP_STATUS',
+  'READ_CURRENT_CHANNEL',
+  'READ_INPUT_DEVICE_LIST',
+  'READ_NETWORK_STATE',
+  'READ_TV_CHANNEL_LIST',
+  'WRITE_NOTIFICATION_TOAST',
+  'READ_POWER_STATE',
+  'READ_COUNTRY_INFO',
+  'READ_INSTALLED_APPS',
+  'CONTROL_TV_SCREEN',
+];
+
+/** The `payload` of a `register` frame, with the key when we have one. */
+export function registerPayload(clientKey?: string): Record<string, unknown> {
+  return {
+    forcePairing: false,
+    pairingType: 'PROMPT',
+    ...(clientKey ? { 'client-key': clientKey } : {}),
+    manifest: {
+      manifestVersion: 1,
+      appVersion: '1.1',
+      signed: {
+        created: '20140509',
+        appId: 'com.lge.test',
+        vendorId: 'com.lge',
+        localizedAppNames: { '': 'LG Remote App' },
+        localizedVendorNames: { '': 'LG Electronics' },
+        permissions: [
+          'TEST_SECURE',
+          'CONTROL_INPUT_TEXT',
+          'CONTROL_MOUSE_AND_KEYBOARD',
+          'READ_INSTALLED_APPS',
+          'READ_LGE_SDX',
+          'READ_NOTIFICATIONS',
+          'SEARCH',
+          'WRITE_SETTINGS',
+          'WRITE_NOTIFICATION_ALERT',
+          'CONTROL_POWER',
+          'READ_CURRENT_CHANNEL',
+          'READ_RUNNING_APPS',
+          'READ_UPDATE_INFO',
+          'UPDATE_FROM_REMOTE_APP',
+          'READ_LGE_TV_INPUT_EVENTS',
+          'READ_TV_CURRENT_TIME',
+        ],
+        serial: '2f930e2d2cfe083771f68e4fe7bb07',
+      },
+      permissions: PERMISSIONS,
+      signatures: [{ signatureVersion: 1, signature: SIGNATURE }],
+    },
+  };
+}
 
 /* ── URIs, named once ─────────────────────────────────────────────────────*/
 
@@ -111,6 +171,19 @@ export function failureOf(frame: SsapFrame): string | null {
     return typeof text === 'string' && text ? text : 'The TV rejected the command';
   }
   return null;
+}
+
+/**
+ * Is this the television saying our pairing key is no good?
+ *
+ * `401 insufficient permissions` is what a key registered with the wrong
+ * manifest gets: the client is known, so the connection and the handshake
+ * both succeed, and only the commands fail. Nothing recovers on its own —
+ * the bad key is on disk and gets offered again on every reconnect — so this
+ * has to be recognised and the key thrown away.
+ */
+export function isAuthFailure(message: string): boolean {
+  return /\b401\b|insufficient permission|denied|unauthor/i.test(message);
 }
 
 /** The inputs out of a getExternalInputList payload, ignoring malformed rows. */
