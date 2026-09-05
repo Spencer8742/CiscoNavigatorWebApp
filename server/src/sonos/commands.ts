@@ -6,6 +6,7 @@ import type { SonosClient } from '~/sonos/client.ts';
 import type { SonosStore } from '~/sonos/store.ts';
 import type { SonosZone } from '~/sonos/topology.ts';
 import type { UriRegistry } from '~/sonos/uris.ts';
+import type { MediaShelf } from '~/sonos/shelf.ts';
 import type { Enqueue, MusicCommand } from '@shared/protocol.ts';
 
 const log = logger('sonos-cmd');
@@ -53,11 +54,13 @@ export class SonosCommands {
   readonly #client: SonosClient;
   readonly #store: SonosStore;
   readonly #uris: UriRegistry;
+  readonly #shelf: MediaShelf;
 
-  constructor(client: SonosClient, store: SonosStore, uris: UriRegistry) {
+  constructor(client: SonosClient, store: SonosStore, uris: UriRegistry, shelf: MediaShelf) {
     this.#client = client;
     this.#store = store;
     this.#uris = uris;
+    this.#shelf = shelf;
   }
 
   /**
@@ -187,8 +190,19 @@ export class SonosCommands {
         // the panel already draws no power button for them.
         return 'Sonos speakers have no power control';
 
-      case 'playItem':
-        return this.#playItem(lead, cmd.item, cmd.enqueue);
+      case 'playItem': {
+        const problem = await this.#playItem(lead, cmd.item, cmd.enqueue);
+        if (!problem && (cmd.enqueue === 'play' || cmd.enqueue === 'replace')) {
+          this.#shelf.remember(cmd.item, cmd.media);
+        }
+        return problem;
+      }
+
+      case 'pin':
+        return this.#shelf.pin(cmd.item, cmd.media, cmd.on);
+
+      case 'handoff':
+        return this.#handoff(lead, cmd.target);
 
       case 'queueJump':
         // Sonos counts tracks from 1; the panel counts from 0.
@@ -537,6 +551,28 @@ export class SonosCommands {
     if (failed === 0) return null;
     log.warn(`Grouping: ${failed} of ${work.length} speakers did not accept the change`);
     return failed === work.length ? 'The speakers did not accept that' : null;
+  }
+
+  /** Transfer the playing queue to another room, leaving the old room behind. */
+  async #handoff(leader: SonosZone, targetId: unknown): Promise<string | null> {
+    if (typeof targetId !== 'string') return 'Not permitted';
+    const target = this.#client.household.zones.get(targetId);
+    if (!target || target.uuid === leader.uuid) return 'Not permitted';
+
+    // A target already following this coordinator can be promoted directly.
+    if (target.coordinator !== leader.uuid) {
+      await this.#av(target, 'BecomeCoordinatorOfStandaloneGroup');
+      await this.#av(target, 'SetAVTransportURI', {
+        CurrentURI: `x-rincon:${leader.uuid}`,
+        CurrentURIMetaData: '',
+      });
+    }
+
+    await this.#client.call(leader.host, 'ZoneGroupTopology', 'DelegateGroupCoordinationTo', {
+      NewCoordinator: target.uuid,
+      RejoinGroup: '0',
+    });
+    return null;
   }
 
   /** The zone a transport command must actually be sent to. */

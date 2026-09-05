@@ -755,6 +755,19 @@ export class MockSonos {
         void this.regroup(zone.uuid, zone.uuid);
         return ack(action);
 
+      case 'DelegateGroupCoordinationTo': {
+        const target = args.NewCoordinator;
+        if (!target || !this.#speakers.has(target)) return null;
+        for (const speaker of this.#speakers.values()) {
+          if (speaker.zone.coordinator === zone.uuid) {
+            speaker.zone.coordinator = speaker.zone.uuid === zone.uuid ? zone.uuid : target;
+          }
+        }
+        this.zone(target).coordinator = target;
+        void this.#notifyTopology();
+        return ack(action, 'ZoneGroupTopology');
+      }
+
       case 'AddURIToQueue': {
         const uri = args.EnqueuedURI ?? '';
         const refused = this.enqueueRefusals.some((prefix) => uri.startsWith(prefix));

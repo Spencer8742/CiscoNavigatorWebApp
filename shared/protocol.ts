@@ -264,6 +264,8 @@ export interface MediaItem {
   /** Favourited upstream. Absent when the state is unknown, which for Sonos
    *  is always — favourites are managed in the Sonos app, not from here. */
   f?: boolean;
+  /** Pinned in this app's shared media shelf. */
+  p?: boolean;
   /**
    * This row can be OPENED but not played.
    *
@@ -356,7 +358,13 @@ export type BrowseRequest =
    * for its own catalog. A number rather than a name because the panel is
    * given the services in `hello` and echoes back what it was told.
    */
-  | { kind: 'search'; text: string; source?: 'library' | number }
+  | {
+      kind: 'search';
+      text: string;
+      source?: 'all' | 'library' | number;
+      /** Limit grouped results to one kind. */
+      media?: MediaKind;
+    }
   /**
    * A page of a music service's own tree.
    *
@@ -395,6 +403,8 @@ export type BrowseRequest =
    * able to mean "show me track 7", not only "play the whole thing".
    */
   | { kind: 'item'; uri: string; offset?: number }
+  /** Content played or pinned through this app. */
+  | { kind: 'shelf'; shelf: 'recent' | 'pinned' }
   /** The actual rows of a player's queue. */
   | { kind: 'queue'; queueId: string; offset?: number };
 
@@ -485,7 +495,17 @@ export type MusicCommand =
   /** Set the group led by `player` to exactly these members. Absolute. */
   | { verb: 'group'; player: string; members: string[] }
   | { verb: 'ungroup'; player: string }
-  | { verb: 'playItem'; player: string; item: string; enqueue: Enqueue; radio?: boolean }
+  | {
+      verb: 'playItem';
+      player: string;
+      item: string;
+      enqueue: Enqueue;
+      radio?: boolean;
+      media?: MediaItem;
+    }
+  | { verb: 'pin'; player: string; item: string; media: MediaItem; on: boolean }
+  /** Move the current group and queue to another room. */
+  | { verb: 'handoff'; player: string; target: string }
   | { verb: 'queueJump'; player: string; index: number }
   /** `by` is a position shift, not an index. */
   | { verb: 'queueMove'; player: string; item: string; by: number }
@@ -548,6 +568,8 @@ export const MUSIC_VERBS: readonly string[] = [
   'group',
   'ungroup',
   'playItem',
+  'pin',
+  'handoff',
   'queueJump',
   'queueMove',
   'queueRemove',

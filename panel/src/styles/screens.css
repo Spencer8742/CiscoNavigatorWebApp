@@ -647,6 +647,30 @@
   margin-top: var(--s-4);
 }
 
+.np-modes {
+  display: flex;
+  gap: var(--s-2);
+  margin-top: var(--s-2);
+}
+
+.np-mode {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: 2.5rem;
+  padding: 0 var(--s-3);
+  border-radius: var(--r-full);
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-size: 0.8125rem;
+  font-weight: 560;
+}
+
+.np-mode.is-on {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 .np-button {
   display: flex;
   align-items: center;

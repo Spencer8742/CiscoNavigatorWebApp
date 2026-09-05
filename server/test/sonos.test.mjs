@@ -369,13 +369,12 @@ function isolated({ host, zones, swallowEvents = false, services = false } = {})
      * into the next run and the second run would test a different program
      * from the first.
      */
-    let configPath = CONFIG;
+    ctx.stateDir = await mkdtemp(join(tmpdir(), 'navigator-sonos-'));
+    const configPath = join(ctx.stateDir, 'dashboard.yaml');
+    await copyFile(CONFIG, configPath);
     if (services) {
       ctx.smapi = new MockSmapi();
       await ctx.smapi.start();
-      ctx.stateDir = await mkdtemp(join(tmpdir(), 'navigator-svc-'));
-      configPath = join(ctx.stateDir, 'dashboard.yaml');
-      await copyFile(CONFIG, configPath);
     }
 
     // Point SONOS_HOST at ONE speaker. Everything else — including the other
@@ -901,6 +900,7 @@ const COMMAND_ACTIONS = new Set([
   'SetPlayMode',
   'SetAVTransportURI',
   'BecomeCoordinatorOfStandaloneGroup',
+  'DelegateGroupCoordinationTo',
   'SetVolume',
   'SetMute',
 ]);
@@ -1039,6 +1039,23 @@ describe('driving the speakers', () => {
     );
     assert.equal(leave.uuid, 'RINCON_KITCHEN', 'the speaker being dropped stands alone');
 
+    panel.close();
+  });
+
+  test('hands the current queue to another room', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    const before = ctx.sonos.calls.length;
+    panel.music({ verb: 'handoff', player: 'RINCON_BEDROOM', target: 'RINCON_STUDY' });
+    const delegate = await waitFor(
+      () => ctx.sonos.calls.slice(before).find((call) => call.action === 'DelegateGroupCoordinationTo'),
+      'the coordinator transfer to arrive',
+    );
+    assert.equal(delegate.uuid, 'RINCON_BEDROOM');
+    assert.equal(delegate.args.NewCoordinator, 'RINCON_STUDY');
+    assert.equal(delegate.args.RejoinGroup, '0', 'the old room is left behind');
     panel.close();
   });
 
@@ -1262,6 +1279,39 @@ describe('browsing', () => {
     const saved = result.groups.find((group) => group.name === 'Saved in Sonos');
     assert.deepEqual(saved.items.map((item) => item.n), ['Morning & Coffee']);
 
+    panel.close();
+  });
+
+  test('searches every connected source and filters by media type', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    const result = await panel.browse({ kind: 'search', text: 'coffee', source: 'all', media: 'playlist' });
+    assert.equal(result.kind, 'groups');
+    assert.ok(result.groups.some((group) => group.name.startsWith('Sonos ·')));
+    assert.ok(result.groups.flatMap((group) => group.items).every((item) => item.k === 'playlist'));
+    panel.close();
+  });
+
+  test('keeps pinned and recently played music on shared shelves', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+    const favourites = await panel.browse({ kind: 'library', media: 'track', favorite: true });
+    const item = favourites.items[0];
+
+    panel.music({ verb: 'pin', player: 'RINCON_LIVING', item: item.u, media: item, on: true });
+    await waitFor(async () => {
+      const pinned = await panel.browse({ kind: 'shelf', shelf: 'pinned' });
+      return pinned.kind === 'list' && pinned.items[0]?.n === item.n;
+    }, 'the pin to reach the shelf');
+
+    panel.music({ verb: 'playItem', player: 'RINCON_LIVING', item: item.u, media: item, enqueue: 'replace' });
+    await waitFor(async () => {
+      const recent = await panel.browse({ kind: 'shelf', shelf: 'recent' });
+      return recent.kind === 'list' && recent.items[0]?.n === item.n;
+    }, 'the play to reach recent');
     panel.close();
   });
 

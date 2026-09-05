@@ -4,6 +4,7 @@ import { Pressable } from '~/components/Pressable.tsx';
 import { browse } from '~/net/socket.ts';
 import { Artwork } from '~/components/Artwork.tsx';
 import { speakers } from '~/state/selectors.ts';
+import { sources } from '~/state/players.ts';
 import * as act from '~/state/actions.ts';
 import { BROWSE_PAGE } from '@shared/protocol.ts';
 import type {
@@ -31,9 +32,9 @@ import type {
  * These are six flat views over the same call, with the one you actually use
  * — what you favourited in the Sonos app — first and needing no typing at all.
  *
- * There is no "Recently played". Sonos keeps no play history, locally or in
- * its cloud API, and inventing one from what this panel happened to start
- * would be a narrower thing wearing the same label.
+ * Sonos exposes no household play-history API, so Recent records successful
+ * plays started through this app. It is persisted by the backend and shared
+ * by every panel rather than disappearing with RoomOS browser storage.
  *
  * ## Memory
  *
@@ -47,7 +48,7 @@ import type {
 /** A tab is a household view or local-library search — never a queue lookup. */
 type TabRequest = Extract<
   BrowseRequest,
-  { kind: 'library' } | { kind: 'search' } | { kind: 'sources' }
+  { kind: 'library' } | { kind: 'search' } | { kind: 'sources' } | { kind: 'shelf' }
 >;
 
 interface Tab {
@@ -58,6 +59,8 @@ interface Tab {
 }
 
 const TABS: Tab[] = [
+  { id: 'pinned', label: 'Pinned', icon: 'pin', request: { kind: 'shelf', shelf: 'pinned' } },
+  { id: 'recent', label: 'Recent', icon: 'clock', request: { kind: 'shelf', shelf: 'recent' } },
   { id: 'favorites', label: 'Favourites', icon: 'heart', request: { kind: 'library', media: 'track', favorite: true } },
   {
     /*
@@ -87,8 +90,9 @@ interface Crumb {
 }
 
 export function Browse({ playerId, onClose }: { playerId: string; onClose: () => void }) {
-  const [tab, setTab] = useState('favorites');
-  const source = 'library' as const;
+  const [tab, setTab] = useState('pinned');
+  const [source, setSource] = useState<'all' | 'library' | number>('all');
+  const [mediaFilter, setMediaFilter] = useState<MediaKind | undefined>(undefined);
   const [offset, setOffset] = useState(0);
   const [query, setQuery] = useState('');
   const [result, setResult] = useState<BrowseResult | null>(null);
@@ -123,11 +127,13 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
     const req: BrowseRequest = here
       ? { kind: 'item', uri: here.uri, offset }
       : current.request.kind === 'search'
-        ? { kind: 'search', text: query, source }
+        ? { kind: 'search', text: query, source, media: mediaFilter }
         : current.request.kind === 'sources'
           ? // The service list is short by construction and does not page.
             { kind: 'sources' }
-          : { ...current.request, offset };
+          : current.request.kind === 'shelf'
+            ? current.request
+            : { ...current.request, offset };
 
     // An empty search box is not a request; it is the state before one.
     if (req.kind === 'search' && req.text.trim().length === 0) {
@@ -156,7 +162,7 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
     return () => {
       stale = true;
     };
-  }, [tab, offset, query, source, here?.uri]);
+  }, [tab, offset, query, source, mediaFilter, here?.uri]);
 
   const pick = (t: string): void => {
     setTab(t);
@@ -238,7 +244,20 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
 
         {tab === 'search' && !here ? (
           <>
-            <SearchBox value={query} onSearch={setQuery} placeholder="Search saved Sonos music" />
+            <SearchBox value={query} onSearch={setQuery} placeholder="Search all connected music" />
+            <div class="browse-filters scroll" aria-label="Search source">
+              <FilterChip label="Everything" active={source === 'all'} onPress={() => setSource('all')} />
+              <FilterChip label="Sonos" active={source === 'library'} onPress={() => setSource('library')} />
+              {sources.value.filter((item) => item.searchable && item.ready).map((item) => (
+                <FilterChip key={item.sid} label={item.name} active={source === item.sid} onPress={() => setSource(item.sid)} />
+              ))}
+            </div>
+            <div class="browse-filters scroll" aria-label="Result type">
+              <FilterChip label="All types" active={!mediaFilter} onPress={() => setMediaFilter(undefined)} />
+              {(['track', 'album', 'artist', 'playlist', 'radio', 'podcast'] as MediaKind[]).map((kind) => (
+                <FilterChip key={kind} label={KIND_LABEL[kind]} active={mediaFilter === kind} onPress={() => setMediaFilter(kind)} />
+              ))}
+            </div>
           </>
         ) : null}
 
@@ -516,6 +535,14 @@ function SearchBox({
   );
 }
 
+function FilterChip({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+  return (
+    <Pressable class={active ? 'browse-filter is-active' : 'browse-filter'} onPress={onPress} ariaPressed={active} ariaLabel={label}>
+      {label}
+    </Pressable>
+  );
+}
+
 /* ── Playing it ───────────────────────────────────────────────────────────*/
 
 /**
@@ -563,7 +590,7 @@ function PlayOptions({
         <div class="sheet-body">
           <Pressable
             class="play-option is-primary"
-            onPress={() => choose(() => act.playItem(playerId, item.u, { enqueue: 'replace' }))}
+            onPress={() => choose(() => act.playItem(playerId, item.u, { enqueue: 'replace', media: item }))}
             ariaLabel={`Play on ${playerName}`}
           >
             <Icon name="play" size="1.3rem" />
@@ -574,7 +601,7 @@ function PlayOptions({
             <>
               <Pressable
                 class="play-option"
-                onPress={() => choose(() => act.playItem(playerId, item.u, { enqueue: 'next' }))}
+                onPress={() => choose(() => act.playItem(playerId, item.u, { enqueue: 'next', media: item }))}
                 ariaLabel="Play next"
               >
                 <Icon name="next" size="1.3rem" />
@@ -583,7 +610,7 @@ function PlayOptions({
 
               <Pressable
                 class="play-option"
-                onPress={() => choose(() => act.playItem(playerId, item.u, { enqueue: 'add' }))}
+                onPress={() => choose(() => act.playItem(playerId, item.u, { enqueue: 'add', media: item }))}
                 ariaLabel="Add to queue"
               >
                 <Icon name="plus" size="1.3rem" weight={2.2} />
@@ -596,7 +623,7 @@ function PlayOptions({
               <Pressable
                 class="play-option"
                 onPress={() =>
-                  choose(() => act.playItem(playerId, item.u, { enqueue: 'replace', radio: true }))
+                  choose(() => act.playItem(playerId, item.u, { enqueue: 'replace', radio: true, media: item }))
                 }
                 ariaLabel="Start a radio station"
               >
@@ -622,6 +649,14 @@ function PlayOptions({
               <span>{item.f ? 'Remove from favorites' : 'Add to favorites'}</span>
             </Pressable>
           ) : null}
+          <Pressable
+            class="play-option"
+            onPress={() => choose(() => act.pinItem(playerId, item, item.p !== true))}
+            ariaLabel={item.p ? 'Unpin' : 'Pin for quick access'}
+          >
+            <Icon name="pin" size="1.3rem" weight={1.9} />
+            <span>{item.p ? 'Remove from Pinned' : 'Pin for quick access'}</span>
+          </Pressable>
         </div>
       </div>
     </div>

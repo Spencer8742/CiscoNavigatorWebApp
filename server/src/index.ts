@@ -21,6 +21,7 @@ import { SonosCommands } from '~/sonos/commands.ts';
 import { SonosBrowser } from '~/sonos/browse.ts';
 import { SpotifySearch } from '~/sonos/spotify.ts';
 import { UriRegistry } from '~/sonos/uris.ts';
+import { MediaShelf } from '~/sonos/shelf.ts';
 import { MusicServices } from '~/sonos/music.ts';
 import { canSearch } from '~/sonos/services.ts';
 import { CastKeeper } from '~/cast/keeper.ts';
@@ -343,8 +344,9 @@ async function main(): Promise<void> {
    * reasoning, as the artwork registry beside it. See sonos/uris.ts.
    */
   const sonosUris = new UriRegistry();
+  const mediaShelf = new MediaShelf(join(dirname(env.configPath), 'media-shelf.json'), sonosUris);
   const spotify = new SpotifySearch(env.spotify, sonosClient, sonosUris, mediaArt);
-  const sonosCommands = new SonosCommands(sonosClient, sonosStore, sonosUris);
+  const sonosCommands = new SonosCommands(sonosClient, sonosStore, sonosUris, mediaShelf);
 
   /*
    * The household's music services, and the tokens that let us call them.
@@ -365,6 +367,7 @@ async function main(): Promise<void> {
     art: mediaArt,
     spotify,
     music: musicServices,
+    shelf: mediaShelf,
   });
 
   /**

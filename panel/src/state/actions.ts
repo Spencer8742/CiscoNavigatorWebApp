@@ -561,7 +561,7 @@ export type { Enqueue };
 export function playItem(
   playerId: string,
   uri: string,
-  opts: { enqueue?: Enqueue; radio?: boolean } = {},
+  opts: { enqueue?: Enqueue; radio?: boolean; media?: import('@shared/protocol.ts').MediaItem } = {},
 ): void {
   music({
     verb: 'playItem',
@@ -569,7 +569,22 @@ export function playItem(
     item: uri,
     enqueue: opts.enqueue ?? 'replace',
     ...(opts.radio ? { radio: true } : {}),
+    ...(opts.media ? { media: opts.media } : {}),
   });
+}
+
+export function pinItem(
+  playerId: string,
+  item: import('@shared/protocol.ts').MediaItem,
+  on: boolean,
+): void {
+  music({ verb: 'pin', player: playerId, item: item.u, media: item, on });
+  showToast(on ? 'Pinned' : 'Unpinned');
+}
+
+export function handoff(playerId: string, target: string): void {
+  music({ verb: 'handoff', player: playerId, target });
+  showToast('Moving playback…');
 }
 
 /** Mark something a favourite, or unmark it. */
