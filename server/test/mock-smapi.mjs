@@ -30,6 +30,15 @@ export class MockSmapi {
   /** Set false to make the service reject anything without a login token. */
   anonymous = false;
 
+  /**
+   * Make the link calls themselves fail, with this fault string.
+   *
+   * The case that mattered: a service that will not even START a link. What it
+   * says is the only account of why, and it was being replaced with "connect
+   * this service" — advice to do the thing that had just failed.
+   */
+  refuseLink = null;
+
   /** How many `getDeviceAuthToken` polls to refuse before granting one. */
   pollsBeforeLink = 1;
 
@@ -103,6 +112,10 @@ export class MockSmapi {
        * that works against a real one.
        */
       const linking = LINK_ACTIONS.has(action);
+      if (linking && this.refuseLink) {
+        this.#fault(res, this.refuseLink);
+        return;
+      }
       if (!this.anonymous && !hasToken && !linking) {
         this.#fault(res, 'Client.LoginUnauthorized');
         return;

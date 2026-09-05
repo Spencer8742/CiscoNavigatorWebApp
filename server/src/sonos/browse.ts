@@ -312,9 +312,28 @@ export class SonosBrowser {
       throw err;
     }
 
+    const items = rows.map((row) => this.#shapeService(row, sid));
+
+    /*
+     * An empty service page needs the same honesty as an empty container, and
+     * one extra offer.
+     *
+     * A service can answer politely with nothing when it does not really
+     * consider us logged in — its catalog entry says `Anonymous`, it accepts
+     * the call, and it returns an empty root rather than a fault. Sonos Radio
+     * does this. Offering to connect turns a blank screen into the one action
+     * that might fix it.
+     */
+    const linkable =
+      items.length === 0 && !music.linked(sid)
+        ? { connect: sid, note: `${service.name} returned nothing. It may need connecting.` }
+        : items.length === 0
+          ? { note: `${service.name} returned nothing here.` }
+          : {};
+
     return {
       kind: 'list',
-      items: rows.map((row) => this.#shapeService(row, sid)),
+      items,
       offset,
       /*
        * A service reports a total that is often a guess, and several report
@@ -322,6 +341,7 @@ export class SonosBrowser {
        * unlike the local library, where Sonos's own count is exact.
        */
       more: rows.length >= BROWSE_PAGE,
+      ...linkable,
     };
   }
 

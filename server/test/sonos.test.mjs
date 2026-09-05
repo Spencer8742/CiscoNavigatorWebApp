@@ -1613,6 +1613,35 @@ describe('music services', () => {
     panel.close();
   });
 
+  /*
+   * A link that will not start must say what the SERVICE said.
+   *
+   * Routing this through the same explanation as a refused browse produced
+   * "Connect SoundCloud to browse it" — on the Connect sheet, as the reason
+   * connecting had failed. Advice to do the thing that just failed, and the
+   * service's own account of why thrown away.
+   */
+  test('a link that will not start reports the service, not itself', async () => {
+    ctx.smapi.refuseLink = 'Client.AccountRequiresUpgrade';
+
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+    await panel.browse({ kind: 'sources' });
+
+    await assert.rejects(
+      () => panel.link(200, 'begin'),
+      (err) => {
+        assert.match(err.message, /AccountRequiresUpgrade/, "the service's own words");
+        assert.doesNotMatch(err.message, /to browse it/, 'not advice to do what just failed');
+        return true;
+      },
+    );
+
+    ctx.smapi.refuseLink = null;
+    panel.close();
+  });
+
   test('connecting is a code to type, not a redirect', async () => {
     ctx.smapi.pollsBeforeLink = 1;
 
