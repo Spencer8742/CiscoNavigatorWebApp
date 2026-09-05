@@ -160,11 +160,13 @@ async function main(): Promise<void> {
   const musicSourceList = (): MusicSource[] =>
     musicServices.list().map((service) => {
       const lastError = musicServices.lastLinkError(service.sid);
+      const spotifySearchReady = env.spotify.enabled && service.name.toLowerCase() === 'spotify';
       return {
         sid: service.sid,
         name: service.name,
-        ready: service.auth === 'Anonymous' || musicServices.linked(service.sid),
-        searchable: canSearch(service),
+        ready:
+          spotifySearchReady || service.auth === 'Anonymous' || musicServices.linked(service.sid),
+        searchable: spotifySearchReady || canSearch(service),
         linkable: service.auth === 'DeviceLink' || service.auth === 'AppLink',
         ...(service.auth === 'UserId'
           ? { blocked: `${service.name} requires a password sign-in that this panel does not support. Add favourites in the Sonos app to play them here.` }
