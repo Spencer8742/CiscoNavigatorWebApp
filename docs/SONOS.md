@@ -3,6 +3,40 @@
 **Status: built, through music services and the full speaker-control surface.
 Music Assistant has been removed.**
 
+## Connection reliability update — September 2026
+
+The connection flow now keeps services selected through **Add a service** in
+panel state, so their Connect buttons can actually start a link. Favourites
+have a direct tab and open first; Services and Search remain one tap away.
+
+- AppLink requests use the documented client fields and read only the
+  `authorizeAccount/deviceLink` response. Both linking modes return the private
+  `linkDeviceId` to the service without exposing it to the panel.
+- SOAP faults are parsed even on HTTP 200 responses, preserving fault codes
+  alongside exception details. `Client.AuthTokenExpired` updates every panel;
+  `Client.TokenRefreshRequired` saves the replacement credentials and retries
+  once. Invalid HTML/XML responses no longer appear as empty catalogs.
+- Connection failures retain their explanation and offer **Try again**. A
+  rejected request is not treated as proof of a permanent provider restriction.
+  Anonymous and password-only services explain the supported favourites path
+  instead of offering a Connect button that cannot work.
+- Linking operations are serialized per service, polling does not overlap, and
+  credential writes are serialized and atomic. A failed disk write reports an
+  error instead of claiming the connection was saved.
+- Successful linking refreshes the open browser; the connection dialog supports
+  keyboard focus, Escape, and retry. Button activation also works by keyboard.
+
+Protocol references: [getAppLink](https://docs.sonos.com/docs/getapplink),
+[getDeviceAuthToken](https://docs.sonos.com/docs/getdeviceauthtoken), and
+[authentication tokens](https://docs.sonos.com/docs/use-authentication-tokens).
+
+These fixes improve this controller's protocol implementation; they do not
+establish support for every provider or every account. A household account on
+Sonos and a browsing token for this app are separate. Real service sign-in and
+playback must be checked on the deployed system. The integration still supports
+one selected account per service, uses conventional search category IDs, and
+constructs playback metadata using the existing service URI conventions.
+
 | Phase | | |
 |---|---|---|
 | 1 | Topology — the household | ✅ |

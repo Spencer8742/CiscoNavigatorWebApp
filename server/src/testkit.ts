@@ -48,3 +48,6 @@ export { parseZoneGroupState } from '~/sonos/topology.ts';
 export type { Household, SonosZone } from '~/sonos/topology.ts';
 export { parseTrackMetadata, artUrl } from '~/sonos/didl.ts';
 export { seconds, flag, integer } from '~/sonos/soap.ts';
+
+export { SmapiClient, SmapiError } from '~/sonos/smapi.ts';
+export { accountsFromUris } from '~/sonos/services.ts';

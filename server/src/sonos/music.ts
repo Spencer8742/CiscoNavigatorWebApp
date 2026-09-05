@@ -69,6 +69,7 @@ const CATALOG_TTL_MS = 60 * 60 * 1000;
 interface PendingLink {
   sid: number;
   linkCode: string;
+  linkDeviceId: string | null;
   prompt: LinkPrompt;
   startedAt: number;
 }
@@ -84,33 +85,12 @@ export class MusicServices {
   readonly #path: string;
 
   #tokens = new Map<number, ServiceToken>();
-  /**
-   * Services that refused to let this app link at all, and what they said.
-   *
-   * A SMAPI endpoint is contracted between Sonos and the service, and several
-   * validate that the caller is a licensed Sonos client. When one answers
-   * `NOT_AUTHORIZED` to the FIRST call of a link — before any person has been
-   * asked anything — it is rejecting this app, not an account.
-   *
-   * No parameter changes that, so continuing to offer a Connect button is
-   * leading somebody into the same wall repeatedly. Remembered for the life of
-   * the process, and re-tried on restart in case a service changes its mind.
-   */
-  #refused = new Map<number, string>();
-  /**
-   * The last thing a service said when connecting it failed, whatever it was.
-   *
-   * `#refused` covers one specific answer — the service rejecting this app as
-   * a caller — and suppresses the button. Everything else a service can say is
-   * shown in a sheet that closes, which means the answer is gone by the time
-   * anybody could act on it or repeat it. This keeps it on the service's own
-   * page, so pressing Connect once leaves a record of what happened.
-   *
-   * Cleared the moment a link starts working, because a stale explanation of a
-   * failure is worse than none.
-   */
+  #selected = new Set<number>();
+  /** Last connection error, retained until retry or success. */
   #lastLinkError = new Map<number, string>();
   #pending = new Map<number, PendingLink>();
+  #operations = new Map<number, Promise<unknown>>();
+  #saving: Promise<void> = Promise.resolve();
   #deviceId: string;
   #refreshedAt = 0;
   #loading: Promise<void> | null = null;
@@ -184,13 +164,20 @@ export class MusicServices {
     const out = this.#catalog.list();
     const seen = new Set(out.map((s) => s.sid));
 
-    for (const sid of this.#tokens.keys()) {
+    for (const sid of new Set([...this.#tokens.keys(), ...this.#selected])) {
       if (seen.has(sid)) continue;
       const service = this.#catalog.get(sid);
       if (service) out.push(service);
     }
 
     return out.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  /** Keep a manually chosen catalog service available to the Connect UI. */
+  select(sid: number): void {
+    if (!this.#catalog.get(sid) || this.#selected.has(sid)) return;
+    this.#selected.add(sid);
+    this.#onChange?.();
   }
 
   /** Sonos's whole catalog, for adding a service detection missed. */
@@ -249,11 +236,13 @@ export class MusicServices {
     }
 
     let refused: unknown = null;
+    let answered = 0;
 
     const groups = await Promise.all(
       SEARCH_CATEGORIES.map(async (category) => {
         try {
           const page = await client.search(category.id, term);
+          answered++;
           return { name: category.name, items: page.items };
         } catch (err) {
           // Kept so that "every category failed" can be reported as the auth
@@ -265,7 +254,7 @@ export class MusicServices {
     );
 
     const hits = groups.filter((g) => g.items.length > 0);
-    if (hits.length === 0 && refused !== null) throw this.#explain(refused, sid);
+    if (answered === 0 && refused !== null) throw this.#explain(refused, sid);
     return hits;
   }
 
@@ -284,7 +273,12 @@ export class MusicServices {
    * Idempotent within the TTL: tapping "connect" twice must not invalidate the
    * code somebody is already halfway through typing.
    */
-  async beginLink(sid: number): Promise<LinkPrompt> {
+  beginLink(sid: number): Promise<LinkPrompt> {
+    return this.#serial(sid, () => this.#beginLink(sid));
+  }
+
+  async #beginLink(sid: number): Promise<LinkPrompt> {
+    await this.ready();
     const existing = this.#pending.get(sid);
     if (existing && Date.now() - existing.startedAt < LINK_TTL_MS) return existing.prompt;
 
@@ -296,12 +290,15 @@ export class MusicServices {
     }
 
     try {
-      const { prompt, linkCode } = await this.#clientFor(sid).beginLink();
-      this.#pending.set(sid, { sid, linkCode, prompt, startedAt: Date.now() });
+      // An old account token must not authorize a new linking attempt.
+      const client = this.#clientFor(sid);
+      client.setToken(null);
+      const { prompt, linkCode, linkDeviceId } = await client.beginLink();
+      this.#pending.set(sid, { sid, linkCode, linkDeviceId, prompt, startedAt: Date.now() });
       // A link that started is the current truth about this service; whatever
       // it said last time no longer describes it.
       this.#clearLinkError(sid);
-      log.info(`Linking ${service.name}: ${prompt.url}`);
+      log.info(`Linking ${service.name}`);
       return prompt;
     } catch (err) {
       /*
@@ -328,33 +325,13 @@ export class MusicServices {
     const fault = err instanceof SmapiError && err.fault.trim().length > 0 ? err.fault.trim() : '';
     log.warn(`${name} refused to start a link: ${message(err)}${fault ? ` — ${fault}` : ''}`);
 
-    /*
-     * `NOT_AUTHORIZED` on the first call of a link is the service rejecting
-     * THIS APP as a caller, not rejecting an account: nobody has been asked
-     * for anything yet. Recorded so the panel stops offering a button that
-     * cannot work.
-     */
-    if (/NOT_AUTHORIZED|Unauthorized|FORBIDDEN/i.test(fault)) {
-      this.#refused.set(sid, fault);
-      this.#lastLinkError.delete(sid);
-      this.#onChange?.();
-      return new Error(
-        `${name} does not accept connections from this app. Music services can ` +
-          'limit browsing to the Sonos app itself. Anything you favourite there ' +
-          'still plays here.',
-      );
-    }
-
-    /*
-     * Anything else is worth keeping ON the service rather than only in a
-     * sheet somebody is about to close. Each service answers for itself here —
-     * one refusing this app says nothing about the next — so the only way to
-     * find out what a given service does is to try it, and the only way that
-     * try is any use is if its answer survives.
-     */
-    const explained = fault
-      ? `${name} would not start: ${fault}`
-      : `${name} would not start a connection`;
+    // A refusal is evidence about this request, not proof of a permanent ban.
+    // Keep retry available, including after a malformed or expired link.
+    const explained = /NOT_AUTHORIZED|Unauthorized|FORBIDDEN/i.test(fault)
+      ? `${name} rejected this connection. Try again, or play its saved favourites from the Sonos app. (${fault})`
+      : fault
+        ? `${name} would not connect: ${fault}`
+        : `${name} could not connect: ${message(err)}`;
     this.#lastLinkError.set(sid, explained);
     this.#onChange?.();
     return new Error(explained);
@@ -366,44 +343,58 @@ export class MusicServices {
    * Returns false while the service says "not yet", which is its normal answer
    * for most of the flow rather than a failure. Anything else throws.
    */
-  async pollLink(sid: number): Promise<boolean> {
+  pollLink(sid: number): Promise<boolean> {
+    return this.#serial(sid, () => this.#pollLink(sid));
+  }
+
+  async #pollLink(sid: number): Promise<boolean> {
     const pending = this.#pending.get(sid);
-    if (!pending) throw new Error('That link is no longer in progress — start again');
+    if (!pending) {
+      if (this.linked(sid)) return true;
+      throw new Error('That link is no longer in progress — start again');
+    }
     if (Date.now() - pending.startedAt > LINK_TTL_MS) {
       this.#pending.delete(sid);
       throw new Error('That link expired — start again');
     }
 
     try {
-      const token = await this.#clientFor(sid).finishLink(pending.linkCode);
+      const client = this.#clientFor(sid);
+      client.setToken(null);
+      const token = await client.finishLink(pending.linkCode, pending.linkDeviceId);
       token.sn = this.#catalog.get(sid)?.sn ?? null;
 
+      const previous = this.#tokens.get(sid);
       this.#tokens.set(sid, token);
+      try {
+        await this.#save();
+      } catch (err) {
+        if (previous) this.#tokens.set(sid, previous);
+        else this.#tokens.delete(sid);
+        throw err;
+      }
       this.#pending.delete(sid);
       this.#clearLinkError(sid);
-      await this.#save();
+      this.#onChange?.();
 
       log.info(`Connected ${this.#catalog.get(sid)?.name ?? sid}`);
       return true;
     } catch (err) {
       if (err instanceof SmapiError && err.pending) return false;
+      this.#pending.delete(sid);
       // Same reasoning as `beginLink`: mid-link, "please link" says nothing.
       throw this.#linkFailure(err, sid, this.#catalog.get(sid)?.name ?? 'That service');
     }
   }
 
-  /**
-   * Forget a service's token.
-   *
-   * Also forgets that it ever refused us. Disconnecting is the one moment
-   * somebody has said "start this over", and a service that answered
-   * `NOT_AUTHORIZED` a month ago may not today — holding the refusal past an
-   * explicit reset would make it permanent for reasons the person cannot see.
-   */
-  async unlink(sid: number): Promise<void> {
+  /** Forget the token, pending link, and last connection error. */
+  unlink(sid: number): Promise<void> {
+    return this.#serial(sid, () => this.#unlink(sid));
+  }
+
+  async #unlink(sid: number): Promise<void> {
     this.#tokens.delete(sid);
     this.#pending.delete(sid);
-    this.#refused.delete(sid);
     this.#lastLinkError.delete(sid);
     await this.#save();
     this.#onChange?.();
@@ -414,17 +405,6 @@ export class MusicServices {
     return this.#tokens.has(sid);
   }
 
-  /** Why this service will not let this app link, if it has said so. */
-  refused(sid: number): string | null {
-    return this.#refused.get(sid) ?? null;
-  }
-
-  /**
-   * What went wrong the last time connecting this service was tried.
-   *
-   * Distinct from `refused`: that one is final and hides the button, this one
-   * is a report on an attempt that could reasonably be made again.
-   */
   lastLinkError(sid: number): string | null {
     return this.#lastLinkError.get(sid) ?? null;
   }
@@ -450,7 +430,21 @@ export class MusicServices {
      */
     const deviceId = this.#catalog.deviceSerial ?? this.#deviceId;
 
-    return new SmapiClient(service, household, deviceId, this.#tokens.get(sid) ?? null);
+    let original = this.#tokens.get(sid) ?? null;
+    return new SmapiClient(service, household, deviceId, original, async (token) => {
+      // A refresh finishing after an explicit disconnect must not restore it.
+      if (this.#tokens.get(sid) !== original) return;
+      const previous = original;
+      this.#tokens.set(sid, token);
+      try {
+        await this.#save();
+        original = token;
+      } catch (err) {
+        if (previous) this.#tokens.set(sid, previous);
+        else this.#tokens.delete(sid);
+        throw err;
+      }
+    });
   }
 
   /**
@@ -475,7 +469,7 @@ export class MusicServices {
        * which then demands a login anyway — SoundCloud does exactly this, and
        * believing the catalog left the panel with an error and no button.
        */
-      if (this.#tokens.has(sid)) void this.#dropToken(sid);
+      if (this.#tokens.has(sid)) void this.#dropToken(sid).catch((error: unknown) => log.warn(message(error)));
       return new NeedsLink(sid, name);
     }
 
@@ -489,6 +483,7 @@ export class MusicServices {
 
   async #dropToken(sid: number): Promise<void> {
     this.#tokens.delete(sid);
+    this.#onChange?.();
     await this.#save();
   }
 
@@ -534,7 +529,23 @@ export class MusicServices {
     }
   }
 
-  async #save(): Promise<void> {
+  #serial<T>(sid: number, action: () => Promise<T>): Promise<T> {
+    const previous = this.#operations.get(sid) ?? Promise.resolve();
+    const operation = previous.catch(() => {}).then(action);
+    this.#operations.set(sid, operation);
+    void operation.finally(() => {
+      if (this.#operations.get(sid) === operation) this.#operations.delete(sid);
+    }).catch(() => {});
+    return operation;
+  }
+
+  #save(): Promise<void> {
+    const operation = this.#saving.catch(() => {}).then(() => this.#writeTokens());
+    this.#saving = operation;
+    return operation;
+  }
+
+  async #writeTokens(): Promise<void> {
     const tokens: StoredTokens = {};
     for (const [sid, token] of this.#tokens) tokens[String(sid)] = token;
 
@@ -549,6 +560,7 @@ export class MusicServices {
       await rename(tmp, this.#path);
     } catch (err) {
       log.warn(`Could not store service connections: ${message(err)}`);
+      throw new Error('The connection could not be saved. Check that the server can write to its configuration folder, then try again.');
     }
   }
 }

@@ -304,24 +304,9 @@ export interface MusicSource {
    * cannot be typed on a shared screen and is not asked for.
    */
   linkable: boolean;
-  /**
-   * Why this service cannot be connected here, when it has said so itself.
-   *
-   * A SMAPI endpoint is contracted between Sonos and the service, and several
-   * validate that the caller is a licensed Sonos client. One that answers
-   * `NOT_AUTHORIZED` to the first call of a link is rejecting this app rather
-   * than an account — no setting changes it, so the panel stops offering a
-   * button and says this instead.
-   */
+  /** Why account linking is unavailable for this service's sign-in method. */
   blocked?: string;
-  /**
-   * What the service said the last time connecting it was tried and failed.
-   *
-   * Not the same as `blocked`, which is final. This is an attempt worth making
-   * again, reported where somebody can read it — a Connect sheet closes, and
-   * with it the only account of what actually happened. Each service answers
-   * for itself, so this is how one is told apart from the next.
-   */
+  /** Last failed connection attempt. Retry remains available. */
   lastError?: string;
 }
 

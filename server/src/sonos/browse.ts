@@ -172,7 +172,7 @@ export class SonosBrowser {
         sid: service.sid,
         o: true,
       };
-      if (!music.linked(service.sid) && service.auth !== 'Anonymous') item.s = 'Not connected';
+      item.s = music.linked(service.sid) ? 'Connected' : service.auth === 'Anonymous' ? 'Browse without signing in' : service.auth === 'UserId' ? 'Use Sonos favourites' : 'Connect to browse';
       items.push(item);
     }
 
@@ -302,6 +302,7 @@ export class SonosBrowser {
 
     const service = music.get(sid);
     if (!service) throw new Error('That service is not available here');
+    music.select(sid);
 
     let rows;
     try {

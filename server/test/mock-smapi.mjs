@@ -38,6 +38,10 @@ export class MockSmapi {
    * this service" — advice to do the thing that had just failed.
    */
   refuseLink = null;
+  linkDeviceId = 'private-device-proof';
+  faultStatus = 500;
+  faults = {};
+  rawResponse = null;
 
   /** How many `getDeviceAuthToken` polls to refuse before granting one. */
   pollsBeforeLink = 1;
@@ -111,6 +115,21 @@ export class MockSmapi {
        * separates a client that works against an anonymous service from one
        * that works against a real one.
        */
+      if (this.rawResponse !== null) {
+        res.writeHead(200, { 'content-type': 'text/xml' });
+        res.end(this.rawResponse);
+        return;
+      }
+      if (this.faults[action]) {
+        const fault = this.faults[action];
+        if (fault.once) delete this.faults[action];
+        this.#fault(res, fault.code, fault.detail ?? '');
+        return;
+      }
+      if (action === 'getDeviceAuthToken' && tag(raw, 'linkDeviceId') !== this.linkDeviceId) {
+        this.#fault(res, 'Client.NOT_LINKED_FAILURE');
+        return;
+      }
       const linking = LINK_ACTIONS.has(action);
       if (linking && this.refuseLink) {
         this.#fault(res, this.refuseLink);
@@ -160,6 +179,7 @@ export class MockSmapi {
           '<regUrl>https://example.invalid/link</regUrl>' +
           '<linkCode>ABCD-1234</linkCode>' +
           '<showLinkCode>true</showLinkCode>' +
+          `<linkDeviceId>${escapeXml(this.linkDeviceId)}</linkDeviceId>` +
           '</getDeviceLinkCodeResult></getDeviceLinkCodeResponse>';
 
       /*
@@ -173,6 +193,7 @@ export class MockSmapi {
           '<regUrl>https://example.invalid/app-link</regUrl>' +
           '<linkCode>WXYZ-9876</linkCode>' +
           '<showLinkCode>true</showLinkCode>' +
+          `<linkDeviceId>${escapeXml(this.linkDeviceId)}</linkDeviceId>` +
           '</deviceLink></authorizeAccount></getAppLinkResult></getAppLinkResponse>';
 
       case 'getDeviceAuthToken':
@@ -213,13 +234,14 @@ export class MockSmapi {
     return `<${el}>${inner}${meta}</${el}>`;
   }
 
-  #fault(res, code) {
-    res.writeHead(500, { 'content-type': 'text/xml; charset="utf-8"' });
+  #fault(res, code, detail = '') {
+    res.writeHead(this.faultStatus, { 'content-type': 'text/xml; charset="utf-8"' });
     res.end(
       '<?xml version="1.0"?>' +
         '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><s:Fault>' +
-        '<faultcode>s:Client</faultcode>' +
-        `<faultstring>${code}</faultstring>` +
+        `<faultcode>${code}</faultcode>` +
+        '<faultstring>The request could not complete</faultstring>' +
+        `<detail><ExceptionInfo>${code}</ExceptionInfo>${detail}</detail>` +
         '</s:Fault></s:Body></s:Envelope>',
     );
   }

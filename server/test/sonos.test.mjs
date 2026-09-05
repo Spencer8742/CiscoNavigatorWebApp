@@ -6,7 +6,7 @@ import { WebSocket } from 'ws';
 import { fileURLToPath, URL } from 'node:url';
 import { MockSonos, defaultZones } from './mock-sonos.mjs';
 import { MockSmapi } from './mock-smapi.mjs';
-import { mkdtemp, copyFile, rm } from 'node:fs/promises';
+import { mkdtemp, copyFile, rm, mkdir, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -1615,7 +1615,7 @@ describe('music services', () => {
     const list = await panel.browse({ kind: 'sources' });
     const row = list.items.find((i) => i.n === 'Testify');
     assert.ok(row, 'the service is offered');
-    assert.equal(row.s, 'Not connected');
+    assert.equal(row.s, 'Connect to browse');
 
     // A key, not a URI: the same rule as everywhere else in this browser.
     assert.match(row.u, /^[0-9a-f]{16}$/);
@@ -1715,43 +1715,21 @@ describe('music services', () => {
     panel.close();
   });
 
-  /*
-   * The answer a real household got from SoundCloud, and what it means.
-   *
-   * `Client.NOT_AUTHORIZED` to the FIRST call of a link — before anybody has
-   * been asked for anything — is the service rejecting this APP as a caller,
-   * not rejecting an account. SMAPI endpoints are contracted between Sonos and
-   * each service and several validate the caller; no parameter changes that.
-   *
-   * So the offer is withdrawn rather than repeated. A button that walks
-   * somebody into the same wall is worse than the reason it cannot work.
-   */
-  test('a service that rejects this app stops being offered a button', async () => {
+  test('a refused connection stays retryable and reports why', async () => {
     ctx.smapi.refuseLink = 'Client.NOT_AUTHORIZED';
-
     const panel = new TestPanel(ctx.port);
     await panel.connect();
     await waitFor(() => panel.players.length > 0, 'players');
     await panel.browse({ kind: 'sources' });
-
-    await assert.rejects(
-      () => panel.link(200, 'begin'),
-      (err) => {
-        assert.match(err.message, /does not accept connections from this app/);
-        // And it says what still works, because most of it does.
-        assert.match(err.message, /favourite/i);
-        return true;
-      },
+    await assert.rejects(() => panel.link(200, 'begin'), /rejected this connection/);
+    const source = await waitFor(
+      () => panel.sources.find((s) => s.sid === 200 && s.lastError), 'connection error',
     );
-
-    // Every panel learns, and the button goes away rather than failing again.
-    const blocked = await waitFor(
-      () => panel.sources.find((s) => s.sid === 200 && s.blocked),
-      'the refusal to reach the panel',
-    );
-    assert.equal(blocked.linkable, false, 'no button for a wall');
-
+    assert.equal(source.linkable, true);
+    assert.match(source.lastError, /NOT_AUTHORIZED/);
     ctx.smapi.refuseLink = null;
+    await panel.link(200, 'begin');
+    await panel.link(200, 'forget');
     panel.close();
   });
 
@@ -2024,6 +2002,13 @@ describe('connecting an AppLink service', () => {
     // the reply is read by name rather than at a fixed path.
     assert.equal(started.url, 'https://example.invalid/app-link');
     assert.equal(started.code, 'WXYZ-9876');
+    assert.equal(started.linkDeviceId, undefined, 'private proof never reaches the panel');
+    ctx.smapi.pollsBeforeLink = 0;
+    const replies = await Promise.all([panel.link(210, 'poll'), panel.link(210, 'poll')]);
+    assert.ok(replies.every((reply) => reply.state === 'linked'));
+    const auth = ctx.smapi.calls.filter((c) => c.action === 'getDeviceAuthToken');
+    assert.equal(auth.length, 1, 'simultaneous panels share a completed link');
+    assert.match(auth[0].body, /<linkDeviceId>private-device-proof<\/linkDeviceId>/);
 
     panel.close();
   });
@@ -2192,3 +2177,64 @@ const TOPOLOGY = `<ZoneGroupState><ZoneGroups>
     Invisible="1" ChannelMapSet=""/>
 </ZoneGroup>
 </ZoneGroups><VanishedDevices/></ZoneGroupState>`;
+
+
+describe('manually adding a music service', () => {
+  const ctx = isolated({ services: true });
+  before(() => {
+    ctx.sonos.services = [{ sid: 230, name: 'Hidden Music', uri: ctx.smapi.url, auth: 'AppLink', capabilities: 563 }];
+    ctx.sonos.accounts = [];
+  });
+  test('catalog selection supplies Connect with a source, then refreshes all panels', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+    const catalog = await panel.browse({ kind: 'catalog' });
+    const row = catalog.items.find((item) => item.sid === 230);
+    assert.ok(row);
+    assert.ok(!panel.sources.some((source) => source.sid === 230));
+    const result = await panel.browse({ kind: 'item', uri: row.u });
+    assert.equal(result.connect, 230);
+    const source = await waitFor(() => panel.sources.find((item) => item.sid === 230), 'selected source');
+    assert.equal(source.linkable, true);
+    const prompts = await Promise.all([panel.link(230, 'begin'), panel.link(230, 'begin')]);
+    assert.equal(prompts[0].code, prompts[1].code);
+    assert.equal(ctx.smapi.calls.filter((call) => call.action === 'getAppLink').length, 1);
+    ctx.smapi.pollsBeforeLink = 0;
+    await panel.link(230, 'poll');
+    await waitFor(() => panel.sources.find((item) => item.sid === 230)?.ready, 'ready source');
+    ctx.smapi.faults.getMetadata = { code: 'Client.AuthTokenExpired' };
+    const expired = await panel.browse({ kind: 'item', uri: row.u });
+    assert.equal(expired.connect, 230);
+    await waitFor(() => !panel.sources.find((item) => item.sid === 230)?.ready, 'expired source');
+    panel.close();
+  });
+});
+
+
+describe('durable service connections', () => {
+  const ctx = isolated({ services: true });
+  before(() => {
+    ctx.sonos.services = [{ sid: 240, name: 'Saved Music', uri: ctx.smapi.url, auth: 'AppLink', capabilities: 563 }];
+    ctx.sonos.accounts = [{ type: 240 * 256 + 7, sn: 2 }];
+    ctx.smapi.pollsBeforeLink = 0;
+  });
+  test('a storage failure does not claim success and can be retried', async () => {
+    const path = join(ctx.stateDir, 'music-services.json');
+    await mkdir(path);
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+    await panel.browse({ kind: 'sources' });
+    await panel.link(240, 'begin');
+    await assert.rejects(() => panel.link(240, 'poll'), /could not be saved/);
+    assert.equal(panel.sources.find((s) => s.sid === 240)?.ready, false);
+    await rm(path, { recursive: true });
+    await panel.link(240, 'begin');
+    assert.equal((await panel.link(240, 'poll')).state, 'linked');
+    const stored = JSON.parse(await readFile(path, 'utf8'));
+    assert.equal(stored.tokens['240'].token, 'tok-abc');
+    assert.equal((await stat(path)).mode & 0o777, 0o600);
+    panel.close();
+  });
+});

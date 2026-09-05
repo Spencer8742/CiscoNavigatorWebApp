@@ -1,8 +1,6 @@
-import { logger } from '~/lib/log.ts';
 import { serviceTypeOf, type MusicService } from '~/sonos/services.ts';
 import { escapeXml, find, parseXml, textOf, type XmlNode } from '~/sonos/xml.ts';
 
-const log = logger('smapi');
 
 /**
  * SMAPI — the API a music service exposes TO Sonos.
@@ -101,6 +99,7 @@ export class SmapiError extends Error {
   get expired(): boolean {
     return (
       this.fault.includes('AUTH_TOKEN_EXPIRED') ||
+      this.fault.includes('Client.AuthTokenExpired') ||
       this.fault.includes('NOT_LINKED_FAILURE') ||
       this.fault.includes('Client.LoginUnauthorized')
     );
@@ -112,17 +111,20 @@ export class SmapiClient {
   readonly #householdId: string;
   readonly #deviceId: string;
   #token: ServiceToken | null;
+  readonly #onToken: ((token: ServiceToken) => Promise<void>) | undefined;
 
   constructor(
     service: MusicService,
     householdId: string,
     deviceId: string,
     token: ServiceToken | null,
+    onToken?: (token: ServiceToken) => Promise<void>,
   ) {
     this.#service = service;
     this.#householdId = householdId;
     this.#deviceId = deviceId;
     this.#token = token;
+    this.#onToken = onToken;
   }
 
   get service(): MusicService {
@@ -182,7 +184,7 @@ export class SmapiClient {
    * handed back, and a service will not issue a token for a code it did not
    * just mint.
    */
-  async beginLink(): Promise<{ prompt: LinkPrompt; linkCode: string }> {
+  async beginLink(): Promise<{ prompt: LinkPrompt; linkCode: string; linkDeviceId: string | null }> {
     /*
      * TWO calls, one for each of Sonos's linking policies.
      *
@@ -208,20 +210,23 @@ export class SmapiClient {
     const body = appLink
       ? `${household}<hardware>navigator-panel</hardware>` +
         '<osVersion>1.0</osVersion>' +
-        `<sn>${this.#service.sn ?? 1}</sn>`
+        '<sonosAppName>Navigator Panel</sonosAppName><callbackPath></callbackPath>'
       : household;
 
     const result = await this.#call(appLink ? 'getAppLink' : 'getDeviceLinkCode', body);
 
-    const linkCode = textOf(result, 'linkCode');
-    const url = textOf(result, 'regUrl');
+    // Only authorizeAccount belongs to this flow; createAccount may have a different code.
+    const part = appLink ? find(find(result, 'authorizeAccount'), 'deviceLink') : result;
+    const linkCode = textOf(part, 'linkCode');
+    const url = textOf(part, 'regUrl');
     if (!linkCode || !url) throw new SmapiError('The service did not offer a link code');
 
     return {
       // `showLinkCode` false means the service shows the code on its own page,
       // so repeating it here would be one more number to mistype.
-      prompt: { url, code: textOf(result, 'showLinkCode') === 'false' ? null : linkCode },
+      prompt: { url, code: ['false', '0'].includes(textOf(part, 'showLinkCode') ?? '') ? null : linkCode },
       linkCode,
+      linkDeviceId: textOf(part, 'linkDeviceId'),
     };
   }
 
@@ -231,11 +236,12 @@ export class SmapiClient {
    * Throws with `pending` set while they have not, which is the service's
    * normal answer rather than an error — the caller polls on it.
    */
-  async finishLink(linkCode: string): Promise<ServiceToken> {
+  async finishLink(linkCode: string, linkDeviceId: string | null = null): Promise<ServiceToken> {
     const result = await this.#call(
       'getDeviceAuthToken',
       `<householdId>${escapeXml(this.#householdId)}</householdId>` +
-        `<linkCode>${escapeXml(linkCode)}</linkCode>`,
+        `<linkCode>${escapeXml(linkCode)}</linkCode>` +
+        (linkDeviceId ? `<linkDeviceId>${escapeXml(linkDeviceId)}</linkDeviceId>` : ''),
     );
 
     const token = textOf(result, 'authToken');
@@ -246,7 +252,7 @@ export class SmapiClient {
 
   /* ── Transport ─────────────────────────────────────────────────────────*/
 
-  async #call(action: string, body: string): Promise<XmlNode> {
+  async #call(action: string, body: string, retried = false): Promise<XmlNode> {
     const envelope =
       '<?xml version="1.0" encoding="utf-8"?>' +
       '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">' +
@@ -275,22 +281,29 @@ export class SmapiClient {
     const text = await response.text();
     const root = parseXml(text);
 
-    if (!response.ok) {
-      /*
-       * A SOAP fault is how a service says "not linked yet", which is the
-       * expected answer for most of a device-link flow. So the fault string is
-       * carried rather than flattened into a message — the caller has to be
-       * able to tell "keep waiting" from "this failed".
-       */
-      const fault = textOf(root, 'faultstring') ?? '';
-      const detail = textOf(root, 'ExceptionDetail') ?? textOf(root, 'faultcode') ?? '';
+    const faultNode = find(root, 'Fault');
+    if (faultNode || !response.ok) {
+      // Preserve the code even when a service also supplies exception details.
+      const fault = [...new Set(['faultcode', 'faultstring', 'ExceptionInfo', 'ExceptionDetail']
+        .map((name) => textOf(faultNode, name)).filter(Boolean))].join(' ');
+      if (!retried && this.#token && fault.includes('Client.TokenRefreshRequired')) {
+        const refresh = find(faultNode, 'refreshAuthTokenResult');
+        const token = textOf(refresh, 'authToken');
+        const key = textOf(refresh, 'privateKey');
+        if (token && key !== null) {
+          this.#token = { ...this.#token, token, key };
+          await this.#onToken?.(this.#token);
+          return this.#call(action, body, true);
+        }
+      }
       throw new SmapiError(
-        `${this.#service.name} refused ${action} (HTTP ${response.status})`,
-        `${fault} ${detail}`,
+        `${this.#service.name} refused ${action} (HTTP ${response.status})`, fault,
       );
     }
 
-    if (!root) throw new SmapiError(`${this.#service.name} sent an unreadable reply`);
+    if (!root || !find(root, `${action}Response`)) {
+      throw new SmapiError(`${this.#service.name} sent an unreadable reply`);
+    }
     return root;
   }
 
@@ -330,7 +343,7 @@ export class SmapiClient {
  * would have used.
  */
 function parsePage(node: XmlNode | null): SmapiPage {
-  if (!node) return { items: [], total: 0 };
+  if (!node) throw new SmapiError('The service returned no catalog result');
 
   const items: SmapiItem[] = [];
   for (const child of node.children) {
@@ -353,7 +366,7 @@ function parsePage(node: XmlNode | null): SmapiPage {
       artUri: textOf(meta, 'albumArtURI') ?? textOf(child, 'albumArtURI'),
       duration: seconds(textOf(meta, 'duration')),
       // Absent means playable; only an explicit "false" is a refusal.
-      canPlay: textOf(child, 'canPlay') !== 'false',
+      canPlay: !['false', '0'].includes(textOf(child, 'canPlay') ?? ''),
     });
   }
 

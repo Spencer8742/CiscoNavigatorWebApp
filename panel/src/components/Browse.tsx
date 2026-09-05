@@ -61,6 +61,7 @@ interface Tab {
 }
 
 const TABS: Tab[] = [
+  { id: 'favorites', label: 'Favourites', icon: 'heart', request: { kind: 'library', media: 'track', favorite: true } },
   {
     /*
      * ONE browse tab, opening on the household's own list of sources.
@@ -73,7 +74,7 @@ const TABS: Tab[] = [
      * with a count, in one list you can read.
      */
     id: 'browse',
-    label: 'Browse',
+    label: 'Services',
     icon: 'list',
     request: { kind: 'sources' },
   },
@@ -121,7 +122,7 @@ interface Crumb {
   sid?: number;
 }
 
-/** A service's own refusal of this app, if it has made one. */
+/** Why this service's sign-in method cannot be offered here. */
 function blockedReason(sid: number): string | null {
   return sources.value.find((s) => s.sid === sid)?.blocked ?? null;
 }
@@ -143,7 +144,9 @@ function chipClass(id: 'library' | number, source: 'library' | number, ready: bo
 }
 
 export function Browse({ playerId, onClose }: { playerId: string; onClose: () => void }) {
-  const [tab, setTab] = useState('browse');
+  const [tab, setTab] = useState('favorites');
+  // Warm service discovery while favourites remain immediately usable.
+  useEffect(() => { void browse({ kind: 'sources' }).catch(() => {}); }, []);
   /*
    * Default to a service when one is connected, not to the library.
    *
@@ -160,6 +163,7 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
   const [result, setResult] = useState<BrowseResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [revision, setRevision] = useState(0);
   const [chosen, setChosen] = useState<MediaItem | null>(null);
   /** The service being connected, if somebody is part-way through that. */
   const [linking, setLinking] = useState<MusicSource | null>(null);
@@ -237,7 +241,7 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
     return () => {
       stale = true;
     };
-  }, [tab, offset, query, source, insideQuery, here?.uri]);
+  }, [tab, offset, query, source, insideQuery, here?.uri, revision]);
 
   const pick = (t: string): void => {
     setTab(t);
@@ -255,7 +259,10 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
    */
   const connect = (sid: 'library' | number): void => {
     const service = typeof sid === 'number' ? sources.value.find((s) => s.sid === sid) : null;
-    if (!service) return;
+    if (!service) {
+      setError('The service list changed. Close Browse and try again.');
+      return;
+    }
     if (service.linkable) setLinking(service);
     else setError(service.blocked ?? `${service.name} cannot be connected from here`);
   };
@@ -273,8 +280,7 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
       if (source.linkable) {
         setLinking(source);
       } else {
-        // `blocked` is the service's own refusal of this app. Anything else is
-        // a service that needs a password, which a shared screen cannot take.
+        // Unsupported sign-in methods explain the fallback instead of doing nothing.
         setError(source.blocked ?? `${source.name} cannot be connected from here`);
       }
       return;
@@ -306,7 +312,12 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
     <div class="sheet-layer">
       <div class="sheet-scrim" onPointerDown={onClose} />
 
-      <div class="sheet browse-sheet" role="dialog" aria-label="Browse music" aria-modal="true">
+      <div
+        class="sheet browse-sheet"
+        role="dialog"
+        aria-label="Browse music"
+        aria-modal={!linking && !chosen}
+      >
         <div class="sheet-head">
           {here ? (
             <Pressable class="sheet-back p-sm" onPress={back} ariaLabel="Back">
@@ -440,7 +451,10 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
         />
       ) : null}
 
-      {linking ? <ConnectService source={linking} onDone={() => setLinking(null)} /> : null}
+      {linking ? <ConnectService source={linking} onDone={() => {
+        setLinking(null);
+        setRevision((value) => value + 1);
+      }} /> : null}
     </div>
   );
 }
@@ -537,9 +551,8 @@ function Results({
           </p>
           {result.note ? <p class="browse-state-hint">{result.note}</p> : null}
           {/*
-            No button for a service that has already refused this app. Offering
-            one again is walking somebody into the same wall, and the reason it
-            cannot work is more use than the offer.
+            Only offer Connect when there is a supported sign-in method.
+            Anonymous and password services explain how to use favourites.
           */}
           {needs !== undefined && blockedReason(needs) === null ? (
             <Pressable class="play-option is-primary" onPress={() => onConnect(needs)} ariaLabel="Connect">
@@ -708,9 +721,42 @@ function ConnectService({ source, onDone }: { source: MusicSource; onDone: () =>
   const [prompt, setPrompt] = useState<ServiceLink | null>(null);
   const [state, setState] = useState<'starting' | 'waiting' | 'linked' | 'failed'>('starting');
   const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const dialog = useRef<HTMLDivElement>(null);
+  const done = useRef(onDone);
+  done.current = onDone;
+  useEffect(() => {
+    const previous = document.activeElement;
+    dialog.current?.focus();
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.stopPropagation();
+        done.current();
+      }
+      if (event.key === 'Tab') {
+        const buttons = dialog.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)');
+        if (!buttons?.length) return;
+        const first = buttons[0];
+        const last = buttons[buttons.length - 1];
+        if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog.current)) {
+          event.preventDefault(); last?.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault(); first?.focus();
+        }
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => {
+      window.removeEventListener('keydown', onKey, true);
+      if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
+    };
+  }, []);
 
   useEffect(() => {
     let stale = false;
+    setState('starting');
+    setError(null);
+    setPrompt(null);
 
     link(source.sid, 'begin')
       .then((r) => {
@@ -727,7 +773,7 @@ function ConnectService({ source, onDone }: { source: MusicSource; onDone: () =>
     return () => {
       stale = true;
     };
-  }, [source.sid]);
+  }, [source.sid, attempt]);
 
   /*
    * Poll while the sheet is open.
@@ -740,29 +786,33 @@ function ConnectService({ source, onDone }: { source: MusicSource; onDone: () =>
     if (state !== 'waiting') return;
     let stale = false;
 
-    const timer = setInterval(() => {
-      link(source.sid, 'poll')
-        .then((r) => {
-          if (stale || r.state !== 'linked') return;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async (): Promise<void> => {
+      try {
+        const response = await link(source.sid, 'poll');
+        if (stale) return;
+        if (response.state === 'linked') {
           setState('linked');
-        })
-        .catch((err: unknown) => {
-          if (stale) return;
-          setError(err instanceof Error ? err.message : 'That did not work');
-          setState('failed');
-        });
-    }, 3000);
-
+          return;
+        }
+        timer = setTimeout(() => void poll(), 3000);
+      } catch (err) {
+        if (stale) return;
+        setError(err instanceof Error ? err.message : 'That did not work');
+        setState('failed');
+      }
+    };
+    timer = setTimeout(() => void poll(), 3000);
     return () => {
       stale = true;
-      clearInterval(timer);
+      clearTimeout(timer);
     };
   }, [state, source.sid]);
 
   return (
     <div class="sheet-layer is-nested">
       <div class="sheet-scrim" onPointerDown={onDone} />
-      <div class="sheet play-sheet" role="dialog" aria-label={`Connect ${source.name}`} aria-modal="true">
+      <div class="sheet play-sheet" ref={dialog} tabIndex={-1} role="dialog" aria-label={`Connect ${source.name}`} aria-modal="true">
         <div class="sheet-head">
           <div class="sheet-titles">
             <h2 class="sheet-title truncate">Connect {source.name}</h2>
@@ -775,10 +825,13 @@ function ConnectService({ source, onDone }: { source: MusicSource; onDone: () =>
           </Pressable>
         </div>
 
-        <div class="sheet-body link-body">
+        <div class="sheet-body scroll link-body" aria-live="polite">
           {state === 'starting' ? <p class="link-step">Asking {source.name}…</p> : null}
 
-          {state === 'failed' ? <p class="link-error">{error}</p> : null}
+          {state === 'failed' ? <>
+            <p class="link-error" role="alert">{error}</p>
+            <p class="link-hint">Your saved Sonos favourites are still available in Browse.</p>
+          </> : null}
 
           {state === 'linked' ? (
             <p class="link-step">
@@ -802,6 +855,11 @@ function ConnectService({ source, onDone }: { source: MusicSource; onDone: () =>
           ) : null}
         </div>
 
+        {state === 'failed' ? (
+          <Pressable class="play-option is-primary" onPress={() => setAttempt((value) => value + 1)} ariaLabel="Try connecting again">
+            <span>Try again</span>
+          </Pressable>
+        ) : null}
         {state === 'linked' || state === 'failed' ? (
           <Pressable class="play-option is-primary" onPress={onDone} ariaLabel="Done">
             <span>Done</span>
