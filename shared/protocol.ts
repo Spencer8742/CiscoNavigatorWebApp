@@ -273,6 +273,8 @@ export interface MediaItem {
    * refusal, which reads as a bug rather than as a category.
    */
   o?: true;
+  /** False when a collection can be played but Sonos cannot expose its rows. */
+  b?: false;
   /**
    * The music service this row IS, on the service list only.
    *
@@ -838,4 +840,3 @@ export const PREF_VALUES: Record<string, readonly string[]> = {
 export const HEARTBEAT_MS = 25_000;
 /** Miss this many heartbeats and we tear the socket down and reconnect. */
 export const HEARTBEAT_TIMEOUT_MS = 12_000;
-

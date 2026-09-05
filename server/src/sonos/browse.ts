@@ -148,8 +148,13 @@ export class SonosBrowser {
 
     const items: MediaItem[] = [];
 
-    const local = (objectId: string, name: string, kind: MediaKind): void => {
-      const total = counts.get(objectId) ?? 0;
+    const local = (
+      objectId: string,
+      name: string,
+      kind: MediaKind,
+      countObjectId = objectId,
+    ): void => {
+      const total = counts.get(countObjectId) ?? 0;
       if (total === 0) return;
       const key = this.#deps.uris.register(null, objectId, '', 'object.container');
       if (!key) return;
@@ -175,7 +180,9 @@ export class SonosBrowser {
      * listing four object ids here means the categories are whatever this
      * household's share actually has.
      */
-    local('A:', 'Music Library', 'playlist');
+    // `A:` always contains its seven category folders, even with no indexed
+    // files. Tracks are the reliable signal that a library actually exists.
+    local('A:', 'Music Library', 'playlist', LIBRARY['track']);
 
     return {
       kind: 'list',
@@ -239,7 +246,12 @@ export class SonosBrowser {
    * "empty" and "unreachable" is not worth a row that cannot be opened.
    */
   async #counts(host: string): Promise<Map<string, number>> {
-    const wanted = [LIBRARY['favorites'], LIBRARY['playlists'], LIBRARY['radio'], 'A:'];
+    const wanted = [
+      LIBRARY['favorites'],
+      LIBRARY['playlists'],
+      LIBRARY['radio'],
+      LIBRARY['track'],
+    ];
     const out = new Map<string, number>();
 
     await Promise.all(
@@ -406,7 +418,10 @@ export class SonosBrowser {
       { name: 'Artists', kind: 'artist' },
     ];
 
-    const results = await Promise.all(
+    const host = this.#anyHost();
+    const [savedRaw, results] = await Promise.all([
+      this.#browseRaw(host, LIBRARY['favorites'] as string, 0).catch(() => ({ entries: [], total: 0 })),
+      Promise.all(
       sections.map(async (section) => {
         const category = SEARCH_CATEGORY[section.kind];
         if (!category) return { name: section.name, items: [] };
@@ -423,10 +438,22 @@ export class SonosBrowser {
           // an empty list. That is not a failed search.
           return { name: section.name, items: [] };
         }
-      }),
-    );
+      })),
+    ]);
 
-    const groups = results.filter((g) => g.items.length > 0);
+    const lowered = query.toLocaleLowerCase();
+    const saved = savedRaw.entries
+      .filter((entry) =>
+        [entry.title, entry.creator, entry.album].some(
+          (value) => typeof value === 'string' && value.toLocaleLowerCase().includes(lowered),
+        ),
+      )
+      .map((entry) => this.#shape(entry, host));
+
+    const groups = [
+      ...(saved.length > 0 ? [{ name: 'Saved in Sonos', items: saved }] : []),
+      ...results.filter((g) => g.items.length > 0),
+    ];
     if (groups.length > 0) return { kind: 'groups', groups };
 
     /*
@@ -434,7 +461,7 @@ export class SonosBrowser {
      * library at all, not a household whose library lacks that word. Checking
      * costs one Browse and turns a blank screen into an answer.
      */
-    const total = (await this.#counts(this.#anyHost())).get('A:') ?? 0;
+    const total = (await this.#counts(host)).get(LIBRARY['track'] as string) ?? 0;
     return {
       kind: 'list',
       items: [],
@@ -442,8 +469,8 @@ export class SonosBrowser {
       more: false,
       note:
         total === 0
-          ? 'There is no music library on this household to search. Search a music ' +
-            'service instead, or add a share in the Sonos app.'
+          ? `Nothing saved in Sonos matches "${query}". Add music to Sonos Favourites ` +
+            'to make it searchable here.'
           : `Nothing in the library matches "${query}". Library search matches the ` +
             'start of a name rather than any part of it.',
     };
@@ -654,6 +681,10 @@ export class SonosBrowser {
      * track icon and, worse, plays it down the wrong path.
      */
     const cls = effectiveClass(entry);
+    const favorite = entry.upnpClass.includes('sonos-favorite');
+    const localFavoriteTarget =
+      favorite && entry.resId !== null && /^(?:A:|SQ:)/.test(entry.resId);
+    const expandable = ['album', 'artist', 'playlist', 'podcast'].includes(kindOf(cls));
 
     const item: MediaItem = {
       /*
@@ -665,9 +696,16 @@ export class SonosBrowser {
        * what opens. A favourited playlist has both and they are not
        * interchangeable.
        */
-      u: this.#deps.uris.register(entry.res, entry.id, entry.resMD, cls) ?? '',
+      u:
+        this.#deps.uris.register(
+          entry.res,
+          localFavoriteTarget ? entry.resId : entry.id,
+          entry.resMD,
+          cls,
+        ) ?? '',
       n: entry.title,
       k: kindOf(cls),
+      ...(favorite && expandable && !localFavoriteTarget ? { b: false as const } : {}),
     };
 
     const sub = subtitle(entry);

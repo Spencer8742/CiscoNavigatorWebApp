@@ -238,7 +238,7 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
 
         {tab === 'search' && !here ? (
           <>
-            <SearchBox value={query} onSearch={setQuery} placeholder="Search your music library" />
+            <SearchBox value={query} onSearch={setQuery} placeholder="Search saved Sonos music" />
           </>
         ) : null}
 
@@ -343,7 +343,7 @@ function Results({
         <div class="browse-state">
           <Icon name="search" size="2rem" weight={1.6} />
           <p class="browse-state-title">
-            {searching && query.trim().length > 0 ? 'Nothing found' : 'Search your library'}
+            {searching && query.trim().length > 0 ? 'Nothing found' : 'Search saved Sonos music'}
           </p>
         </div>
       );
@@ -421,7 +421,7 @@ function ItemRow({
 }) {
   // `o` says the row is a place rather than a record — a source, a category.
   const openOnly = item.o === true;
-  const expandable = openOnly || (EXPANDABLE.has(item.k) && item.u !== '');
+  const expandable = openOnly || (item.b !== false && EXPANDABLE.has(item.k) && item.u !== '');
 
   return (
     <div class="browse-row">
