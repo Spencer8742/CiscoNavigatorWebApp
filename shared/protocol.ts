@@ -265,6 +265,15 @@ export interface MediaItem {
    *  is always — favourites are managed in the Sonos app, not from here. */
   f?: boolean;
   /**
+   * This row can be OPENED but not played.
+   *
+   * True for the browse root's sources — "Favourites" and "Music Library" are
+   * places, not records — and for a service row the service itself marked
+   * unplayable. Without it the panel draws a play button that produces a
+   * refusal, which reads as a bug rather than as a category.
+   */
+  o?: true;
+  /**
    * The music service this row IS, on the service list only.
    *
    * Present so the panel can tell "open this" from "connect this first"
@@ -351,12 +360,16 @@ export type BrowseRequest =
    */
   | { kind: 'service'; sid: number; id?: string; offset?: number }
   /**
-   * The services themselves, as a list of rows to open.
+   * Everywhere music can come from, as one list of rows to open.
    *
-   * A list rather than a tab apiece: a household with Plex, SoundCloud,
-   * YouTube Music, Sonos Radio and Spotify would otherwise have eleven tabs
-   * across the top of a wall panel. It is also how the Sonos app does it, and
-   * it means opening a service reuses the drill-down every other row uses.
+   * The top of the browser, and the reason there is no tab strip: which
+   * sources a household HAS is a fact about that household, not something to
+   * hard-code six of. A house with no NAS share has no Albums tab to offer,
+   * and a house with Plex and SoundCloud should not have to find them behind
+   * a tab called "Services".
+   *
+   * It is also how the Sonos app's own Browse screen works, and it means
+   * opening Plex reuses the drill-down that opening an album already uses.
    */
   | { kind: 'sources' }
   /**
@@ -377,6 +390,15 @@ export interface BrowseList {
   offset: number;
   /** Whether another page exists. */
   more: boolean;
+  /**
+   * Why this list is empty, when it is.
+   *
+   * An empty list and a broken one look identical on a wall panel, and the
+   * commonest empty list here is entirely correct — a household with no NAS
+   * share has no Albums, and saying so is the difference between "this works
+   * and you have none" and "this is broken".
+   */
+  note?: string;
 }
 
 /** Search results, grouped by media type in the order they should be shown. */

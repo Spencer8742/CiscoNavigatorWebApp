@@ -861,6 +861,38 @@ is tolerated separately from the other four in `#readGroup`, because
 would otherwise lose its transport state, its track and its queue — a blank
 Media screen because of a timer nobody set.
 
+### What the first real use changed
+
+Reported after living with it: four tabs empty, search finding nothing, and
+Services showing "a ton of lists I can't make sense of".
+
+**The tab strip was asserting what a household has.** Favorites, Playlists,
+Albums, Artists, Radio — five fixed tabs, and in a house with no NAS share and
+nothing saved in the Sonos app, four of them were correctly and permanently
+blank. There is now **one Browse tab** that opens on the household's own list
+of sources, each with a real count, and an empty source is left out rather than
+offered as a row leading nowhere. It is how the Sonos app's Browse screen
+works, and it turns "which of these six tabs has anything in it" into a list
+you can read.
+
+**`ListAvailableServices` is the catalog, not the household.** It returns every
+service Sonos supports in the region — hundreds — and the filter let all the
+`Anonymous` ones through, so the Services list became every podcast aggregator
+Sonos has ever heard of. The bar is now an ACCOUNT: `/status/accounts`, plus
+the `sid`/`sn` pairs found inside the household's own favourites, which is the
+source that keeps working on firmware that does not serve the status page.
+
+**An empty list now says why.** A container this household does not have
+answers with a UPnP fault rather than an empty list — `R:0/0` on a house that
+never used TuneIn — and that fault was being flattened into "Sonos could not
+answer that". The speaker *answered*; that is a fact about the household, not a
+failure. It now becomes the same empty list, with the same explanation, as a
+container that exists and holds nothing. A transport failure still throws,
+because "could not answer" is the right thing to say when nothing did.
+
+Search defaults to a connected service rather than the library, for the same
+reason: searching an empty shelf reads as a broken search.
+
 ---
 
 ## Sources

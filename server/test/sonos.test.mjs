@@ -1548,6 +1548,40 @@ describe('music services', () => {
     ctx.sonos.accounts = [{ type: 200 * 256 + 7, sn: 4 }];
   });
 
+  /*
+   * `ListAvailableServices` is Sonos's WHOLE CATALOG — every service it
+   * supports in this region, hundreds of them, most needing no login. A filter
+   * that let anonymous services through put a row on screen for every podcast
+   * aggregator Sonos has ever heard of.
+   *
+   * The bar is an ACCOUNT: somebody added it in the Sonos app.
+   */
+  test('the catalog is not the household — only added services are listed', async () => {
+    ctx.sonos.services = [
+      { sid: 200, name: 'Testify', uri: ctx.smapi.url, auth: 'DeviceLink', capabilities: 563 },
+      // Three the household has never added. Two need no login at all, which
+      // is exactly what made them slip through.
+      { sid: 201, name: 'Podcast Firehose', uri: 'https://a.invalid/x', auth: 'Anonymous' },
+      { sid: 202, name: 'Regional Radio', uri: 'https://b.invalid/x', auth: 'Anonymous' },
+      { sid: 203, name: 'Some Streamer', uri: 'https://c.invalid/x', auth: 'DeviceLink' },
+    ];
+    ctx.sonos.accounts = [{ type: 200 * 256 + 7, sn: 4 }];
+
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    const list = await panel.browse({ kind: 'sources' });
+    const names = list.items.map((i) => i.n);
+
+    assert.ok(names.includes('Testify'), 'the one with an account');
+    assert.ok(!names.includes('Podcast Firehose'), 'anonymous is not the same as added');
+    assert.ok(!names.includes('Regional Radio'));
+    assert.ok(!names.includes('Some Streamer'));
+
+    panel.close();
+  });
+
   test('a service this app is not connected to is listed, and says so', async () => {
     const panel = new TestPanel(ctx.port);
     await panel.connect();
@@ -1691,18 +1725,56 @@ describe('music services', () => {
 describe('a household with no music services', () => {
   const ctx = isolated({ services: true });
 
-  test('loses the service list and keeps everything else', async () => {
+  test('loses the services and keeps the rest of the browser', async () => {
     const panel = new TestPanel(ctx.port);
     await panel.connect();
     await waitFor(() => panel.players.length > 0, 'players');
 
     const list = await panel.browse({ kind: 'sources' });
-    assert.equal(list.items.length, 0, 'no services, and no error');
+    const names = list.items.map((i) => i.n);
 
-    // The point of the assertion: favourites are unaffected, because they
-    // never needed a service login in the first place.
-    const favourites = await panel.browse({ kind: 'library', media: 'track', favorite: true });
-    assert.equal(favourites.items.length, 3);
+    // Favourites never needed a service login, so they are still the first
+    // thing offered — which is the whole point of this assertion.
+    assert.deepEqual(names, ['Favourites', 'Sonos Playlists']);
+    assert.equal(list.items[0].s, '3 items', 'the count is real, not a guess');
+
+    // A place rather than a record: no play button on a folder.
+    assert.equal(list.items[0].o, true);
+
+    panel.close();
+  });
+
+  /*
+   * Empty local sources are LEFT OUT rather than shown as rows that lead
+   * nowhere. This household has no NAS share and no saved stations, which is
+   * the common case and used to produce four tabs that were all blank.
+   */
+  test('a source with nothing in it is not offered at all', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    const list = await panel.browse({ kind: 'sources' });
+    const names = list.items.map((i) => i.n);
+
+    assert.ok(!names.includes('Music Library'), 'no share, so no library row');
+    assert.ok(!names.includes('Radio Stations'), 'no saved stations, so no radio row');
+
+    panel.close();
+  });
+
+  /*
+   * An empty result says WHY. On a wall panel an empty list and a broken one
+   * look identical, and the commonest empty list here is entirely correct.
+   */
+  test('an empty container explains itself', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    const albums = await panel.browse({ kind: 'library', media: 'radio' });
+    assert.equal(albums.items.length, 0);
+    assert.match(albums.note, /Sonos app/, 'says where the thing actually comes from');
 
     panel.close();
   });

@@ -62,38 +62,19 @@ interface Tab {
 
 const TABS: Tab[] = [
   {
-    id: 'favorites',
-    label: 'Favorites',
-    icon: 'heart',
     /*
-     * The one that earns its place at the front. On Sonos, Favorites is a
-     * PLACE rather than a filter — whatever you starred in the Sonos app, of
-     * any kind, from any service — and it plays with no service login on this
-     * side at all. For a wall panel it is most of what anyone reaches for.
-     */
-    request: { kind: 'library', media: 'track', favorite: true },
-  },
-  {
-    id: 'playlists',
-    label: 'Playlists',
-    icon: 'list',
-    request: { kind: 'library', media: 'playlist' },
-  },
-  { id: 'albums', label: 'Albums', icon: 'disc', request: { kind: 'library', media: 'album' } },
-  { id: 'artists', label: 'Artists', icon: 'media', request: { kind: 'library', media: 'artist' } },
-  { id: 'radio', label: 'Radio', icon: 'radio', request: { kind: 'library', media: 'radio' } },
-  {
-    /*
-     * Every music service behind ONE tab, listed as rows.
+     * ONE browse tab, opening on the household's own list of sources.
      *
-     * A household with Plex, SoundCloud, YouTube Music, Sonos Radio and
-     * Spotify would otherwise put eleven tabs across the top of a wall panel.
-     * As rows they also reuse the drill-down that albums already use, so
-     * opening Plex costs no new navigation code at all.
+     * There used to be six — Favorites, Playlists, Albums, Artists, Radio,
+     * Services — and five of them were empty in a house with no NAS share and
+     * nothing saved in the Sonos app. A fixed tab strip asserts what a
+     * household has; this asks. What comes back is Favourites, then each music
+     * service, then the library and saved stations if they exist at all, each
+     * with a count, in one list you can read.
      */
-    id: 'services',
-    label: 'Services',
-    icon: 'media',
+    id: 'browse',
+    label: 'Browse',
+    icon: 'list',
     request: { kind: 'sources' },
   },
   { id: 'search', label: 'Search', icon: 'search', request: { kind: 'search', text: '' } },
@@ -122,11 +103,23 @@ function searchSources(): { id: 'library' | number; label: string }[] {
 interface Crumb {
   uri: string;
   name: string;
+  /** False for a place rather than a record — no "Play all" for Favourites. */
+  playable: boolean;
 }
 
 export function Browse({ playerId, onClose }: { playerId: string; onClose: () => void }) {
-  const [tab, setTab] = useState('favorites');
-  const [source, setSource] = useState<'library' | number>('library');
+  const [tab, setTab] = useState('browse');
+  /*
+   * Default to a service when one is connected, not to the library.
+   *
+   * Most households here have no NAS share, so the library is empty and
+   * defaulting to it makes the first search anybody tries return nothing —
+   * which reads as "search is broken" rather than "you searched an empty
+   * shelf". `searchSources` puts the library first and services after it.
+   */
+  const [source, setSource] = useState<'library' | number>(
+    () => sources.value.find((s) => s.ready && s.searchable)?.sid ?? 'library',
+  );
   const [offset, setOffset] = useState(0);
   const [query, setQuery] = useState('');
   const [result, setResult] = useState<BrowseResult | null>(null);
@@ -219,7 +212,7 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
       return;
     }
 
-    setPath((p) => [...p, { uri: item.u, name: item.n }]);
+    setPath((p) => [...p, { uri: item.u, name: item.n, playable: item.o !== true }]);
     setOffset(0);
   };
 
@@ -243,7 +236,7 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
             <h2 class="sheet-title truncate">{here ? here.name : 'Browse'}</h2>
             <div class="sheet-subtitle truncate">Play on {playerName}</div>
           </div>
-          {here ? (
+          {here?.playable ? (
             <Pressable
               class="sheet-edit p-sm"
               onPress={() => setChosen({ u: here.uri, n: here.name, k: 'album' })}
@@ -419,14 +412,19 @@ function Results({
 
   if (result?.kind === 'list') {
     if (result.items.length === 0) {
+      /*
+       * The backend says WHY. An empty list and a broken one look identical on
+       * a wall panel, and the commonest empty list here is entirely correct —
+       * a household with no NAS share has no albums — so the difference has to
+       * be stated rather than left to be guessed at.
+       */
       return (
         <div class="browse-state">
-          <Icon name="disc" size="2rem" weight={1.6} />
-          <p class="browse-state-title">Nothing here yet</p>
-          <p class="browse-state-hint">
-            Sonos reported nothing of this kind. Favorites and playlists come from the
-            Sonos app; albums and artists need a music library set up there.
+          <Icon name={searching ? 'search' : 'disc'} size="2rem" weight={1.6} />
+          <p class="browse-state-title">
+            {searching && query.trim().length > 0 ? 'Nothing found' : 'Nothing here yet'}
           </p>
+          {result.note ? <p class="browse-state-hint">{result.note}</p> : null}
         </div>
       );
     }
@@ -461,7 +459,9 @@ function ItemRow({
   onPick: (item: MediaItem) => void;
   onOpen: (item: MediaItem) => void;
 }) {
-  const expandable = EXPANDABLE.has(item.k) && item.u !== '';
+  // `o` says the row is a place rather than a record — a source, a category.
+  const openOnly = item.o === true;
+  const expandable = openOnly || (EXPANDABLE.has(item.k) && item.u !== '');
 
   return (
     <div class="browse-row">
@@ -480,14 +480,16 @@ function ItemRow({
         {expandable ? <Icon name="chevronRight" size="1.1rem" weight={2} /> : null}
       </Pressable>
 
-      <Pressable
-        class="browse-play p-sm"
-        onPress={() => onPick(item)}
-        ariaLabel={`Play ${item.n}`}
-        disabled={item.u === ''}
-      >
-        <Icon name="play" size="1.1rem" />
-      </Pressable>
+      {openOnly ? null : (
+        <Pressable
+          class="browse-play p-sm"
+          onPress={() => onPick(item)}
+          ariaLabel={`Play ${item.n}`}
+          disabled={item.u === ''}
+        >
+          <Icon name="play" size="1.1rem" />
+        </Pressable>
+      )}
     </div>
   );
 }
