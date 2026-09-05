@@ -41,8 +41,8 @@ const log = logger('sonos-spotify');
 const TOKEN_URL = 'https://accounts.spotify.com/api/token';
 const SEARCH_URL = 'https://api.spotify.com/v1/search';
 
-/** Per type, matching the panel's existing search sections. */
-const LIMIT = 12;
+/** Spotify Development Mode reduced the search maximum to 10 in February 2026. */
+const LIMIT = 10;
 
 const TIMEOUT_MS = 10_000;
 
@@ -170,11 +170,11 @@ export class SpotifySearch {
       this.#token = null;
       const fresh = await this.#accessToken();
       const retry = await this.#fetch(url, { headers: { authorization: `Bearer ${fresh}` } });
-      if (!retry.ok) throw new Error(`Spotify search failed (HTTP ${retry.status})`);
+      if (!retry.ok) throw new Error(await spotifyFailure(retry, 'Spotify search failed'));
       return (await retry.json()) as Record<string, unknown>;
     }
 
-    if (!response.ok) throw new Error(`Spotify search failed (HTTP ${response.status})`);
+    if (!response.ok) throw new Error(await spotifyFailure(response, 'Spotify search failed'));
     return (await response.json()) as Record<string, unknown>;
   }
 
@@ -317,6 +317,24 @@ export class SpotifySearch {
       return null;
     }
   }
+}
+
+/** Keep Spotify's useful explanation instead of reducing every refusal to a status code. */
+async function spotifyFailure(response: Response, prefix: string): Promise<string> {
+  let detail = '';
+  try {
+    const body: unknown = await response.json();
+    if (isObject(body)) {
+      const error = body['error'];
+      if (typeof error === 'string') detail = error;
+      else if (isObject(error) && typeof error['message'] === 'string') detail = error['message'];
+    }
+  } catch {
+    // Some proxy and outage responses are HTML. The status remains actionable.
+  }
+  return detail
+    ? `${prefix} (HTTP ${response.status}): ${detail}`
+    : `${prefix} (HTTP ${response.status})`;
 }
 
 /* ── URI construction ────────────────────────────────────────────────────*/
