@@ -152,6 +152,14 @@ export interface SpeakerInfo {
   queueId: string | null;
   /** What is playing on it. */
   media: NowPlaying | null;
+  /** Volume for the whole group at once. Null when there is no group. */
+  groupVolume: number | null;
+  /** Tone, −10 to +10, and loudness. Null until the speaker has reported. */
+  bass: number | null;
+  treble: number | null;
+  loudness: boolean | null;
+  /** When the sleep timer will stop this group, epoch ms. Null when none. */
+  sleepAt: number | null;
 }
 
 /**
@@ -186,6 +194,11 @@ export const speakers = computed<SpeakerInfo[]>(() => {
     powered: p.powered,
     queueId: p.queueId,
     media: p.media,
+    groupVolume: p.groupVolume,
+    bass: p.bass,
+    treble: p.treble,
+    loudness: p.loudness,
+    sleepAt: p.sleepAt,
   }));
 });
 

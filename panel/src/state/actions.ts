@@ -399,6 +399,73 @@ export function setRepeat(playerId: string, mode: 'off' | 'one' | 'all'): void {
   music({ verb: 'repeat', player: playerId, mode });
 }
 
+/**
+ * Volume for a whole group at once.
+ *
+ * Sonos scales the members proportionally, so a speaker somebody turned down
+ * on purpose stays quieter than the rest. The optimistic write is deliberately
+ * only to `groupVolume` and not to each member's own `volume`: we do not know
+ * the ratios Sonos will apply, and guessing them would make every slider in
+ * the group jump to a wrong number and then correct itself.
+ */
+export function setGroupVolume(playerId: string, level: number, final: boolean): void {
+  const clamped = Math.max(0, Math.min(100, Math.round(level)));
+  patchPlayer(playerId, { groupVolume: clamped });
+
+  const fire = () => music({ verb: 'groupVolume', player: playerId, level: clamped });
+  if (final) {
+    cancelThrottle(playerId + ':gvol');
+    fire();
+  } else {
+    throttle(playerId + ':gvol', DRAG_INTERVAL_MS, fire);
+  }
+}
+
+/** Bass or treble, −10 to +10. Per speaker, like volume. */
+export function setTone(
+  playerId: string,
+  which: 'bass' | 'treble',
+  level: number,
+  final: boolean,
+): void {
+  const clamped = Math.max(-10, Math.min(10, Math.round(level)));
+  patchPlayer(playerId, { [which]: clamped });
+
+  const fire = () => music({ verb: which, player: playerId, level: clamped });
+  if (final) {
+    cancelThrottle(playerId + ':' + which);
+    fire();
+  } else {
+    throttle(playerId + ':' + which, DRAG_INTERVAL_MS, fire);
+  }
+}
+
+export function setLoudness(playerId: string, on: boolean): void {
+  patchPlayer(playerId, { loudness: on });
+  music({ verb: 'loudness', player: playerId, on });
+}
+
+export function setCrossfade(playerId: string, on: boolean): void {
+  music({ verb: 'crossfade', player: playerId, on });
+}
+
+/**
+ * Stop this group after `minutes`. Zero cancels.
+ *
+ * Written optimistically as an instant so the countdown starts on the tap
+ * rather than a round trip later — the speaker holds the real timer, and its
+ * next report is the authority.
+ */
+export function setSleep(playerId: string, minutes: number): void {
+  patchPlayer(playerId, { sleepAt: minutes > 0 ? Date.now() + minutes * 60_000 : null });
+  music({ verb: 'sleep', player: playerId, minutes });
+}
+
+/** Play a physical input — a soundbar's TV socket, a line-in — or the queue. */
+export function setInput(playerId: string, source: 'tv' | 'line' | 'queue'): void {
+  music({ verb: 'input', player: playerId, source });
+}
+
 /* ── Speaker grouping ─────────────────────────────────────────────────────
    Absolute rather than incremental: the group is set to exactly the speakers
    named, which is what makes removing one the same operation as adding one,

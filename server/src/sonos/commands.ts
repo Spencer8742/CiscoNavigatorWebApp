@@ -219,6 +219,109 @@ export class SonosCommands {
          * braces.
          */
         return 'Favourites are managed in the Sonos app';
+
+      case 'groupVolume': {
+        const level = clampVolume(cmd.level);
+        if (level === null) return 'Not permitted';
+        /*
+         * The GROUP's own service, not each speaker in turn.
+         *
+         * Sonos scales the members proportionally and keeps their balance, so
+         * a speaker somebody deliberately turned down stays quieter than the
+         * rest. Setting each one to the same number would flatten that, and it
+         * is the difference people notice immediately.
+         */
+        await this.#client.call(lead.host, 'GroupRenderingControl', 'SetGroupVolume', {
+          InstanceID: 0,
+          DesiredVolume: level,
+        });
+        return null;
+      }
+
+      case 'bass':
+      case 'treble': {
+        // Sonos's own range. Out of it the speaker faults rather than clamps.
+        const level = clampTone(cmd.level);
+        if (level === null) return 'Not permitted';
+        await this.#client.call(
+          zone.host,
+          'RenderingControl',
+          cmd.verb === 'bass' ? 'SetBass' : 'SetTreble',
+          {
+            InstanceID: 0,
+            ...(cmd.verb === 'bass' ? { DesiredBass: level } : { DesiredTreble: level }),
+          },
+        );
+        return null;
+      }
+
+      case 'loudness':
+        await this.#client.call(zone.host, 'RenderingControl', 'SetLoudness', {
+          InstanceID: 0,
+          Channel: 'Master',
+          DesiredLoudness: cmd.on ? 1 : 0,
+        });
+        return null;
+
+      case 'crossfade':
+        await this.#av(lead, 'SetCrossfadeMode', { CrossfadeMode: cmd.on ? '1' : '0' });
+        return null;
+
+      case 'sleep': {
+        if (!Number.isFinite(cmd.minutes) || cmd.minutes < 0 || cmd.minutes > 1440) {
+          return 'Not permitted';
+        }
+        const minutes = Math.floor(cmd.minutes);
+        /*
+         * An EMPTY string cancels, not `0:00:00` — which Sonos rejects. The
+         * speaker holds the timer, so it survives this backend restarting;
+         * that is the reason not to do it with a `setTimeout` here.
+         */
+        await this.#av(lead, 'ConfigureSleepTimer', {
+          NewSleepTimerDuration: minutes === 0 ? '' : hms(minutes * 60),
+        });
+        this.#store.noteSleep(lead.uuid, minutes);
+        return null;
+      }
+
+      case 'input':
+        /*
+         * `zone`, not `lead`. A TV socket is on ONE box: routing this to the
+         * group's coordinator would select the coordinator's TV input when
+         * somebody asked for the soundbar's. Setting a grouped speaker's own
+         * transport takes it out of the group, which is what "play the TV in
+         * here" means.
+         */
+        return this.#input(zone, cmd.source);
+    }
+  }
+
+  /**
+   * Point a speaker at a physical input, or back at its queue.
+   *
+   * Both input URIs are addressed to the speaker that HAS the socket — its own
+   * uuid — which is why they are built from `lead` rather than named by the
+   * panel. A speaker with no such input answers with a fault, and that refusal
+   * is the honest answer: the alternative is a capability table that has to
+   * know every Sonos model ever made.
+   */
+  async #input(zone: SonosZone, source: 'tv' | 'line' | 'queue'): Promise<string | null> {
+    const uri =
+      source === 'tv'
+        ? `x-sonos-htastream:${zone.uuid}:spdif`
+        : source === 'line'
+          ? `x-rincon-stream:${zone.uuid}`
+          : `x-rincon-queue:${zone.uuid}#0`;
+
+    try {
+      await this.#av(zone, 'SetAVTransportURI', { CurrentURI: uri, CurrentURIMetaData: '' });
+      await this.#av(zone, 'Play', { Speed: '1' });
+      return null;
+    } catch (err) {
+      log.warn(`${zone.name} refused the ${source} input: ${describe(err)}`);
+      return source === 'queue'
+        ? 'That speaker has nothing queued'
+        : `${zone.name} has no ${source === 'tv' ? 'TV' : 'line-in'} input`;
     }
   }
 
@@ -452,6 +555,17 @@ function clampVolume(raw: unknown): number | null {
   if (typeof raw !== 'number' || !Number.isFinite(raw)) return null;
   const n = Math.round(raw);
   return n >= 0 && n <= 100 ? n : null;
+}
+
+/** Bass and treble, on Sonos's own −10 to +10 scale. */
+function clampTone(raw: unknown): number | null {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return null;
+  const n = Math.round(raw);
+  return n >= -10 && n <= 10 ? n : null;
+}
+
+function describe(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 /**

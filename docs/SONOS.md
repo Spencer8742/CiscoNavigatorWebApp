@@ -1,6 +1,7 @@
 # Sonos: direct integration
 
-**Status: built. Music Assistant has been removed.**
+**Status: built, through music services and the full speaker-control surface.
+Music Assistant has been removed.**
 
 | Phase | | |
 |---|---|---|
@@ -10,12 +11,15 @@
 | 4 | Browse — favourites, playlists, library, radio, queue | ✅ |
 | 5 | Spotify search | ✅ |
 | 6 | Cut over — `mass/` deleted, types renamed | ✅ |
-| 7 | SMAPI *(optional, not built)* | ⬜ |
-| 8 | Play history *(optional, not built)* | ⬜ |
+| 7 | Music services — SMAPI browse, search and device-link | ✅ |
+| 8 | The rest of the app — sleep, EQ, inputs, group volume | ✅ |
 
 Sonos is the music system: rooms, groups, live state, transport, volume, seek,
 shuffle, repeat, grouping, the queue, favourites, playlists, the local library,
-radio, and search across the library and Spotify.
+radio, every music service the household has linked, and search across all of
+them — plus the sleep timer, tone controls, group volume and physical inputs.
+
+Play history remains the one thing with no Sonos equivalent; §3 says why.
 
 What each phase delivered, and what it deliberately did not, is in **§15**.
 
@@ -776,6 +780,86 @@ items and then all containers, which silently re-sorted every mixed result.
 Favorites holds playlists, stations and albums interleaved in the order
 somebody chose in the Sonos app, and that order is the whole value of the list.
 It walks in document order now.
+
+### What phases 7 and 8 built
+
+**A favourite that would not play, and the reason the tests missed it.**
+Reported from the real household: `Play … failed (UPnP 701)`. 701 is
+"transition not available", and the transition it could not make was into an
+empty queue. A favourited playlist is a *container* — the speaker resolves it
+for itself — and it was going down the path built for single tracks:
+`AddURIToQueue`, point the transport at `x-rincon-queue:`, `Play`. The service
+answered that enqueue with **200 OK and `NumTracksAdded: 0`**, a refusal
+wearing a success, so the transport was aimed at nothing.
+
+Underneath was a smaller mistake with a wide blast radius. Every row in `FV:2`
+carries `object.itemobject.item.sonos-favorite` — the class of *being* a
+favourite, which says nothing about the content. What the row points at is
+stated one level down, inside `r:resMD`. Reading the outer class made every
+favourite look like a track.
+
+Playback is now classified into **three** styles rather than two:
+
+| Style | Play now | Add to queue |
+|---|---|---|
+| `stream` | `SetAVTransportURI` | impossible |
+| `container` | `SetAVTransportURI` | `AddURIToQueue` |
+| `track` | `AddURIToQueue`, then point at the queue | `AddURIToQueue` |
+
+Only the last was ever right for the others. §8's "two paths" was wrong, and
+the mock's fixtures were what hid it: they carried the inner class on the outer
+row, which is tidier than reality and made a favourite that could not play in a
+real household play perfectly in CI. The fixtures now say what a speaker says.
+
+**Music services arrived (SMAPI).** Favourites carry everything needed to play
+anything from any service with no login on this side — but they cannot be
+searched, and they cannot answer "what else does this artist have". Three
+layers: `services.ts` learns which services the household *has*
+(`ListAvailableServices` for the catalog of hundreds, `/status/accounts` for
+the handful somebody actually added, favourite URIs to confirm the account
+number); `smapi.ts` speaks the protocol; `music.ts` owns the tokens.
+
+Connecting is a URL and a short code typed on a phone — Sonos's own
+device-link flow, and the only one that can work here at all, because RoomOS
+gives the panel a single tab and an OAuth redirect would navigate away from the
+dashboard and never come back. This is §8's option A, which was deferred as
+"needs a browser"; the device-link flow turns out not to.
+
+All of it fails soft. A service that is down, a token that expired, a catalog
+row in an unanticipated shape — each loses that service and nothing else.
+
+**Two bugs found on the way.** Spotify albums and playlists were being built as
+`x-sonos-spotify:` *track* URIs; they are containers and need
+`x-rincon-cpcontainer:` with Sonos's type prefix — the same mistake as the 701.
+And `#learnFromServices` stringified a parsed XML node to JSON and searched for
+`"Name": "Spotify"` followed by `"Id"`, a pattern that cannot occur in the XML
+or in its JSON form in either order, so that fallback had never once returned
+an account.
+
+**The rest of the Sonos app.** Sleep timer, bass, treble, loudness, crossfade,
+group volume and the physical inputs, behind one more tap on the Media screen
+because each is real but occasional.
+
+Two distinctions are load-bearing. Tone is **per speaker** — it describes the
+room the speaker stands in, and two grouped speakers in different rooms want
+different bass and the same music. Group volume is **per group**, and goes to
+`GroupRenderingControl` rather than to each member in turn: Sonos scales the
+members proportionally, so a speaker somebody deliberately turned down stays
+quieter, which setting each one to the same number would destroy.
+
+The `input` verb is the one command routed to the speaker the panel *named*
+rather than to its coordinator: a TV socket is on one box, and routing it to
+the group leader would select the wrong speaker's input. Inputs are offered to
+every speaker rather than only to the ones that have them — the speaker's own
+refusal is both accurate and permanently up to date, where a table of models
+would be wrong the day after the next one ships.
+
+An empty `NewSleepTimerDuration` cancels a timer; `0:00:00` is what an obvious
+implementation sends and what a real speaker rejects. And the sleep-timer read
+is tolerated separately from the other four in `#readGroup`, because
+`Promise.all` rejects as a unit and an older speaker that does not implement it
+would otherwise lose its transport state, its track and its queue — a blank
+Media screen because of a timer nobody set.
 
 ---
 

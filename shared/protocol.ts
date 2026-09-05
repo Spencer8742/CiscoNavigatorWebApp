@@ -158,6 +158,23 @@ export interface Player {
   groupVolume: number | null;
   /** What is on it right now. */
   media: NowPlaying | null;
+  /**
+   * Tone, −10 to +10, and loudness. Null until the speaker has said.
+   *
+   * Per speaker rather than per group, like volume: they describe the room the
+   * speaker stands in, and two grouped speakers in different rooms want
+   * different bass and the same music.
+   */
+  bass: number | null;
+  treble: number | null;
+  loudness: boolean | null;
+  /**
+   * When the sleep timer will stop this group, as epoch ms. Null when none.
+   *
+   * An instant rather than a remaining duration, so the panel can count down
+   * without the backend re-sending a number every second.
+   */
+  sleepAt: number | null;
 }
 
 export interface NowPlaying {
@@ -428,7 +445,36 @@ export type MusicCommand =
   | { verb: 'queueMove'; player: string; item: string; by: number }
   | { verb: 'queueRemove'; player: string; item: string }
   | { verb: 'queueClear'; player: string }
-  | { verb: 'favorite'; player: string; item: string; on: boolean };
+  | { verb: 'favorite'; player: string; item: string; on: boolean }
+  /**
+   * Volume for the whole group at once, 0-100.
+   *
+   * Sonos scales every member proportionally and keeps their relative balance,
+   * which is what makes it different from setting each speaker in turn — that
+   * would flatten a deliberately quiet speaker up to match the others.
+   */
+  | { verb: 'groupVolume'; player: string; level: number }
+  /** Tone, −10 to +10. Per speaker, like volume. */
+  | { verb: 'bass' | 'treble'; player: string; level: number }
+  | { verb: 'loudness'; player: string; on: boolean }
+  /** Blend the end of one track into the next. Per group. */
+  | { verb: 'crossfade'; player: string; on: boolean }
+  /**
+   * Stop this group after `minutes`. Zero cancels a running timer.
+   *
+   * Sonos holds the timer itself, so it survives this backend restarting —
+   * which is the whole reason not to implement it with a `setTimeout` here.
+   */
+  | { verb: 'sleep'; player: string; minutes: number }
+  /**
+   * Play a physical input instead of the queue.
+   *
+   * `tv` is a soundbar's optical or HDMI-ARC input and `line` an analogue one;
+   * `queue` puts a speaker back on its own queue, which is how you leave.
+   * A speaker without the named input refuses, and that refusal is the answer
+   * rather than something to pre-empt with a capability table.
+   */
+  | { verb: 'input'; player: string; source: 'tv' | 'line' | 'queue' };
 
 /**
  * Every verb, for the runtime check the type system cannot do.
@@ -461,6 +507,13 @@ export const MUSIC_VERBS: readonly string[] = [
   'queueRemove',
   'queueClear',
   'favorite',
+  'groupVolume',
+  'bass',
+  'treble',
+  'loudness',
+  'crossfade',
+  'sleep',
+  'input',
 ];
 
 /** How many items one library page holds. Fixed here so a panel cannot ask

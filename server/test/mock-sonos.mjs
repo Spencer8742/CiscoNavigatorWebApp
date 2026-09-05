@@ -670,6 +670,44 @@ export class MockSonos {
         void this.set(zone.uuid, { transportState: 'STOPPED' });
         return ack(action);
 
+      case 'ConfigureSleepTimer':
+        /*
+         * An EMPTY duration cancels. `0:00:00` is rejected by a real speaker,
+         * which is the kind of detail that only shows up when somebody taps
+         * "Off" and nothing happens.
+         */
+        if (args.NewSleepTimerDuration === '0:00:00') return { fault: 402 };
+        void this.set(zone.uuid, { sleep: args.NewSleepTimerDuration || '' });
+        return ack(action);
+
+      case 'GetRemainingSleepTimerDuration':
+        return (
+          '<u:GetRemainingSleepTimerDurationResponse xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">' +
+          `<RemainingSleepTimerDuration>${this.zone(zone.uuid).sleep ?? ''}</RemainingSleepTimerDuration>` +
+          '<CurrentSleepTimerGeneration>1</CurrentSleepTimerGeneration>' +
+          '</u:GetRemainingSleepTimerDurationResponse>'
+        );
+
+      case 'SetCrossfadeMode':
+        void this.set(zone.uuid, { crossfade: args.CrossfadeMode === '1' });
+        return ack(action);
+
+      case 'SetBass':
+        void this.set(zone.uuid, { bass: Number(args.DesiredBass) });
+        return ack(action, 'RenderingControl');
+
+      case 'SetTreble':
+        void this.set(zone.uuid, { treble: Number(args.DesiredTreble) });
+        return ack(action, 'RenderingControl');
+
+      case 'SetLoudness':
+        void this.set(zone.uuid, { loudness: args.DesiredLoudness === '1' });
+        return ack(action, 'RenderingControl');
+
+      case 'SetGroupVolume':
+        void this.set(zone.uuid, { groupVolume: Number(args.DesiredVolume) });
+        return ack(action, 'GroupRenderingControl');
+
       case 'SetPlayMode':
         void this.set(zone.uuid, { playMode: args.NewPlayMode ?? 'NORMAL' });
         return ack(action);

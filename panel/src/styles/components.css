@@ -1329,6 +1329,88 @@
   font-weight: 620;
 }
 
+/* ── Speaker settings ─────────────────────────────────────────────────── */
+
+.tone-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-height: var(--touch);
+  margin-bottom: var(--s-2);
+  color: var(--text-dim);
+}
+
+/* Fixed width so the two sliders start at the same x and read as a pair. */
+.tone-label {
+  flex: 0 0 4rem;
+  font-size: 0.9375rem;
+  font-weight: 560;
+}
+
+.sheet-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: var(--touch);
+  padding: 0 var(--s-4);
+  margin-bottom: var(--s-3);
+  border-radius: var(--r-lg);
+  background: var(--surface-1);
+  border: 1px solid var(--border-subtle);
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 560;
+}
+
+.sheet-toggle.is-on {
+  background: var(--accent-soft);
+  border-color: var(--accent-dim);
+  color: var(--accent);
+}
+
+.sheet-toggle-state {
+  color: var(--text-faint);
+  font-weight: 500;
+}
+
+.sheet-toggle.is-on .sheet-toggle-state {
+  color: inherit;
+}
+
+/* Wraps rather than scrolls: five short targets fit a narrow panel in two
+   rows, and a horizontal scroller hides options nobody knows to look for. */
+.sleep-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  margin-bottom: var(--s-3);
+}
+
+.sleep-option {
+  flex: 1 1 4.5rem;
+  min-height: var(--touch);
+  padding: 0 var(--s-3);
+  border-radius: var(--r-lg);
+  background: var(--surface-1);
+  border: 1px solid var(--border-subtle);
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 560;
+}
+
+.sleep-option.is-on {
+  background: var(--accent-soft);
+  border-color: var(--accent-dim);
+  color: var(--accent);
+}
+
+.sleep-hint {
+  margin: 0 0 var(--s-3);
+  color: var(--text-faint);
+  font-size: 0.9375rem;
+}
+
 /* ── Connecting a music service ───────────────────────────────────────── */
 
 .link-body {

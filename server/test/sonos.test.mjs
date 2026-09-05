@@ -1059,6 +1059,129 @@ describe('driving the speakers', () => {
     panel.close();
   });
 
+  /*
+   * Tone is per SPEAKER and group volume is per GROUP, and they are not
+   * interchangeable. Sonos scales a group's members proportionally, keeping a
+   * deliberately quiet speaker quiet; setting each member to the same number
+   * would flatten that, and it is the difference people notice at once.
+   */
+  test('tone goes to the speaker, group volume to the group', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    /*
+     * Read the coordinator from the panel rather than assuming it. Earlier
+     * tests in this suite regroup the household, and asserting a fixed leader
+     * would test the order these tests happen to run in.
+     */
+    const leader = panel.player('RINCON_KITCHEN')?.syncedTo ?? 'RINCON_KITCHEN';
+
+    const before = ctx.sonos.calls.length;
+    panel.music({ verb: 'bass', player: 'RINCON_KITCHEN', level: -4 });
+    panel.music({ verb: 'groupVolume', player: 'RINCON_KITCHEN', level: 40 });
+
+    const bass = await waitFor(
+      () => ctx.sonos.calls.slice(before).find((c) => c.action === 'SetBass'),
+      'the tone change',
+    );
+    assert.equal(bass.uuid, 'RINCON_KITCHEN', 'tone belongs to the speaker itself');
+    assert.equal(bass.args.DesiredBass, '-4');
+
+    const group = await waitFor(
+      () => ctx.sonos.calls.slice(before).find((c) => c.action === 'SetGroupVolume'),
+      'the group volume change',
+    );
+    assert.equal(group.uuid, leader, 'group volume belongs to the coordinator');
+    assert.equal(group.args.DesiredVolume, '40');
+
+    panel.close();
+  });
+
+  /*
+   * An EMPTY duration cancels a sleep timer. `0:00:00` is what an obvious
+   * implementation sends and what a real speaker rejects — so "Off" would do
+   * nothing, which is the worst possible failure for a bedtime control.
+   */
+  test('a sleep timer is set in H:MM:SS and cancelled with nothing', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    let before = ctx.sonos.calls.length;
+    panel.music({ verb: 'sleep', player: 'RINCON_STUDY', minutes: 45 });
+
+    const set = await waitFor(
+      () => ctx.sonos.calls.slice(before).find((c) => c.action === 'ConfigureSleepTimer'),
+      'the timer to be set',
+    );
+    assert.equal(set.args.NewSleepTimerDuration, '0:45:00');
+
+    // The countdown starts on the tap rather than a round trip later.
+    const running = await waitFor(
+      () => panel.player('RINCON_STUDY')?.sleepAt,
+      'the countdown to appear',
+    );
+    assert.ok(running > Date.now() + 44 * 60_000);
+
+    before = ctx.sonos.calls.length;
+    panel.music({ verb: 'sleep', player: 'RINCON_STUDY', minutes: 0 });
+
+    const off = await waitFor(
+      () => ctx.sonos.calls.slice(before).find((c) => c.action === 'ConfigureSleepTimer'),
+      'the timer to be cancelled',
+    );
+    assert.equal(off.args.NewSleepTimerDuration, '', 'empty cancels; 0:00:00 is refused');
+
+    await waitFor(() => panel.player('RINCON_STUDY')?.sleepAt === null, 'the countdown to clear');
+
+    panel.close();
+  });
+
+  /*
+   * A speaker with no TV socket refuses, and that refusal is the answer. The
+   * alternative is a table of every Sonos model ever made, which would be
+   * wrong the day after the next one ships.
+   */
+  test('an input a speaker does not have is refused in words', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    const before = ctx.sonos.calls.length;
+    panel.music({ verb: 'input', player: 'RINCON_STUDY', source: 'tv' });
+
+    const set = await waitFor(
+      () => ctx.sonos.calls.slice(before).find((c) => c.action === 'SetAVTransportURI'),
+      'the input to be selected',
+    );
+    // Addressed to the speaker that HAS the socket — its own uuid.
+    assert.equal(set.args.CurrentURI, 'x-sonos-htastream:RINCON_STUDY:spdif');
+
+    panel.close();
+  });
+
+  /*
+   * The guard rejects a tone value outside Sonos's own range rather than
+   * passing it on. A speaker faults on an out-of-range value rather than
+   * clamping it, so this is the difference between a refusal and an error.
+   */
+  test('an out-of-range tone value never reaches a speaker', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    const before = ctx.sonos.calls.length;
+    panel.music({ verb: 'treble', player: 'RINCON_STUDY', level: 50 });
+
+    await waitFor(() => panel.lastToast, 'a refusal');
+    assert.ok(
+      !ctx.sonos.calls.slice(before).some((c) => c.action === 'SetTreble'),
+      'nothing was sent',
+    );
+
+    panel.close();
+  });
 });
 
 /* ── Phase 4: browsing ────────────────────────────────────────────────────*/
