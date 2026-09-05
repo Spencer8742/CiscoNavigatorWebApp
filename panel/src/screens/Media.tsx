@@ -6,6 +6,7 @@ import { Slider } from '~/components/Slider.tsx';
 import { defaultPlayerId, speakers, type SpeakerInfo } from '~/state/selectors.ts';
 import { queues } from '~/state/players.ts';
 import { GroupSheet } from '~/components/GroupSheet.tsx';
+import { SpeakerSheet } from '~/components/SpeakerSheet.tsx';
 import { PlayerPicker } from '~/components/PlayerPicker.tsx';
 import { Browse } from '~/components/Browse.tsx';
 import { Queue } from '~/components/Queue.tsx';
@@ -31,6 +32,7 @@ export function Media() {
   const [picking, setPicking] = useState(false);
   const [browsing, setBrowsing] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
+  const [tuning, setTuning] = useState(false);
 
   const all = speakers.value;
   // Key by id rather than the array, which is a fresh object on every volume
@@ -66,6 +68,16 @@ export function Media() {
         <Pressable class="browse-button" onPress={() => setBrowsing(true)} ariaLabel="Browse music">
           <Icon name="search" size="1.1rem" weight={1.9} />
           <span>Browse</span>
+        </Pressable>
+
+        {/* Bass, sleep timer, inputs — real but occasional, so one tap away
+            rather than on the screen somebody uses while standing here. */}
+        <Pressable
+          class="browse-button p-sm"
+          onPress={() => setTuning(true)}
+          ariaLabel="Speaker settings"
+        >
+          <Icon name="settings" size="1.1rem" weight={1.9} />
         </Pressable>
       </div>
 
@@ -124,6 +136,14 @@ export function Media() {
       ) : null}
 
       {browsing ? <Browse playerId={activeId} onClose={() => setBrowsing(false)} /> : null}
+
+      {tuning ? (
+        <SpeakerSheet
+          player={player}
+          grouped={player.members.length > 1}
+          onClose={() => setTuning(false)}
+        />
+      ) : null}
 
       {queueOpen && player.queueId ? (
         <Queue

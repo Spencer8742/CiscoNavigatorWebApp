@@ -41,6 +41,18 @@ export interface DidlEntry {
   artUri: string | null;
   /** `upnp:class`, which is how Sonos says what kind of thing this is. */
   upnpClass: string;
+  /**
+   * The class of what a favourite POINTS AT, from inside `r:resMD`.
+   *
+   * A row in `FV:2` carries `object.itemobject.item.sonos-favorite` — the class
+   * of *being a favourite*, which says nothing about the content. The real
+   * class is one level down, in the metadata Sonos wants handed back.
+   *
+   * Reading only the outer class makes every favourite look like a track: it
+   * is drawn with a track icon, and — much worse — it is played down the queue
+   * path, which is how a favourited playlist becomes UPnP 701.
+   */
+  resClass: string | null;
   /** The playable URI, when the row has one. Containers often do. */
   res: string | null;
   /**
@@ -87,6 +99,7 @@ export function parseDidlList(xml: string | null): DidlEntry[] {
     if (!title) continue;
 
     const res = find(node, 'res');
+    const resMD = textOf(node, 'resMD');
 
     out.push({
       id: node.attrs['id'] ?? '',
@@ -95,12 +108,38 @@ export function parseDidlList(xml: string | null): DidlEntry[] {
       album: textOf(node, 'album'),
       artUri: textOf(node, 'albumArtURI'),
       upnpClass: textOf(node, 'class') ?? '',
+      resClass: classOf(resMD),
       res: res ? (res.text.trim() || null) : null,
-      resMD: textOf(node, 'resMD'),
+      resMD,
       duration: hmsToSeconds(res?.attrs['duration']),
     });
   }
   return out;
+}
+
+/**
+ * The `upnp:class` inside a favourite's `r:resMD`.
+ *
+ * `resMD` is a whole DIDL document escaped into one text node, so this is a
+ * second parse of a string the outer parse already decoded — cheap (a few
+ * hundred bytes) and done per row, which is the price of knowing that
+ * "Discover Weekly" is a playlist rather than a track.
+ */
+function classOf(resMD: string | null): string | null {
+  if (!resMD || resMD.indexOf('class') === -1) return null;
+  const root = parseXml(resMD);
+  return root ? textOf(root, 'class') : null;
+}
+
+/**
+ * What a favourite really is, preferring the inner class over the outer one.
+ *
+ * Everywhere except inside `FV:2` these are the same string, so this is a
+ * no-op for the library, the queue and every service listing.
+ */
+export function effectiveClass(entry: DidlEntry): string {
+  if (entry.resClass && entry.upnpClass.includes('sonos-favorite')) return entry.resClass;
+  return entry.upnpClass || (entry.resClass ?? '');
 }
 
 /** `0:03:21.000` → 201. The `res` duration carries milliseconds Sonos ignores. */

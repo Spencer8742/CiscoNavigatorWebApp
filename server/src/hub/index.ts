@@ -13,6 +13,8 @@ import type {
   Player,
   PlayerQueue,
   MusicCommand,
+  MusicSource,
+  ServiceLink,
   PanelPrefs,
   ClientMessage,
   EntityState,
@@ -74,6 +76,15 @@ export interface HubDeps {
   /** Current Elgato Key Light states, sent in `hello`. */
   getKeyLights: () => KeyLightState[];
   getTvs: () => TvState[];
+  /** Music services the household has, sent in `hello`. */
+  getSources: () => MusicSource[];
+  /**
+   * Connect or disconnect a music service.
+   *
+   * Separate from `onMusic` because it is not a speaker command: nothing here
+   * reaches a speaker, and the thing it changes is a stored credential.
+   */
+  onLink?: (sid: number, op: 'begin' | 'poll' | 'forget') => Promise<ServiceLink>;
   /** Run a macro button by id. Returns an error string, or null. */
   onControl?: (button: string) => Promise<string | null>;
   /** Drive a key light. Returns an error string, or null. */
@@ -168,6 +179,7 @@ export class Hub {
       queues: music.queues,
       keylights: this.#deps.getKeyLights(),
       tvs: this.#deps.getTvs(),
+      sources: this.#deps.getSources(),
     });
   }
 
@@ -220,6 +232,36 @@ export class Hub {
         const problem = await this.#deps.onMusic(msg.cmd);
         if (problem) {
           this.#send(panel, { t: 'error', ref: msg.id, code: 'music_failed', message: problem });
+        }
+        break;
+      }
+
+      case 'link': {
+        if (!this.#deps.onLink) {
+          this.#send(panel, {
+            t: 'error',
+            ref: msg.id,
+            code: 'link_unavailable',
+            message: 'No music system is configured',
+          });
+          return;
+        }
+        /*
+         * A link is the one panel request that can take minutes: somebody has
+         * to pick up a phone. So each poll is its own request/reply and the
+         * backend holds nothing open — a socket that dropped halfway through
+         * costs the person one more tap, not a stuck flow.
+         */
+        try {
+          const link = await this.#deps.onLink(msg.sid, msg.op);
+          this.#send(panel, { t: 'link', ref: msg.id, link });
+        } catch (err) {
+          this.#send(panel, {
+            t: 'error',
+            ref: msg.id,
+            code: 'link_failed',
+            message: err instanceof Error ? err.message : 'That did not work',
+          });
         }
         break;
       }
@@ -328,6 +370,10 @@ export class Hub {
 
   broadcastPlayers(players: Player[], queues: PlayerQueue[]): void {
     this.broadcast({ t: 'players', players, queues });
+  }
+
+  broadcastSources(sources: MusicSource[]): void {
+    this.broadcast({ t: 'sources', sources });
   }
 
   broadcastKeyLights(lights: KeyLightState[]): void {

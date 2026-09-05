@@ -21,6 +21,8 @@ import { SonosCommands } from '~/sonos/commands.ts';
 import { SonosBrowser } from '~/sonos/browse.ts';
 import { SpotifySearch } from '~/sonos/spotify.ts';
 import { UriRegistry } from '~/sonos/uris.ts';
+import { MusicServices } from '~/sonos/music.ts';
+import { canSearch } from '~/sonos/services.ts';
 import { CastKeeper } from '~/cast/keeper.ts';
 import { Controls } from '~/controls/index.ts';
 import { PrefsStore } from '~/config/prefs.ts';
@@ -28,7 +30,13 @@ import { ImmichClient } from '~/immich/client.ts';
 import { ImmichImages } from '~/immich/images.ts';
 import { Playlist } from '~/immich/playlist.ts';
 import { MUSIC_VERBS } from '@shared/protocol.ts';
-import type { BackendHealth, Player, PlayerQueue } from '@shared/protocol.ts';
+import type {
+  BackendHealth,
+  MusicSource,
+  Player,
+  PlayerQueue,
+  ServiceLink,
+} from '@shared/protocol.ts';
 
 const log = logger('server');
 
@@ -140,6 +148,56 @@ async function main(): Promise<void> {
 
   /** Set when Sonos subscriptions exist but no event has ever arrived. */
   let sonosSilence: string | null = null;
+
+  /**
+   * The household's music services, as the panel needs to see them.
+   *
+   * Three booleans rather than the service record: the panel decides whether
+   * to draw a search chip and whether to offer to connect, and neither of
+   * those is helped by knowing a SMAPI endpoint or an auth policy name.
+   */
+  const musicSourceList = (): MusicSource[] =>
+    musicServices.list().map((service) => ({
+      sid: service.sid,
+      name: service.name,
+      ready: service.auth === 'Anonymous' || musicServices.linked(service.sid),
+      searchable: canSearch(service),
+      // A service wanting a username and password is not offered: a shared
+      // wall screen is the wrong place to type either.
+      linkable: service.auth === 'DeviceLink' || service.auth === 'AppLink',
+    }));
+
+  /**
+   * Connect or disconnect a music service.
+   *
+   * Every outcome ends with the panels being told, because linking Plex on the
+   * kitchen panel should light Plex up on the hallway one without anybody
+   * having to go and prod it.
+   */
+  const linkService = async (
+    sid: number,
+    op: 'begin' | 'poll' | 'forget',
+  ): Promise<ServiceLink> => {
+    if (op === 'forget') {
+      await musicServices.unlink(sid);
+      hub.broadcastSources(musicSourceList());
+      return { sid, state: 'waiting' };
+    }
+
+    if (op === 'begin') {
+      const prompt = await musicServices.beginLink(sid);
+      return {
+        sid,
+        state: 'prompt',
+        url: prompt.url,
+        ...(prompt.code ? { code: prompt.code } : {}),
+      };
+    }
+
+    const done = await musicServices.pollLink(sid);
+    if (done) hub.broadcastSources(musicSourceList());
+    return { sid, state: done ? 'linked' : 'waiting' };
+  };
 
   const getHealth = (): BackendHealth => ({
     ha: env.ha.enabled ? haClient.state : 'disconnected',
@@ -280,12 +338,26 @@ async function main(): Promise<void> {
   const sonosUris = new UriRegistry();
   const spotify = new SpotifySearch(env.spotify, sonosClient, sonosUris, mediaArt);
   const sonosCommands = new SonosCommands(sonosClient, sonosStore, sonosUris);
+
+  /*
+   * The household's music services, and the tokens that let us call them.
+   *
+   * Stored beside the config with the TV pairing keys — service credentials
+   * that must survive a redeploy, or every service would have to be linked
+   * again each time the container restarts.
+   */
+  const musicServices = new MusicServices(
+    sonosClient,
+    join(dirname(env.configPath), 'music-services.json'),
+  );
+
   const sonosBrowser = new SonosBrowser({
     client: sonosClient,
     store: sonosStore,
     uris: sonosUris,
     art: mediaArt,
     spotify,
+    music: musicServices,
   });
 
   /**
@@ -332,6 +404,9 @@ async function main(): Promise<void> {
     },
 
     onBrowse: (req) => sonosBrowser.browse(req),
+
+    getSources: () => musicSourceList(),
+    onLink: (sid, op) => linkService(sid, op),
 
     getKeyLights: () => controls.snapshot(),
     getTvs: () => controls.tvSnapshot(),
@@ -403,6 +478,9 @@ async function main(): Promise<void> {
   haClient.start();
   sonosClient.start();
   sonosStore.start();
+  // Reads stored service tokens. Discovery of the services themselves is
+  // lazy — it needs a household, which arrives with the first topology.
+  void musicServices.start();
 
   async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const rawUrl = req.url ?? '/';

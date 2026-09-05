@@ -177,23 +177,59 @@ export class MockSonos {
    * both are invisible in the shape and decisive in the behaviour.
    */
   containers = {
+    /*
+     * EVERY row here carries `object.itemobject.item.sonos-favorite`, which is
+     * the literal string a real speaker returns and is not a typo.
+     *
+     * That class describes the FAVOURITING, not the favourite. What the row
+     * points at — a playlist, a station, an album — is stated only inside
+     * `r:resMD`, one level of escaping down.
+     *
+     * These fixtures used to carry the inner class on the outer row, which is
+     * tidier, wrong, and the reason a favourite that could not play in a real
+     * household played perfectly here.
+     */
     'FV:2': [
       {
         id: 'FV:2/1',
         title: 'Morning & Coffee',
         creator: 'Spotify playlist',
-        upnpClass: 'object.container.playlistContainer',
+        upnpClass: 'object.itemobject.item.sonos-favorite',
         res: 'x-rincon-cpcontainer:1006206cspotify%3aplaylist%3a37i9',
-        resMD: '<DIDL-Lite><item id="0"><dc:title>Morning &amp; Coffee</dc:title></item></DIDL-Lite>',
+        resMD:
+          '<DIDL-Lite><item id="1006206cspotify%3aplaylist%3a37i9" parentID="0" restricted="true">' +
+          '<dc:title>Morning &amp; Coffee</dc:title>' +
+          '<upnp:class>object.container.playlistContainer</upnp:class>' +
+          '<desc id="cdudn" nameSpace="urn:schemas-rinconnetworks-com:metadata-1-0/">' +
+          'SA_RINCON2311_X_#Svc2311-0-Token</desc></item></DIDL-Lite>',
         albumArtURI: '/getaa?u=spotify',
       },
       {
         id: 'FV:2/2',
         title: 'BBC Radio 6 Music',
-        upnpClass: 'object.item.audioItem.audioBroadcast',
+        upnpClass: 'object.itemobject.item.sonos-favorite',
         // A stream: no end, cannot be queued behind anything.
         res: 'x-sonosapi-stream:s44491?sid=254',
-        resMD: '<DIDL-Lite><item id="s44491"><dc:title>BBC 6</dc:title></item></DIDL-Lite>',
+        resMD:
+          '<DIDL-Lite><item id="s44491" parentID="0" restricted="true">' +
+          '<dc:title>BBC 6</dc:title>' +
+          '<upnp:class>object.item.audioItem.audioBroadcast</upnp:class>' +
+          '<desc id="cdudn" nameSpace="urn:schemas-rinconnetworks-com:metadata-1-0/">' +
+          'SA_RINCON65031_</desc></item></DIDL-Lite>',
+      },
+      {
+        // A favourited local album: a container whose URI IS queueable, so
+        // "add to queue" and "play now" take different paths through the same
+        // row.
+        id: 'FV:2/3',
+        title: 'Led Zeppelin IV',
+        creator: 'Led Zeppelin',
+        upnpClass: 'object.itemobject.item.sonos-favorite',
+        res: 'x-rincon-playlist:RINCON_LIVING#A:ALBUM/Led%20Zeppelin%20IV',
+        resMD:
+          '<DIDL-Lite><item id="A:ALBUM/Led%20Zeppelin%20IV" parentID="A:ALBUM" restricted="true">' +
+          '<dc:title>Led Zeppelin IV</dc:title>' +
+          '<upnp:class>object.container.album.musicAlbum</upnp:class></item></DIDL-Lite>',
       },
     ],
     'SQ:': [
@@ -211,6 +247,29 @@ export class MockSonos {
         creator: 'Led Zeppelin',
         upnpClass: 'object.container.album.musicAlbum',
         res: 'x-rincon-playlist:RINCON_LIVING#A:ALBUM/Led%20Zeppelin%20IV',
+      },
+      {
+        /*
+         * NO `res`. A local library container is an address in the
+         * ContentDirectory, not something a speaker can fetch — the URI to
+         * play it has to be built from the object id, against a speaker.
+         * Rows like this are the common case on a real share.
+         */
+        id: 'A:ALBUM/Kind%20of%20Blue',
+        title: 'Kind of Blue',
+        creator: 'Miles Davis',
+        upnpClass: 'object.container.album.musicAlbum',
+      },
+    ],
+    'A:TRACKS': [
+      {
+        id: 'A:TRACKS/Black%20Dog',
+        title: 'Black Dog',
+        creator: 'Led Zeppelin',
+        album: 'Led Zeppelin IV',
+        upnpClass: 'object.item.audioItem.musicTrack',
+        res: 'x-file-cifs://nas/music/black-dog.flac',
+        duration: '0:04:55',
       },
     ],
     'Q:0': [
@@ -236,6 +295,38 @@ export class MockSonos {
 
   /** Every SUBSCRIBE / UNSUBSCRIBE, as { uuid, service, method, sid }. */
   subscriptions = [];
+
+  /** What each speaker's transport was last pointed at. uuid → URI. */
+  transport = new Map();
+
+  /** How many tracks each speaker's queue holds. uuid → count. */
+  queueLength = new Map();
+
+  /**
+   * URI prefixes this household's services decline to put in a queue.
+   *
+   * This is the mechanism behind the UPnP 701 reported from a real household:
+   * `AddURIToQueue` answers 200 with `NumTracksAdded: 0` — a refusal that
+   * looks like a success — and the transport is then aimed at a queue with
+   * nothing in it, so `Play` has no transition to make.
+   *
+   * A container is meant to go straight to `SetAVTransportURI`, which is what
+   * the Sonos app's own "Play now" does and what makes this list irrelevant
+   * rather than merely survivable.
+   */
+  enqueueRefusals = ['x-rincon-cpcontainer:'];
+
+  /**
+   * The music services this household's speakers know about.
+   *
+   * Null makes `ListAvailableServices` answer as an older firmware does —
+   * with nothing — which must leave favourites and the local library working.
+   * Set by a test to `[{ sid, name, uri, auth }]`.
+   */
+  services = null;
+
+  /** Linked accounts, as `/status/accounts` reports them: `{ type, sn }`. */
+  accounts = null;
 
   /** Set to make every speaker answer 500 with a UPnP fault. */
   failing = false;
@@ -325,6 +416,28 @@ export class MockSonos {
       return;
     }
 
+    /*
+     * `/status/accounts` is a plain GET rather than SOAP, and it is how a
+     * speaker says which music services this household has LINKED — the
+     * catalog says only which exist.
+     */
+    if (req.method === 'GET' && (req.url ?? '').startsWith('/status/accounts')) {
+      req.resume();
+      if (!this.accounts) {
+        res.writeHead(404).end();
+        return;
+      }
+      const rows = this.accounts
+        .map(
+          (a) =>
+            `<Account Type="${a.type}" SerialNum="${a.sn}" Deleted="0" UN="someone@example.com"/>`,
+        )
+        .join('');
+      res.writeHead(200, { 'content-type': 'text/xml' });
+      res.end(`<ZPSupportInfo><Accounts SerialNum="1">${rows}</Accounts></ZPSupportInfo>`);
+      return;
+    }
+
     if (req.method !== 'POST') {
       res.writeHead(405).end();
       return;
@@ -352,6 +465,12 @@ export class MockSonos {
       }
 
       const body = this.#respond(zone, action, soapArgs(raw));
+      // A handler that wants a SPECIFIC UPnP code says so; `null` stays the
+      // shorthand for "no such thing here", which a speaker answers 401.
+      if (body !== null && typeof body === 'object') {
+        this.#fault(res, body.fault);
+        return;
+      }
       if (body === null) {
         this.#fault(res, 401);
         return;
@@ -525,9 +644,23 @@ export class MockSonos {
         void this.set(zone.uuid, { mute: args.DesiredMute === '1' });
         return ack(action, 'RenderingControl');
 
-      case 'Play':
+      case 'Play': {
+        /*
+         * UPnP 701 is "transition not available", and an empty queue is the
+         * commonest way to earn one: the transport is pointed at
+         * `x-rincon-queue:` and there is nothing behind it to start.
+         *
+         * A real speaker does exactly this, which is why the error arrives
+         * several steps from its cause — the command that actually failed was
+         * the `AddURIToQueue` that quietly added nothing.
+         */
+        const pointedAtQueue = (this.transport.get(zone.uuid) ?? '').startsWith('x-rincon-queue:');
+        if (pointedAtQueue && (this.queueLength.get(zone.uuid) ?? 0) === 0) {
+          return { fault: 701 };
+        }
         void this.set(zone.uuid, { transportState: 'PLAYING' });
         return ack(action);
+      }
 
       case 'Pause':
         void this.set(zone.uuid, { transportState: 'PAUSED_PLAYBACK' });
@@ -536,6 +669,44 @@ export class MockSonos {
       case 'Stop':
         void this.set(zone.uuid, { transportState: 'STOPPED' });
         return ack(action);
+
+      case 'ConfigureSleepTimer':
+        /*
+         * An EMPTY duration cancels. `0:00:00` is rejected by a real speaker,
+         * which is the kind of detail that only shows up when somebody taps
+         * "Off" and nothing happens.
+         */
+        if (args.NewSleepTimerDuration === '0:00:00') return { fault: 402 };
+        void this.set(zone.uuid, { sleep: args.NewSleepTimerDuration || '' });
+        return ack(action);
+
+      case 'GetRemainingSleepTimerDuration':
+        return (
+          '<u:GetRemainingSleepTimerDurationResponse xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">' +
+          `<RemainingSleepTimerDuration>${this.zone(zone.uuid).sleep ?? ''}</RemainingSleepTimerDuration>` +
+          '<CurrentSleepTimerGeneration>1</CurrentSleepTimerGeneration>' +
+          '</u:GetRemainingSleepTimerDurationResponse>'
+        );
+
+      case 'SetCrossfadeMode':
+        void this.set(zone.uuid, { crossfade: args.CrossfadeMode === '1' });
+        return ack(action);
+
+      case 'SetBass':
+        void this.set(zone.uuid, { bass: Number(args.DesiredBass) });
+        return ack(action, 'RenderingControl');
+
+      case 'SetTreble':
+        void this.set(zone.uuid, { treble: Number(args.DesiredTreble) });
+        return ack(action, 'RenderingControl');
+
+      case 'SetLoudness':
+        void this.set(zone.uuid, { loudness: args.DesiredLoudness === '1' });
+        return ack(action, 'RenderingControl');
+
+      case 'SetGroupVolume':
+        void this.set(zone.uuid, { groupVolume: Number(args.DesiredVolume) });
+        return ack(action, 'GroupRenderingControl');
 
       case 'SetPlayMode':
         void this.set(zone.uuid, { playMode: args.NewPlayMode ?? 'NORMAL' });
@@ -547,9 +718,12 @@ export class MockSonos {
         return ack(action);
 
       case 'SetAVTransportURI': {
+        const uri = args.CurrentURI ?? '';
+        this.transport.set(zone.uuid, uri);
+
         // `x-rincon:<uuid>` is how a speaker is told to follow another. It is
         // not an obvious API and it is the only local way to group.
-        const leader = /^x-rincon:(.+)$/.exec(args.CurrentURI ?? '')?.[1];
+        const leader = /^x-rincon:(.+)$/.exec(uri)?.[1];
         if (leader) void this.regroup(zone.uuid, leader);
         return ack(action);
       }
@@ -558,15 +732,34 @@ export class MockSonos {
         void this.regroup(zone.uuid, zone.uuid);
         return ack(action);
 
-      case 'AddURIToQueue':
+      case 'AddURIToQueue': {
+        const uri = args.EnqueuedURI ?? '';
+        const refused = this.enqueueRefusals.some((prefix) => uri.startsWith(prefix));
+        const held = this.queueLength.get(zone.uuid) ?? 2;
+
+        // A refusal that looks like a success. 200 OK, nothing added.
+        if (refused) {
+          return (
+            '<u:AddURIToQueueResponse xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">' +
+            '<FirstTrackNumberEnqueued>0</FirstTrackNumberEnqueued>' +
+            `<NumTracksAdded>0</NumTracksAdded><NewQueueLength>${held}</NewQueueLength>` +
+            '</u:AddURIToQueueResponse>'
+          );
+        }
+
+        this.queueLength.set(zone.uuid, held + 1);
         return (
           '<u:AddURIToQueueResponse xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">' +
-          '<FirstTrackNumberEnqueued>3</FirstTrackNumberEnqueued>' +
-          '<NumTracksAdded>1</NumTracksAdded><NewQueueLength>3</NewQueueLength>' +
+          `<FirstTrackNumberEnqueued>${held + 1}</FirstTrackNumberEnqueued>` +
+          `<NumTracksAdded>1</NumTracksAdded><NewQueueLength>${held + 1}</NewQueueLength>` +
           '</u:AddURIToQueueResponse>'
         );
+      }
 
       case 'RemoveAllTracksFromQueue':
+        this.queueLength.set(zone.uuid, 0);
+        return ack(action);
+
       case 'RemoveTrackFromQueue':
       case 'ReorderTracksInQueue':
         return ack(action);
@@ -590,17 +783,41 @@ export class MockSonos {
         );
       }
 
-      case 'ListAvailableServices':
-        return (
-          '<u:ListAvailableServicesResponse xmlns:u="urn:schemas-upnp-org:service:MusicServices:1">' +
-          `<AvailableServiceDescriptorList>${esc(
-            '<Services><Service Id="9" Name="Spotify"/></Services>',
-          )}</AvailableServiceDescriptorList>` +
-          '</u:ListAvailableServicesResponse>'
-        );
     }
 
     switch (action) {
+      case 'GetHouseholdID':
+        return (
+          '<u:GetHouseholdIDResponse xmlns:u="urn:schemas-upnp-org:service:DeviceProperties:1">' +
+          '<CurrentHouseholdID>Sonos_mockhousehold</CurrentHouseholdID>' +
+          '</u:GetHouseholdIDResponse>'
+        );
+
+      case 'ListAvailableServices': {
+        /*
+         * The catalog: every service Sonos offers, whether or not this
+         * household uses it. Which are actually LINKED comes from
+         * `/status/accounts`, and the two together are what makes a tab
+         * appear.
+         */
+        if (!this.services) return null;
+        const rows = this.services
+          .map(
+            (s) =>
+              `<Service Id="${s.sid}" Name="${s.name}" Version="1.1" ` +
+              `Uri="${s.uri}" SecureUri="${s.uri}" ContainerType="MService" ` +
+              `Capabilities="${s.capabilities ?? 563}">` +
+              `<Policy Auth="${s.auth}" PollInterval="60"/></Service>`,
+          )
+          .join('');
+        return (
+          '<u:ListAvailableServicesResponse xmlns:u="urn:schemas-upnp-org:service:MusicServices:1">' +
+          `<AvailableServiceDescriptorList>${esc(`<Services>${rows}</Services>`)}` +
+          '</AvailableServiceDescriptorList>' +
+          '</u:ListAvailableServicesResponse>'
+        );
+      }
+
       case 'GetZoneGroupState':
         return (
           '<u:GetZoneGroupStateResponse xmlns:u="urn:schemas-upnp-org:service:ZoneGroupTopology:1">' +

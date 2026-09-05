@@ -158,6 +158,23 @@ export interface Player {
   groupVolume: number | null;
   /** What is on it right now. */
   media: NowPlaying | null;
+  /**
+   * Tone, −10 to +10, and loudness. Null until the speaker has said.
+   *
+   * Per speaker rather than per group, like volume: they describe the room the
+   * speaker stands in, and two grouped speakers in different rooms want
+   * different bass and the same music.
+   */
+  bass: number | null;
+  treble: number | null;
+  loudness: boolean | null;
+  /**
+   * When the sleep timer will stop this group, as epoch ms. Null when none.
+   *
+   * An instant rather than a remaining duration, so the panel can count down
+   * without the backend re-sending a number every second.
+   */
+  sleepAt: number | null;
 }
 
 export interface NowPlaying {
@@ -247,6 +264,48 @@ export interface MediaItem {
   /** Favourited upstream. Absent when the state is unknown, which for Sonos
    *  is always — favourites are managed in the Sonos app, not from here. */
   f?: boolean;
+  /**
+   * The music service this row IS, on the service list only.
+   *
+   * Present so the panel can tell "open this" from "connect this first"
+   * without matching on the subtitle text, and so it has the id the link
+   * flow needs. Absent on every other kind of row, including rows from
+   * inside a service.
+   */
+  sid?: number;
+}
+
+/**
+ * A music service this household has — Sonos Radio, Plex, SoundCloud…
+ *
+ * The panel gets these rather than discovering them, because which services
+ * exist and whether each is usable are both facts about the household and its
+ * stored credentials, neither of which a wall panel should be reasoning about.
+ */
+export interface MusicSource {
+  /** Sonos's service id — the `sid` in every URI it produces. */
+  sid: number;
+  name: string;
+  /** Browsable right now: it needs no login, or this app is linked to it. */
+  ready: boolean;
+  /** The service will answer a catalog search. */
+  searchable: boolean;
+  /**
+   * Connecting is offerable. False for a service that needs a password, which
+   * cannot be typed on a shared screen and is not asked for.
+   */
+  linkable: boolean;
+}
+
+/** Where a device link has got to. */
+export interface ServiceLink {
+  sid: number;
+  /** 'prompt' — go here and enter this; 'waiting' — not confirmed yet. */
+  state: 'prompt' | 'waiting' | 'linked';
+  /** Where to go. Shown as text: the panel has no second tab to open. */
+  url?: string;
+  /** The code to type there, when the service does not display its own. */
+  code?: string;
 }
 
 /**
@@ -277,7 +336,29 @@ export type BrowseRequest =
    * is named rather than guessed, which is two taps instead of one and the
    * honest shape of the system underneath.
    */
-  | { kind: 'search'; text: string; source?: 'library' | 'spotify' }
+  /**
+   * `source` is `'library'` for what the speakers hold, or a service's `sid`
+   * for its own catalog. A number rather than a name because the panel is
+   * given the services in `hello` and echoes back what it was told.
+   */
+  | { kind: 'search'; text: string; source?: 'library' | number }
+  /**
+   * A page of a music service's own tree.
+   *
+   * `id` is the service's id for a container, or absent for its top level.
+   * These ids come from a previous page of the same service, so the panel
+   * never composes one.
+   */
+  | { kind: 'service'; sid: number; id?: string; offset?: number }
+  /**
+   * The services themselves, as a list of rows to open.
+   *
+   * A list rather than a tab apiece: a household with Plex, SoundCloud,
+   * YouTube Music, Sonos Radio and Spotify would otherwise have eleven tabs
+   * across the top of a wall panel. It is also how the Sonos app does it, and
+   * it means opening a service reuses the drill-down every other row uses.
+   */
+  | { kind: 'sources' }
   /**
    * The contents of one item — an album's tracks, an artist's albums, a
    * playlist's tracks.
@@ -364,7 +445,36 @@ export type MusicCommand =
   | { verb: 'queueMove'; player: string; item: string; by: number }
   | { verb: 'queueRemove'; player: string; item: string }
   | { verb: 'queueClear'; player: string }
-  | { verb: 'favorite'; player: string; item: string; on: boolean };
+  | { verb: 'favorite'; player: string; item: string; on: boolean }
+  /**
+   * Volume for the whole group at once, 0-100.
+   *
+   * Sonos scales every member proportionally and keeps their relative balance,
+   * which is what makes it different from setting each speaker in turn — that
+   * would flatten a deliberately quiet speaker up to match the others.
+   */
+  | { verb: 'groupVolume'; player: string; level: number }
+  /** Tone, −10 to +10. Per speaker, like volume. */
+  | { verb: 'bass' | 'treble'; player: string; level: number }
+  | { verb: 'loudness'; player: string; on: boolean }
+  /** Blend the end of one track into the next. Per group. */
+  | { verb: 'crossfade'; player: string; on: boolean }
+  /**
+   * Stop this group after `minutes`. Zero cancels a running timer.
+   *
+   * Sonos holds the timer itself, so it survives this backend restarting —
+   * which is the whole reason not to implement it with a `setTimeout` here.
+   */
+  | { verb: 'sleep'; player: string; minutes: number }
+  /**
+   * Play a physical input instead of the queue.
+   *
+   * `tv` is a soundbar's optical or HDMI-ARC input and `line` an analogue one;
+   * `queue` puts a speaker back on its own queue, which is how you leave.
+   * A speaker without the named input refuses, and that refusal is the answer
+   * rather than something to pre-empt with a capability table.
+   */
+  | { verb: 'input'; player: string; source: 'tv' | 'line' | 'queue' };
 
 /**
  * Every verb, for the runtime check the type system cannot do.
@@ -397,6 +507,13 @@ export const MUSIC_VERBS: readonly string[] = [
   'queueRemove',
   'queueClear',
   'favorite',
+  'groupVolume',
+  'bass',
+  'treble',
+  'loudness',
+  'crossfade',
+  'sleep',
+  'input',
 ];
 
 /** How many items one library page holds. Fixed here so a panel cannot ask
@@ -472,6 +589,8 @@ export type ServerMessage =
       /** Every Elgato Key Light named in `controls.keylights`. */
       keylights: KeyLightState[];
       tvs: TvState[];
+      /** Music services this household has. Empty until they are discovered. */
+      sources: MusicSource[];
     }
   /** Incremental entity state. */
   | { t: 'patch'; patch: StatePatch }
@@ -491,6 +610,15 @@ export type ServerMessage =
    * is four fields. A diff would be larger than the thing it describes.
    */
   | { t: 'keylights'; lights: KeyLightState[] }
+  /**
+   * The music services changed — discovered, connected, or disconnected.
+   *
+   * Sent whole for the same reason as `players`: a household has a handful of
+   * services and each is five short fields.
+   */
+  | { t: 'sources'; sources: MusicSource[] }
+  /** Where a device link has got to, in answer to a `link` request. */
+  | { t: 'link'; ref: number; link: ServiceLink }
   | { t: 'tvs'; tvs: TvState[] }
   /** Config file changed on disk and revalidated. */
   | { t: 'config'; config: DashboardConfig }
@@ -544,6 +672,15 @@ export type ClientMessage =
    * until the answer arrives, so this one waits, with a spinner.
    */
   | { t: 'browse'; id: number; req: BrowseRequest }
+  /**
+   * Connect or disconnect a music service.
+   *
+   * `begin` asks the service for a link code, `poll` asks whether the person
+   * has confirmed it yet, `forget` throws the token away. Polling rather than
+   * pushing because the confirmation happens on somebody's phone, out of
+   * sight of anything this backend is connected to.
+   */
+  | { t: 'link'; id: number; sid: number; op: 'begin' | 'poll' | 'forget' }
   /**
    * Run a macro button from `controls.pages`.
    *

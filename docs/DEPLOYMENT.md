@@ -375,6 +375,32 @@ with no user login and no redirect.
 These credentials read the public catalog and nothing else; they give no access
 to anybody's account.
 
+**You can skip this entirely.** Spotify also appears under `Browse → Services`,
+where connecting it needs no variables at all — see below. The Web API returns
+richer results, so it is used when these are set and the service's own search
+answers when they are not. One tab either way.
+
+---
+
+## Music services — Sonos Radio, Plex, SoundCloud, YouTube Music
+
+Nothing to configure. `Browse → Services` lists whatever your household has
+set up in the Sonos app.
+
+A service that needs an account shows **Not connected**. Tapping it gives you a
+URL and a short code to enter on your phone; the panel notices when you are
+done. Connections are stored in `music-services.json` beside `dashboard.yaml`
+(mode `0600` — they are service credentials) and survive a redeploy.
+
+Two things worth knowing:
+
+- **Favourites need none of this.** Anything you have favourited in the Sonos
+  app plays with no connection here at all, whichever service it came from.
+  Connecting a service adds *searching* and *browsing* its catalog.
+- **This app links to a service in its own right.** Your speakers hold their
+  own credentials and do not share them — `/status/accounts` gives account
+  numbers and no tokens — so connecting here is a separate, one-time act.
+
 ---
 
 ## 2. TLS

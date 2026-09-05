@@ -1,5 +1,7 @@
 import { logger } from '~/lib/log.ts';
+import { integer } from '~/sonos/soap.ts';
 import { toPlayMode } from '~/sonos/store.ts';
+import { textOf, type XmlNode } from '~/sonos/xml.ts';
 import type { SonosClient } from '~/sonos/client.ts';
 import type { SonosStore } from '~/sonos/store.ts';
 import type { SonosZone } from '~/sonos/topology.ts';
@@ -217,16 +219,127 @@ export class SonosCommands {
          * braces.
          */
         return 'Favourites are managed in the Sonos app';
+
+      case 'groupVolume': {
+        const level = clampVolume(cmd.level);
+        if (level === null) return 'Not permitted';
+        /*
+         * The GROUP's own service, not each speaker in turn.
+         *
+         * Sonos scales the members proportionally and keeps their balance, so
+         * a speaker somebody deliberately turned down stays quieter than the
+         * rest. Setting each one to the same number would flatten that, and it
+         * is the difference people notice immediately.
+         */
+        await this.#client.call(lead.host, 'GroupRenderingControl', 'SetGroupVolume', {
+          InstanceID: 0,
+          DesiredVolume: level,
+        });
+        return null;
+      }
+
+      case 'bass':
+      case 'treble': {
+        // Sonos's own range. Out of it the speaker faults rather than clamps.
+        const level = clampTone(cmd.level);
+        if (level === null) return 'Not permitted';
+        await this.#client.call(
+          zone.host,
+          'RenderingControl',
+          cmd.verb === 'bass' ? 'SetBass' : 'SetTreble',
+          {
+            InstanceID: 0,
+            ...(cmd.verb === 'bass' ? { DesiredBass: level } : { DesiredTreble: level }),
+          },
+        );
+        return null;
+      }
+
+      case 'loudness':
+        await this.#client.call(zone.host, 'RenderingControl', 'SetLoudness', {
+          InstanceID: 0,
+          Channel: 'Master',
+          DesiredLoudness: cmd.on ? 1 : 0,
+        });
+        return null;
+
+      case 'crossfade':
+        await this.#av(lead, 'SetCrossfadeMode', { CrossfadeMode: cmd.on ? '1' : '0' });
+        return null;
+
+      case 'sleep': {
+        if (!Number.isFinite(cmd.minutes) || cmd.minutes < 0 || cmd.minutes > 1440) {
+          return 'Not permitted';
+        }
+        const minutes = Math.floor(cmd.minutes);
+        /*
+         * An EMPTY string cancels, not `0:00:00` — which Sonos rejects. The
+         * speaker holds the timer, so it survives this backend restarting;
+         * that is the reason not to do it with a `setTimeout` here.
+         */
+        await this.#av(lead, 'ConfigureSleepTimer', {
+          NewSleepTimerDuration: minutes === 0 ? '' : hms(minutes * 60),
+        });
+        this.#store.noteSleep(lead.uuid, minutes);
+        return null;
+      }
+
+      case 'input':
+        /*
+         * `zone`, not `lead`. A TV socket is on ONE box: routing this to the
+         * group's coordinator would select the coordinator's TV input when
+         * somebody asked for the soundbar's. Setting a grouped speaker's own
+         * transport takes it out of the group, which is what "play the TV in
+         * here" means.
+         */
+        return this.#input(zone, cmd.source);
+    }
+  }
+
+  /**
+   * Point a speaker at a physical input, or back at its queue.
+   *
+   * Both input URIs are addressed to the speaker that HAS the socket — its own
+   * uuid — which is why they are built from `lead` rather than named by the
+   * panel. A speaker with no such input answers with a fault, and that refusal
+   * is the honest answer: the alternative is a capability table that has to
+   * know every Sonos model ever made.
+   */
+  async #input(zone: SonosZone, source: 'tv' | 'line' | 'queue'): Promise<string | null> {
+    const uri =
+      source === 'tv'
+        ? `x-sonos-htastream:${zone.uuid}:spdif`
+        : source === 'line'
+          ? `x-rincon-stream:${zone.uuid}`
+          : `x-rincon-queue:${zone.uuid}#0`;
+
+    try {
+      await this.#av(zone, 'SetAVTransportURI', { CurrentURI: uri, CurrentURIMetaData: '' });
+      await this.#av(zone, 'Play', { Speed: '1' });
+      return null;
+    } catch (err) {
+      log.warn(`${zone.name} refused the ${source} input: ${describe(err)}`);
+      return source === 'queue'
+        ? 'That speaker has nothing queued'
+        : `${zone.name} has no ${source === 'tv' ? 'TV' : 'line-in'} input`;
     }
   }
 
   /**
    * Play something a browse produced.
    *
-   * `item` is a key this backend minted, never a URI — see `uris.ts`. The two
-   * paths below are not a nicety: a radio stream has no end and cannot go in a
-   * queue, and `AddURIToQueue` on one either fails or produces an entry that
-   * plays forever.
+   * `item` is a key this backend minted, never a URI — see `uris.ts`. Which of
+   * the three sequences below runs is decided by `Playable.style`, and getting
+   * that wrong is not a cosmetic error:
+   *
+   * - A **stream** has no end and cannot go in a queue at all.
+   * - A **container** is resolved by the speaker itself. Enqueueing one and
+   *   then pointing the transport at the queue is how a favourited playlist
+   *   became `Play → UPnP 701`: the service declined to enqueue, so the
+   *   transport was aimed at an empty queue and there was no transition to
+   *   make. Handing the container straight to `SetAVTransportURI` is what the
+   *   Sonos app's own "Play now" does.
+   * - A **track** is the only one the queue path was ever right for.
    */
   async #playItem(lead: SonosZone, key: string, enqueue: Enqueue): Promise<string | null> {
     const playable = this.#uris.get(key);
@@ -236,32 +349,57 @@ export class SonosCommands {
       return 'That item is no longer loaded — browse to it again';
     }
 
-    if (playable.stream) {
-      // A stream replaces whatever is playing, whichever option was chosen:
-      // there is nothing sensible to queue it behind.
+    /*
+     * A local library container arrives with an object id and no URI of its
+     * own — `A:ALBUM/The%20Wall` is an address in the ContentDirectory, not
+     * something a speaker can fetch. `x-rincon-playlist:` is how that address
+     * is turned into one, and it needs a speaker UUID to be relative to.
+     */
+    const uri =
+      playable.uri ?? (playable.objectId ? `x-rincon-playlist:${lead.uuid}#${playable.objectId}` : null);
+    if (!uri) return 'That item cannot be played';
+
+    const playNow = enqueue === 'play' || enqueue === 'replace';
+
+    /*
+     * A stream replaces what is playing whichever option was chosen — there is
+     * nothing sensible to queue it behind, so "add to queue" on a radio
+     * station is treated as "play it" rather than refused.
+     */
+    if (playable.style === 'stream' || (playable.style === 'container' && playNow)) {
       await this.#av(lead, 'SetAVTransportURI', {
-        CurrentURI: playable.uri,
+        CurrentURI: uri,
         CurrentURIMetaData: playable.metadata,
       });
       await this.#av(lead, 'Play', { Speed: '1' });
       return null;
     }
 
-    if (enqueue === 'replace' || enqueue === 'play') {
-      await this.#av(lead, 'RemoveAllTracksFromQueue');
-    }
+    if (playNow) await this.#av(lead, 'RemoveAllTracksFromQueue');
 
     /*
      * `EnqueueAsNext` puts it after the current track; the first-track number
      * decides where. Zero means "at the end", which is what "add" means.
      */
     const next = enqueue === 'next' || enqueue === 'replace_next';
-    await this.#av(lead, 'AddURIToQueue', {
-      EnqueuedURI: playable.uri,
+    const added = await this.#av(lead, 'AddURIToQueue', {
+      EnqueuedURI: uri,
       EnqueuedURIMetaData: playable.metadata,
       DesiredFirstTrackNumberEnqueued: '0',
       EnqueueAsNext: next ? '1' : '0',
     });
+
+    /*
+     * Sonos answers 200 OK with `NumTracksAdded: 0` when it cannot resolve
+     * what it was handed — a stale service token, a share that is offline.
+     * Unchecked, the next two lines aim the transport at an empty queue and
+     * the failure surfaces as a bare 701 several steps from its cause.
+     */
+    const count = integer(textOf(added, 'NumTracksAdded'));
+    if (count === 0) {
+      log.warn(`Nothing enqueued for ${uri.slice(0, 80)}`);
+      return 'Sonos would not add that to the queue';
+    }
 
     if (enqueue === 'add' || enqueue === 'next') return null;
 
@@ -278,7 +416,11 @@ export class SonosCommands {
       CurrentURI: `x-rincon-queue:${lead.uuid}#0`,
       CurrentURIMetaData: '',
     });
-    await this.#av(lead, 'Seek', { Unit: 'TRACK_NR', Target: '1' });
+
+    // Where Sonos actually put it, which is only 1 when the queue was cleared
+    // first. Assuming 1 starts an "add and play" at somebody else's track.
+    const first = integer(textOf(added, 'FirstTrackNumberEnqueued')) ?? 1;
+    await this.#av(lead, 'Seek', { Unit: 'TRACK_NR', Target: String(first) });
     await this.#av(lead, 'Play', { Speed: '1' });
     return null;
   }
@@ -402,7 +544,7 @@ export class SonosCommands {
     return this.#client.household.zones.get(zone.coordinator) ?? zone;
   }
 
-  #av(zone: SonosZone, action: string, args: Record<string, string> = {}): Promise<unknown> {
+  #av(zone: SonosZone, action: string, args: Record<string, string> = {}): Promise<XmlNode> {
     return this.#client.call(zone.host, 'AVTransport', action, { InstanceID: 0, ...args });
   }
 }
@@ -413,6 +555,17 @@ function clampVolume(raw: unknown): number | null {
   if (typeof raw !== 'number' || !Number.isFinite(raw)) return null;
   const n = Math.round(raw);
   return n >= 0 && n <= 100 ? n : null;
+}
+
+/** Bass and treble, on Sonos's own −10 to +10 scale. */
+function clampTone(raw: unknown): number | null {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return null;
+  const n = Math.round(raw);
+  return n >= -10 && n <= 10 ? n : null;
+}
+
+function describe(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 /**
