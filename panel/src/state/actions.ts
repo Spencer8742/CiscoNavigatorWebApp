@@ -1,9 +1,9 @@
-import { callService, massCommand } from '~/net/socket.ts';
+import { callService, musicCommand } from '~/net/socket.ts';
 import { optimistic, peekEntity } from '~/state/entities.ts';
 import { players } from '~/state/players.ts';
 import { markActivity, showToast } from '~/state/ui.ts';
 import { domainOf } from '~/lib/format.ts';
-import type { MassPlayer } from '@shared/protocol.ts';
+import type { Enqueue, MassPlayer, MusicCommand } from '@shared/protocol.ts';
 
 /**
  * Every command the panel can send.
@@ -314,31 +314,26 @@ export function setEntityOption(entityId: string, option: string): void {
   send(domainOf(entityId), 'select_option', entityId, { option });
 }
 
-/* ── Music, straight to Music Assistant ───────────────────────────────────
-   None of this goes through Home Assistant any more. Music Assistant is the
-   thing that actually owns the speakers, the queue and the library, and
-   talking to it directly is what makes the queue editable at all.
+/* ── Music ────────────────────────────────────────────────────────────────
+   None of this goes through Home Assistant. It also does not name a music
+   system: the panel sends a player id and an INTENTION, and the backend
+   routes it to whichever system owns that speaker — Sonos or Music Assistant.
 
-   Volume here is 0-100, Music Assistant's own scale. Converting to and from
-   Home Assistant's 0-1 in three places is exactly how a slider ends up
-   setting a speaker to 1% of what was asked for. */
+   That is not indirection for its own sake. It is what lets both run at once
+   while docs/SONOS.md migrates from one to the other, and it is why the panel
+   contains no branch on which one is in use. It also makes the backend guard
+   stronger: with a verb on the wire, an action this app never wrote simply
+   does not exist, where an upstream command name only ever gets an
+   allow-list that somebody has to keep complete.
 
-function mass(command: string, args?: Record<string, unknown>): void {
+   Volume here is 0-100. Both systems use that scale; converting anywhere is
+   exactly how a slider ends up setting a speaker to 1% of what was asked. */
+
+function music(cmd: MusicCommand): void {
   markActivity();
-  if (!massCommand(command, args)) {
+  if (!musicCommand(cmd)) {
     showToast('Not connected', 'error');
   }
-}
-
-/**
- * A speaker's queue id, which most commands need instead of the player id.
- *
- * Returns null when Music Assistant has not given the player a queue — a
- * speaker playing a physical input, say. Callers skip rather than guess,
- * because guessing means sending a command at the wrong queue.
- */
-function queueOf(playerId: string): string | null {
-  return players.peek().find((p) => p.id === playerId)?.queueId ?? null;
 }
 
 function player(playerId: string): MassPlayer | undefined {
@@ -354,24 +349,15 @@ export function mediaPlayPause(playerId: string): void {
   const current = player(playerId);
   if (!current) return;
   patchPlayer(playerId, { state: current.state === 'playing' ? 'paused' : 'playing' });
-
-  const queue = queueOf(playerId);
-  // Prefer the queue: when Music Assistant is the source it is the queue that
-  // is playing, and the player command is a shim around it.
-  if (queue) mass('player_queues/play_pause', { queue_id: queue });
-  else mass('players/cmd/play_pause', { player_id: playerId });
+  music({ verb: 'playPause', player: playerId });
 }
 
 export function mediaNext(playerId: string): void {
-  const queue = queueOf(playerId);
-  if (queue) mass('player_queues/next', { queue_id: queue });
-  else mass('players/cmd/next', { player_id: playerId });
+  music({ verb: 'next', player: playerId });
 }
 
 export function mediaPrevious(playerId: string): void {
-  const queue = queueOf(playerId);
-  if (queue) mass('player_queues/previous', { queue_id: queue });
-  else mass('players/cmd/previous', { player_id: playerId });
+  music({ verb: 'previous', player: playerId });
 }
 
 /** Volume, 0-100. */
@@ -379,7 +365,7 @@ export function setVolume(playerId: string, level: number, final: boolean): void
   const clamped = Math.max(0, Math.min(100, Math.round(level)));
   patchPlayer(playerId, { volume: clamped });
 
-  const fire = () => mass('players/cmd/volume_set', { player_id: playerId, volume_level: clamped });
+  const fire = () => music({ verb: 'volume', player: playerId, level: clamped });
   if (final) {
     cancelThrottle(playerId + ':vol');
     fire();
@@ -394,102 +380,95 @@ export function nudgeVolume(playerId: string, delta: number): void {
 
 export function setMuted(playerId: string, muted: boolean): void {
   patchPlayer(playerId, { muted });
-  mass('players/cmd/volume_mute', { player_id: playerId, muted });
+  music({ verb: 'mute', player: playerId, muted });
 }
 
 export function setMediaPower(playerId: string, on: boolean): void {
   patchPlayer(playerId, { powered: on });
-  mass('players/cmd/power', { player_id: playerId, powered: on });
+  music({ verb: 'power', player: playerId, on });
 }
 
 export function seekTo(playerId: string, seconds: number): void {
-  const queue = queueOf(playerId);
-  if (queue) mass('player_queues/seek', { queue_id: queue, position: Math.max(0, Math.round(seconds)) });
+  music({ verb: 'seek', player: playerId, seconds: Math.max(0, Math.round(seconds)) });
 }
 
 export function setShuffle(playerId: string, on: boolean): void {
-  const queue = queueOf(playerId);
-  if (queue) mass('player_queues/shuffle', { queue_id: queue, shuffle_enabled: on });
+  music({ verb: 'shuffle', player: playerId, on });
 }
 
 export function setRepeat(playerId: string, mode: 'off' | 'one' | 'all'): void {
-  const queue = queueOf(playerId);
-  if (queue) mass('player_queues/repeat', { queue_id: queue, repeat_mode: mode });
+  music({ verb: 'repeat', player: playerId, mode });
 }
 
 /* ── Speaker grouping ─────────────────────────────────────────────────────
-   Music Assistant's own grouping, rather than Home Assistant's join/unjoin
-   shim over it. `set_members` is absolute — it sets the group to exactly the
-   players named — which is what makes removing a speaker the same operation
-   as adding one. */
+   Absolute rather than incremental: the group is set to exactly the speakers
+   named, which is what makes removing one the same operation as adding one,
+   and what stops two panels racing into a group neither asked for. */
 
 /** Set the group led by `leader` to exactly these members. */
 export function setGroupMembers(leader: string, members: string[]): void {
-  mass('players/cmd/set_members', {
-    player_id: leader,
-    // The leader is implied by the target and Music Assistant rejects a group
-    // that names itself as its own child.
-    child_player_ids: members.filter((id) => id !== leader),
-  });
+  music({ verb: 'group', player: leader, members });
 }
 
 /** Take one speaker out of whatever group it is in. */
 export function unjoinPlayer(playerId: string): void {
-  mass('players/cmd/ungroup', { player_id: playerId });
+  music({ verb: 'ungroup', player: playerId });
 }
 
-/* ── The queue ────────────────────────────────────────────────────────────*/
+/* ── The queue ────────────────────────────────────────────────────────────
+   Addressed by SPEAKER, not by queue. The two music systems disagree about
+   what a queue id is — Sonos has one per group, Music Assistant one per
+   player — and resolving that is the backend's job, not the panel's. */
 
 /** Jump to a track already in the queue. */
-export function playQueueIndex(queueId: string, index: number): void {
-  mass('player_queues/play_index', { queue_id: queueId, index });
+export function playQueueIndex(playerId: string, index: number): void {
+  music({ verb: 'queueJump', player: playerId, index });
 }
 
 /** Move a track up or down. `by` is a position shift, not an index. */
-export function moveQueueItem(queueId: string, itemId: string, by: number): void {
-  mass('player_queues/move_item', { queue_id: queueId, queue_item_id: itemId, pos_shift: by });
+export function moveQueueItem(playerId: string, itemId: string, by: number): void {
+  music({ verb: 'queueMove', player: playerId, item: itemId, by });
 }
 
 /** Move a track to play immediately after the current one. */
-export function moveQueueItemNext(queueId: string, itemId: string): void {
-  mass('player_queues/move_item', { queue_id: queueId, queue_item_id: itemId, pos_shift: 0 });
+export function moveQueueItemNext(playerId: string, itemId: string): void {
+  music({ verb: 'queueMove', player: playerId, item: itemId, by: 0 });
 }
 
-export function removeQueueItem(queueId: string, itemId: string): void {
-  mass('player_queues/delete_item', { queue_id: queueId, item_id_or_index: itemId });
+export function removeQueueItem(playerId: string, itemId: string): void {
+  music({ verb: 'queueRemove', player: playerId, item: itemId });
 }
 
-export function clearQueue(queueId: string): void {
-  mass('player_queues/clear', { queue_id: queueId });
+export function clearQueue(playerId: string): void {
+  music({ verb: 'queueClear', player: playerId });
 }
 
 /* ── Playing something ────────────────────────────────────────────────────*/
 
-/** What to do with the queue when playing something new. */
-export type Enqueue = 'play' | 'replace' | 'next' | 'replace_next' | 'add';
+export type { Enqueue };
 
 /**
- * Play a Music Assistant library item on a speaker.
+ * Play a library item on a speaker.
  *
- * `radio_mode` asks Music Assistant to keep going with similar music once the
- * item finishes, which is what makes tapping a single artist a reasonable
- * thing to do rather than a way to hear one song and then silence.
+ * `radio` asks the music system to keep going with similar music once the item
+ * finishes, which is what makes tapping a single artist a reasonable thing to
+ * do rather than a way to hear one song and then silence.
  */
 export function playItem(
   playerId: string,
   uri: string,
   opts: { enqueue?: Enqueue; radio?: boolean } = {},
 ): void {
-  const queue = queueOf(playerId) ?? playerId;
-  mass('player_queues/play_media', {
-    queue_id: queue,
-    media: uri,
-    option: opts.enqueue ?? 'replace',
-    ...(opts.radio ? { radio_mode: true } : {}),
+  music({
+    verb: 'playItem',
+    player: playerId,
+    item: uri,
+    enqueue: opts.enqueue ?? 'replace',
+    ...(opts.radio ? { radio: true } : {}),
   });
 }
 
-/** Mark something a favourite in Music Assistant, or unmark it. */
-export function setFavorite(uri: string, favorite: boolean): void {
-  mass(favorite ? 'music/favorites/add_item' : 'music/favorites/remove_item', { item: uri });
+/** Mark something a favourite, or unmark it. */
+export function setFavorite(playerId: string, uri: string, favorite: boolean): void {
+  music({ verb: 'favorite', player: playerId, item: uri, on: favorite });
 }

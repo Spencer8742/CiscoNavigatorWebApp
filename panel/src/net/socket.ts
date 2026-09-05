@@ -13,6 +13,7 @@ import {
   type BrowseRequest,
   type BrowseResult,
   type ClientMessage,
+  type MusicCommand,
   type PanelPrefs,
   type PlayerLayout,
   type PhotoRef,
@@ -350,8 +351,8 @@ export function callService(
  * moved, and Music Assistant pushes the authoritative state a moment later.
  * Waiting for the ack would add a round trip to every tap.
  */
-export function massCommand(command: string, args?: Record<string, unknown>): boolean {
-  return send({ t: 'mass', id: nextId(), command, args });
+export function musicCommand(cmd: MusicCommand): boolean {
+  return send({ t: 'music', id: nextId(), cmd });
 }
 
 /* ── Macro pages ──────────────────────────────────────────────────────────

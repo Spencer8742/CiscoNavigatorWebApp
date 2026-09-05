@@ -249,8 +249,11 @@ Every push publishes one, so rolling back is changing that string.
   custom Docker network and use HA's container name as the hostname. On
   `bridge`, use the Unraid host's LAN IP — `localhost` refers to the container
   itself.
-- **Bridge is the right choice** here. `host` mode gains nothing; the panel
-  only needs one inbound port.
+- **Bridge is the right choice** here, unless you use Sonos. The panel needs
+  one inbound port, and everything else it talks to is outbound — except Sonos
+  speakers, which push events *to* the container. On bridge that needs
+  `SONOS_CALLBACK_HOST` set to the Unraid host's LAN address; on `host`
+  networking it is automatic. See [Sonos](#1b-sonos).
 
 ### File permissions
 
@@ -282,8 +285,11 @@ The panel talks to Sonos **directly on your LAN** — no cloud account, no
 developer key, no Home Assistant in the middle. Why the local protocol rather
 than Sonos's cloud API is in [`SONOS.md`](./SONOS.md) §2.
 
-> **Currently read-only.** Rooms, groups, volumes and what is playing. The
-> transport buttons on a Sonos player do not work yet — they arrive in phase 3
+> **What works today.** Rooms, groups, volumes, what is playing, live updates,
+> and full control — play/pause, skip, seek, volume, mute, shuffle, repeat and
+> grouping. **Browsing and search do not exist yet**: there is no way to start
+> something that is not already playing or queued, so Sonos is a remote
+> control rather than a music browser until phase 4
 > ([`SONOS.md`](./SONOS.md) §15).
 
 ### One address is all it needs
@@ -328,22 +334,35 @@ The container log says the same thing on startup:
 INFO [sonos] Sonos household: 4 zones (Bedroom, Kitchen, Living Room, Study)
 ```
 
-### Networking
+### Networking — read this if volumes look stale
 
-Phase 1 only makes **outbound** connections to port 1400 on your speakers, so
-bridge networking is fine and nothing needs opening.
+Sonos **pushes** changes rather than being polled, which means the speakers
+connect **inward** to this backend. It is the only upstream in the app that
+does, and it is the one part of this integration that bridge networking breaks
+*silently*: commands still work, so the panel does not look broken — it just
+stops keeping up.
+
+| Deployment | What to do |
+|---|---|
+| **Host networking** | Nothing. The address is worked out automatically |
+| **Bridge + published port** | Set `SONOS_CALLBACK_HOST` to the Docker **host's** LAN address |
+| **Bridge, nothing set** | Volumes and tracks go stale. The Settings screen says so |
+
+The address is normally derived by asking the kernel which of our addresses
+reached the first speaker — right on a multi-homed host, right across VLANs,
+and no guess about which interface faces the speakers. What it cannot see
+through is Docker's bridge NAT, which is the entire reason the override exists.
+
+The backend expects the first event within twenty seconds of subscribing (a
+speaker sends current state the moment you subscribe). If nothing arrives it
+reports that on the Settings screen with the address it handed out, rather than
+leaving you to notice the numbers have stopped moving.
 
 `SONOS_DISCOVERY=1` searches the network instead of naming an address, and is
 best treated as a laptop convenience: discovery uses multicast, which does not
-cross Docker's default bridge network, so in a container it usually finds
-nothing — and the failure looks like an empty Media screen rather than an
-error. Name the address.
-
-> **This changes in phase 2.** Live updates use UPnP event subscriptions, where
-> the speakers connect **inbound** to the panel. That needs either host
-> networking or an explicit callback address, and is the one part of this
-> integration that bridge networking breaks silently. Flagged here so it is not
-> a surprise; nothing to do about it yet.
+cross a bridge network either, so in a container it usually finds nothing —
+and that failure looks like an empty Media screen rather than an error. Name
+the address.
 
 ### Running it alongside Music Assistant
 
@@ -794,7 +813,9 @@ worth taking literally:
 | No Sonos rooms at all | Several possible causes | Settings → Connection names the actual one in the **Sonos says** row. Start there, not here |
 | Sonos: "refused the connection" | `SONOS_HOST` is wrong, or the speaker moved | Re-read the address in the Sonos app (Settings → System → About My System) and give it a DHCP reservation |
 | Sonos: connected, then empty later | The speaker's DHCP lease changed | Same fix: a reservation. Any speaker's address works, so pick one that is never unplugged |
-| Sonos rooms appear but buttons say "Not permitted" | Expected — phase 1 is read-only | Transport and grouping arrive in phase 3, see [`SONOS.md`](./SONOS.md) §15 |
+| Sonos rooms appear but volumes never change | Events are not reaching the backend | Almost always Docker bridge networking — see [Networking](#networking--read-this-if-volumes-look-stale). The Settings screen names the callback address it handed out |
+| Sonos: "Not available yet" when playing something | Expected — browsing is phase 4 | Transport, volume and grouping work; starting something new does not yet |
+| Sonos: buttons work but the panel lags a few seconds | Reconciliation is covering for lost events | The five-minute reconcile is a safety net, not the mechanism. If it is doing the work, events are not arriving — see the row above |
 | Every speaker listed twice | Music Assistant and Sonos both configured | Expected during the migration; the container warns at startup. Unset `MASS_URL`, or wait for phase 6 |
 | A sub or "(R)" speaker in the picker | Should not happen — bonded members are filtered | If one appears, it is a real bug: the filter keys on `Invisible="1"` |
 | Config edit does nothing | YAML failed to parse | `docker compose logs` — the last good config is still running, on purpose |

@@ -113,8 +113,8 @@ class TestPanel {
     });
   }
 
-  mass(command, args) {
-    this.send({ t: 'mass', id: (this.#seq += 1), command, args });
+  music(cmd) {
+    this.send({ t: 'music', id: (this.#seq += 1), cmd });
   }
 
   send(msg) {
@@ -617,13 +617,11 @@ describe('the queue', () => {
 
     const before = ctx.mass.commands.length;
 
-    panel.mass('player_queues/move_item', {
-      queue_id: 'kitchen',
-      queue_item_id: 'qi-5',
-      pos_shift: -1,
-    });
-    panel.mass('player_queues/delete_item', { queue_id: 'kitchen', item_id_or_index: 'qi-9' });
-    panel.mass('player_queues/play_index', { queue_id: 'kitchen', index: 12 });
+    // Addressed to the SPEAKER. Resolving that to a queue id is the backend's
+    // job, because Sonos and Music Assistant disagree about what one is.
+    panel.music({ verb: 'queueMove', player: 'kitchen', item: 'qi-5', by: -1 });
+    panel.music({ verb: 'queueRemove', player: 'kitchen', item: 'qi-9' });
+    panel.music({ verb: 'queueJump', player: 'kitchen', index: 12 });
 
     await waitFor(
       () => ctx.mass.commands.slice(before).length >= 3,
@@ -666,21 +664,32 @@ describe('the command guard', () => {
   });
 
   /**
-   * Music Assistant's API is an ADMINISTRATIVE api. The same socket that skips
+   * Music Assistant's API is an ADMINISTRATIVE one. The same socket that skips
    * a track can delete a playlist, remove a provider and rewrite player
-   * config. A wall panel gets the verbs a music remote needs and nothing else.
+   * config.
+   *
+   * The panel used to send command names, guarded by an allow-list, and these
+   * cases asserted that the dangerous ones bounced off it. It now sends verbs,
+   * which makes the property structural rather than enforced: there is no
+   * command name on the wire to be permitted or refused, so the only way to
+   * reach `music/playlists/remove` would be for this repository to have
+   * written a verb that calls it.
+   *
+   * What is still worth asserting is the boundary — that anything which is not
+   * one of the verbs is refused rather than silently ignored, because a
+   * silent no-op is indistinguishable from a command that worked.
    */
   const refuse = [
-    ['deleting a playlist', 'music/playlists/remove', { item_id: '1' }],
-    ['removing a library item', 'music/library/remove_item', { item_id: '1' }],
-    ['a full resync', 'music/sync', {}],
-    ['announcements', 'players/cmd/play_announcement', { player_id: 'kitchen', url: 'http://x/y.mp3' }],
-    ['removing a player', 'players/remove', { player_id: 'kitchen' }],
-    ['rewriting player config', 'players/cmd/set_option', { player_id: 'kitchen' }],
-    ['creating a group player', 'players/create_group_player', {}],
+    ['an upstream command name', { verb: 'music/playlists/remove', player: 'kitchen' }],
+    ['a full resync', { verb: 'music/sync', player: 'kitchen' }],
+    ['an announcement', { verb: 'play_announcement', player: 'kitchen', url: 'http://x/y.mp3' }],
+    ['rewriting player config', { verb: 'set_option', player: 'kitchen' }],
+    ['a verb that does not exist', { verb: 'explode', player: 'kitchen' }],
+    ['no verb at all', { player: 'kitchen' }],
+    ['no player', { verb: 'pause' }],
   ];
 
-  for (const [label, command, args] of refuse) {
+  for (const [label, cmd] of refuse) {
     test(`refuses ${label}`, async () => {
       const panel = new TestPanel(ctx.port);
       await panel.connect();
@@ -688,7 +697,7 @@ describe('the command guard', () => {
 
       const before = ctx.mass.commands.length;
       const mark = panel.messageCount;
-      panel.mass(command, args);
+      panel.music(cmd);
 
       await waitFor(() => panel.since(mark).find((m) => m.t === 'error'), `refusal of ${label}`);
       await sleep(100);
@@ -712,19 +721,18 @@ describe('the command guard', () => {
     await waitFor(() => panel.players.length > 0, 'players to arrive');
 
     const cases = [
-      ['a single unknown player', 'players/cmd/volume_set', { player_id: 'nope', volume_level: 50 }],
+      ['a single unknown player', { verb: 'volume', player: 'nope', level: 50 }],
       [
         'an unknown player inside a group',
-        'players/cmd/set_members',
-        { player_id: 'kitchen', child_player_ids: ['living', 'nope'] },
+        { verb: 'group', player: 'kitchen', members: ['living', 'nope'] },
       ],
-      ['an unknown queue', 'player_queues/clear', { queue_id: 'nope' }],
+      ['an unknown player on a queue command', { verb: 'queueClear', player: 'nope' }],
     ];
 
-    for (const [label, command, args] of cases) {
+    for (const [label, cmd] of cases) {
       const before = ctx.mass.commands.length;
       const mark = panel.messageCount;
-      panel.mass(command, args);
+      panel.music(cmd);
 
       await waitFor(() => panel.since(mark).find((m) => m.t === 'error'), `refusal of ${label}`);
       await sleep(100);
@@ -755,7 +763,7 @@ describe('the command guard', () => {
     ]) {
       const before = ctx.mass.commands.length;
       const mark = panel.messageCount;
-      panel.mass('player_queues/play_media', { queue_id: 'kitchen', media });
+      panel.music({ verb: 'playItem', player: 'kitchen', item: media, enqueue: 'replace' });
 
       await waitFor(
         () => panel.since(mark).find((m) => m.t === 'error'),
@@ -772,19 +780,20 @@ describe('the command guard', () => {
     panel.close();
   });
 
-  test('forwards a legitimate command, with unknown arguments dropped', async () => {
+  test('forwards a legitimate verb, with invented fields dropped', async () => {
     const panel = new TestPanel(ctx.port);
     await panel.connect();
     await waitFor(() => panel.players.length > 0, 'players to arrive');
 
     const before = ctx.mass.commands.length;
-    panel.mass('player_queues/play_media', {
-      queue_id: 'kitchen',
-      media: 'library://album/7',
-      option: 'replace',
-      // Not on the argument allow-list. Music Assistant ignores unknown
-      // arguments rather than rejecting them, so an unfiltered pass-through
-      // would hand it whatever a compromised panel invented.
+    panel.music({
+      verb: 'playItem',
+      player: 'kitchen',
+      item: 'library://album/7',
+      enqueue: 'replace',
+      // Not part of the verb. Music Assistant ignores unknown arguments rather
+      // than rejecting them, so anything that leaked through would be handed
+      // straight to it.
       evil: true,
       user: 'someone-else',
     });
@@ -795,8 +804,8 @@ describe('the command guard', () => {
     );
     assert.equal(sent.command, 'player_queues/play_media');
     assert.equal(sent.args.media, 'library://album/7');
-    assert.ok(!('evil' in sent.args), 'unknown arguments must be dropped');
-    assert.ok(!('user' in sent.args), 'unknown arguments must be dropped');
+    assert.ok(!('evil' in sent.args), 'invented fields must not survive translation');
+    assert.ok(!('user' in sent.args), 'invented fields must not survive translation');
 
     panel.close();
   });
@@ -807,11 +816,11 @@ describe('the command guard', () => {
     await waitFor(() => panel.players.length > 0, 'players to arrive');
 
     const mark = panel.messageCount;
-    panel.mass('players/cmd/volume_set', { player_id: 'kitchen', volume_level: 900 });
+    panel.music({ verb: 'volume', player: 'kitchen', level: 900 });
     await waitFor(() => panel.since(mark).find((m) => m.t === 'error'), 'refusal of 900%');
 
     const before = ctx.mass.commands.length;
-    panel.mass('players/cmd/volume_set', { player_id: 'kitchen', volume_level: 42.6 });
+    panel.music({ verb: 'volume', player: 'kitchen', level: 42.6 });
     const sent = await waitFor(() => ctx.mass.commands.slice(before)[0], 'the volume command');
     assert.equal(sent.args.volume_level, 43, 'Music Assistant wants an integer');
 

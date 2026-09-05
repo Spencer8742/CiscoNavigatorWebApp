@@ -105,6 +105,23 @@ export class SonosClient {
   }
 
   /**
+   * Take a `ZoneGroupState` document straight from an event.
+   *
+   * A topology event already carries the whole household, so asking for it
+   * again would be a round trip to learn what we were just told. Returns
+   * false when the document is unusable, so a malformed event cannot empty
+   * the player list.
+   */
+  adoptTopology(xml: string): boolean {
+    const household = parseZoneGroupState(xml);
+    if (household.zones.size === 0) return false;
+
+    const via = this.#candidates[0] ?? household.hosts[0] ?? '';
+    this.#adopt(household, via);
+    return true;
+  }
+
+  /**
    * Re-read the household.
    *
    * Also the liveness check: this is the call whose success defines

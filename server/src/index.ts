@@ -20,12 +20,15 @@ import { MassCommands } from '~/mass/commands.ts';
 import { MassBrowser } from '~/mass/browse.ts';
 import { SonosClient } from '~/sonos/client.ts';
 import { SonosStore } from '~/sonos/store.ts';
+import { SonosEvents } from '~/sonos/events.ts';
+import { SonosCommands } from '~/sonos/commands.ts';
 import { CastKeeper } from '~/cast/keeper.ts';
 import { Controls } from '~/controls/index.ts';
 import { PrefsStore } from '~/config/prefs.ts';
 import { ImmichClient } from '~/immich/client.ts';
 import { ImmichImages } from '~/immich/images.ts';
 import { Playlist } from '~/immich/playlist.ts';
+import { MUSIC_VERBS } from '@shared/protocol.ts';
 import type { BackendHealth, MassPlayer, MassQueue } from '@shared/protocol.ts';
 
 const log = logger('server');
@@ -136,6 +139,9 @@ async function main(): Promise<void> {
   /** Pending "we have genuinely lost touch" timer. See onStateChange below. */
   let unavailableTimer: ReturnType<typeof setTimeout> | undefined;
 
+  /** Set when Sonos subscriptions exist but no event has ever arrived. */
+  let sonosSilence: string | null = null;
+
   const getHealth = (): BackendHealth => ({
     ha: env.ha.enabled ? haClient.state : 'disconnected',
     immich: env.immich.enabled ? (immichReachable ? 'connected' : 'disconnected') : 'disconnected',
@@ -143,7 +149,9 @@ async function main(): Promise<void> {
     mass: env.mass.enabled ? massClient.state : 'disabled',
     massError: env.mass.enabled ? massClient.lastError : null,
     sonos: env.sonos.enabled ? sonosClient.state : 'disabled',
-    sonosError: env.sonos.enabled ? sonosClient.lastError : null,
+    // A household we can reach but whose events never arrive is a specific,
+    // actionable problem, and it outranks a stale connection error.
+    sonosError: env.sonos.enabled ? (sonosSilence ?? sonosClient.lastError) : null,
     haLastMessage: haClient.lastMessageAt ? new Date(haClient.lastMessageAt).toISOString() : null,
     uptime: Math.floor((Date.now() - STARTED_AT) / 1000),
     version: VERSION,
@@ -268,16 +276,41 @@ async function main(): Promise<void> {
     },
   });
 
+  /*
+   * Event subscriptions. This is the only upstream in the app that connects
+   * INWARD: a speaker POSTs NOTIFY to a callback URL we hand it, which is why
+   * there is an unauthenticated route below and why the callback address has
+   * to be one the speakers can actually reach.
+   */
+  const sonosEvents = new SonosEvents({
+    onEvent: (event) => void sonosStore.applyEvent(event),
+
+    onSilence(message) {
+      // Subscribed, but nothing is arriving — almost always Docker bridge
+      // networking. Commands still work, so without saying this the panel
+      // just goes stale and looks frozen.
+      log.warn(message);
+      sonosSilence = message;
+      hub.broadcastHealth(getHealth());
+    },
+
+    callbackHost: env.sonos.callbackHost,
+    port: env.port,
+  });
+
   const sonosStore = new SonosStore({
     client: sonosClient,
+    events: sonosEvents,
     art: mediaArt,
-    events: {
+    listeners: {
       onChange() {
         hub.broadcastPlayers(...musicSnapshot());
       },
     },
     hasPanels: () => hub.panelCount > 0,
   });
+
+  const sonosCommands = new SonosCommands(sonosClient, sonosStore);
 
   /**
    * Every speaker, from both sources.
@@ -318,7 +351,24 @@ async function main(): Promise<void> {
       const [players, queues] = musicSnapshot();
       return { players, queues };
     },
-    onMassCommand: (command, args) => massCommands.run(command, args),
+
+    /*
+     * One verb, two possible destinations. Routing on the player id rather
+     * than asking the panel to choose is what keeps the panel ignorant of
+     * which music system owns which speaker — and what makes phase 6 a
+     * deletion of the second branch rather than a change to the first.
+     */
+    onMusic: async (cmd) => {
+      // The union is exhaustive in our code; this is about what arrives on a
+      // socket from a device anyone in the room can touch.
+      if (!cmd || typeof cmd.player !== 'string' || !MUSIC_VERBS.includes(cmd.verb)) {
+        log.warn(`Refused music command: "${String(cmd?.verb)}" is not a verb`);
+        return 'Not permitted';
+      }
+      if (sonosStore.hasPlayer(cmd.player)) return sonosCommands.run(cmd);
+      return massCommands.runVerb(cmd);
+    },
+
     onBrowse: (req) => massBrowser.browse(req),
 
     getKeyLights: () => controls.snapshot(),
@@ -406,6 +456,20 @@ async function main(): Promise<void> {
     const q = rawUrl.indexOf('?');
     const query = new URLSearchParams(q === -1 ? '' : rawUrl.slice(q + 1));
     applySecurityHeaders(res, query.get('cast') === '1');
+
+    /*
+     * Sonos events, and the ONE route in this app that is neither GET nor
+     * authenticated — both by necessity. A speaker POSTs `NOTIFY` here when
+     * something changes and has nowhere to put a bearer token, so the checks
+     * that replace one live in sonos/events.ts: a per-boot secret in the path
+     * (which is why this is matched before the method check rather than after
+     * a 405), the source address having to be a household member, and the SID
+     * having to name a subscription this process created.
+     */
+    if (req.method === 'NOTIFY' && path === sonosEvents.path) {
+      sonosEvents.handle(req, res);
+      return;
+    }
 
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.writeHead(405, { allow: 'GET, HEAD' });
@@ -583,6 +647,11 @@ async function main(): Promise<void> {
     massStore.dispose();
     sonosClient.stop();
     sonosStore.dispose();
+    // Tear the subscriptions down rather than letting them lapse. A speaker
+    // whose subscriber vanished keeps POSTing at a dead endpoint until the
+    // subscription ages out, and a container that restarts a few times a day
+    // accumulates those — Home Assistant has a filed bug for exactly this.
+    void sonosEvents.stop();
     castKeeper.stop();
     controls.stop();
     hub.close();

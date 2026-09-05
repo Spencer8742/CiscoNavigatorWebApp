@@ -1,18 +1,23 @@
 # Sonos: direct integration
 
-**Status: phase 1 is built and shipping. Phases 2 onward are still a plan.**
+**Status: phases 1–3 are built and shipping. Phase 4 onward is still a plan.**
 
 | Phase | | |
 |---|---|---|
 | 1 | Topology — the household, read-only | ✅ |
-| 2 | Events — GENA, no more polling | ⬜ |
-| 3 | Control — transport, volume, grouping | ⬜ |
+| 2 | Events — GENA, no more polling | ✅ |
+| 3 | Control — transport, volume, grouping | ✅ |
 | 4 | Browse — favourites, playlists, library, queue | ⬜ |
 | 5 | Spotify search | ⬜ |
 | 6 | Cut over — delete `mass/`, rename the types | ⬜ |
 | 7–8 | SMAPI and play history *(optional)* | ⬜ |
 
-What phase 1 delivers, and what it deliberately does not, is in §15.
+Sonos is now a working remote control: rooms, groups, live state, transport,
+volume, seek, shuffle, repeat and grouping. **What it is not yet is a music
+browser** — nothing can start something that is not already playing or queued,
+because that needs somewhere to browse from. That is phase 4.
+
+What each built phase delivered, and what it deliberately did not, is in §15.
 
 The goal, stated as the decision it is: **Sonos becomes the music system this
 panel talks to, and Music Assistant is removed.** The backend speaks the local
@@ -681,6 +686,52 @@ what catches a store that reads one speaker and reports it for all of them.
 **Still inert in phase 1:** the transport buttons on a Sonos player. They send
 commands the backend has no handler for and will report "Not permitted" — which
 is honest, and fixed by phase 3.
+
+### What phases 2 and 3 actually built
+
+**The panel stopped sending command names.** `t: 'mass'` carried a Music
+Assistant command string straight through; it is now `t: 'music'` carrying one
+of twenty verbs, and the backend routes by player id. Two consequences, and the
+second was not in the plan:
+
+- The panel no longer knows which music system owns a speaker, which is what
+  lets both run at once and makes phase 6 a deletion.
+- **The guard got stronger.** With a command name on the wire the safety
+  property is "the allow-list is complete" — something that can be overlooked
+  into being false. With a verb it is "no other action exists", which cannot.
+  `mass/commands.ts` gains a `runVerb` translating back; that function is
+  throwaway and dies with the file in phase 6.
+
+**Transport is routed to the coordinator, not refused.** Phase 3's acceptance
+criterion said a transport command aimed at a follower should be *refused*.
+Routing is the better answer: the panel legitimately shows a follower, and its
+buttons should work rather than explain themselves. The failure being designed
+out — `Play` on a grouped follower is accepted by Sonos and silently does
+nothing — is avoided either way, and a test asserts the command physically
+arrived at the coordinator's address.
+
+**The reconcile timer is not the poll wearing a hat.** Phase 1's five-second
+poll is gone. What remains is a five-minute reconciliation, gated on a panel
+being connected, and it exists for one case renewal does not cover: a single
+dropped `NOTIFY` leaves one value wrong with nothing to correct it. If it is
+ever doing real work, events are not arriving and something is misconfigured.
+
+**Subscriptions are shaped by the topology, not the speaker list.** Volume is
+per speaker so every zone gets a `RenderingControl` subscription; transport is
+per group so only coordinators get `AVTransport`. Grouping a speaker elsewhere
+drops its transport subscription — properly, with `UNSUBSCRIBE`, rather than
+letting it lapse.
+
+**The inbound route landed as designed**, with all three guards: a per-boot
+secret in the path, a source address that must be a household member, and a SID
+that must name a subscription this process created. It is matched *before* the
+method check, so an unknown path gets the same 405 as any other non-GET rather
+than revealing that a NOTIFY route exists.
+
+**Still absent after phase 3:** anything that starts new music. `playItem`,
+`favorite` and the queue-editing verbs answer "not available yet" on a Sonos
+player, because there is nowhere to browse from until phase 4. They work
+normally on a Music Assistant player.
 
 ---
 

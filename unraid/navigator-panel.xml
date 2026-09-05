@@ -134,6 +134,17 @@
     Mask="false"/>
 
   <Config
+    Name="Sonos Callback Host"
+    Target="SONOS_CALLBACK_HOST"
+    Default=""
+    Mode=""
+    Description="Where Sonos speakers should send live updates. Sonos pushes changes rather than being polled, which means the speakers connect INWARD to this container - the only service here that does. On Unraid's default bridge network they cannot reach the container's own address, so set this to your Unraid server's LAN IP (for example 192.168.1.20). Leave empty on host networking. If events never arrive, the panel says so on its Settings screen rather than quietly showing stale volumes."
+    Type="Variable"
+    Display="always"
+    Required="false"
+    Mask="false"/>
+
+  <Config
     Name="Sonos Discovery"
     Target="SONOS_DISCOVERY"
     Default="0"

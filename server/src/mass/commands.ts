@@ -1,6 +1,7 @@
 import { logger } from '~/lib/log.ts';
 import type { MassClient } from '~/mass/client.ts';
 import type { MassStore } from '~/mass/store.ts';
+import type { MusicCommand } from '@shared/protocol.ts';
 
 const log = logger('mass-cmd');
 
@@ -154,6 +155,145 @@ export class MassCommands {
   constructor(client: MassClient, store: MassStore) {
     this.#client = client;
     this.#store = store;
+  }
+
+  /**
+   * Perform one of the panel's verbs.
+   *
+   * The panel stopped sending Music Assistant command names when Sonos arrived
+   * — it names a player and an intention, and the backend routes. This is the
+   * translation back, and it is **deliberately throwaway**: `docs/SONOS.md`
+   * phase 6 deletes this file along with the rest of `mass/`, at which point
+   * the verbs go straight to Sonos and nothing has to be rewritten.
+   *
+   * Everything still funnels through `run()`, so the allow-list, the id checks
+   * and the URI rules below apply exactly as before.
+   */
+  runVerb(cmd: MusicCommand): string | null {
+    if (!this.#client.enabled) return 'Music Assistant is not configured';
+
+    /*
+     * Check the player FIRST.
+     *
+     * Several verbs below fall back to doing nothing when the player has no
+     * queue, which is right for a speaker playing a physical input and wrong
+     * for a player id that does not exist — that would turn an attempt to
+     * reach past the allow-list into a silent success, which is
+     * indistinguishable from a command that worked.
+     */
+    if (!this.#store.hasPlayer(cmd.player)) {
+      log.warn(`Refused ${cmd.verb}: "${cmd.player}" is not a known player`);
+      return 'Not permitted';
+    }
+
+    // Most commands act on the queue when Music Assistant is the source, and
+    // the player only when it is not. `run()` re-validates whichever we choose.
+    const queue = this.#store.snapshot().players.find((p) => p.id === cmd.player)?.queueId ?? null;
+
+    const onQueue = (command: string, args: Record<string, unknown> = {}): string | null =>
+      queue
+        ? this.run(`player_queues/${command}`, { queue_id: queue, ...args })
+        : this.run(`players/cmd/${command}`, { player_id: cmd.player });
+
+    /** For the verbs that only exist on a queue. */
+    const needsQueue = (fn: (id: string) => string | null): string | null =>
+      queue ? fn(queue) : 'That speaker has no queue';
+
+    switch (cmd.verb) {
+      case 'playPause':
+        return onQueue('play_pause');
+      case 'play':
+        return onQueue('play');
+      case 'pause':
+        return onQueue('pause');
+      case 'stop':
+        return onQueue('stop');
+      case 'next':
+        return onQueue('next');
+      case 'previous':
+        return onQueue('previous');
+
+      case 'seek':
+        return needsQueue((id) =>
+          this.run('player_queues/seek', {
+            queue_id: id,
+            position: Math.max(0, Math.round(cmd.seconds)),
+          }),
+        );
+
+      case 'volume':
+        return this.run('players/cmd/volume_set', {
+          player_id: cmd.player,
+          volume_level: cmd.level,
+        });
+
+      case 'mute':
+        return this.run('players/cmd/volume_mute', { player_id: cmd.player, muted: cmd.muted });
+
+      case 'power':
+        return this.run('players/cmd/power', { player_id: cmd.player, powered: cmd.on });
+
+      case 'shuffle':
+        return needsQueue((id) =>
+          this.run('player_queues/shuffle', { queue_id: id, shuffle_enabled: cmd.on }),
+        );
+
+      case 'repeat':
+        return needsQueue((id) =>
+          this.run('player_queues/repeat', { queue_id: id, repeat_mode: cmd.mode }),
+        );
+
+      case 'group':
+        return this.run('players/cmd/set_members', {
+          player_id: cmd.player,
+          // The leader is implied by the target, and Music Assistant rejects a
+          // group that names itself as its own child.
+          child_player_ids: Array.isArray(cmd.members)
+            ? cmd.members.filter((id) => id !== cmd.player)
+            : cmd.members,
+        });
+
+      case 'ungroup':
+        return this.run('players/cmd/ungroup', { player_id: cmd.player });
+
+      case 'playItem':
+        return this.run('player_queues/play_media', {
+          // A player's default queue shares its id, which is the fallback when
+          // Music Assistant has not named one.
+          queue_id: queue ?? cmd.player,
+          media: cmd.item,
+          option: cmd.enqueue,
+          ...(cmd.radio ? { radio_mode: true } : {}),
+        });
+
+      case 'queueJump':
+        return needsQueue((id) =>
+          this.run('player_queues/play_index', { queue_id: id, index: cmd.index }),
+        );
+
+      case 'queueMove':
+        return needsQueue((id) =>
+          this.run('player_queues/move_item', {
+            queue_id: id,
+            queue_item_id: cmd.item,
+            pos_shift: cmd.by,
+          }),
+        );
+
+      case 'queueRemove':
+        return needsQueue((id) =>
+          this.run('player_queues/delete_item', { queue_id: id, item_id_or_index: cmd.item }),
+        );
+
+      case 'queueClear':
+        return needsQueue((id) => this.run('player_queues/clear', { queue_id: id }));
+
+      case 'favorite':
+        return this.run(
+          cmd.on ? 'music/favorites/add_item' : 'music/favorites/remove_item',
+          { item: cmd.item },
+        );
+    }
   }
 
   /**

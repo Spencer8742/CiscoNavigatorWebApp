@@ -236,7 +236,7 @@ already in this repository. `--dry-run` prints the XML without sending it.
 | 10 | Failure hardening | ⬜ |
 | 11 | Performance pass on-device | ⬜ |
 | 12 | Deployment polish | 🟡 CI, GHCR images, Unraid template and the device provisioning script done |
-| 13 | Sonos direct — replaces Music Assistant | 🟡 phase 1 of 6 done: the household, read-only. [`docs/SONOS.md`](docs/SONOS.md) |
+| 13 | Sonos direct — replaces Music Assistant | 🟡 phases 1–3 of 6: live state and full control; browsing next. [`docs/SONOS.md`](docs/SONOS.md) |
 
 Each phase is verified working before the next begins.
 

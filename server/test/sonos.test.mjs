@@ -224,7 +224,7 @@ describe('Sonos value conventions', () => {
 
 /* ── The panel's view ─────────────────────────────────────────────────────*/
 
-/** A panel: connects and records what it is told. */
+/** A panel: connects, records what it is told, and can drive a speaker. */
 class TestPanel {
   #seq = 900;
 
@@ -233,6 +233,19 @@ class TestPanel {
     this.players = [];
     this.queues = [];
     this.health = null;
+    this.messages = [];
+  }
+
+  music(cmd) {
+    this.ws.send(JSON.stringify({ t: 'music', id: (this.#seq += 1), cmd }));
+  }
+
+  get messageCount() {
+    return this.messages.length;
+  }
+
+  since(i) {
+    return this.messages.slice(i);
   }
 
   async connect() {
@@ -240,6 +253,7 @@ class TestPanel {
 
     this.ws.on('message', (data) => {
       const msg = JSON.parse(data.toString());
+      this.messages.push(msg);
       if (msg.t === 'hello') {
         this.health = msg.health;
         this.players = msg.players;
@@ -357,7 +371,12 @@ describe('speakers from Sonos', () => {
   test('each speaker is read at its own address', async () => {
     const panel = new TestPanel(ctx.port);
     await panel.connect();
-    await waitFor(() => panel.player('RINCON_LIVING')?.volume !== null, 'volumes');
+    // Every volume, not just the first: waiting on one speaker made this pass
+    // or fail depending on the order four concurrent reads happened to finish.
+    await waitFor(
+      () => panel.players.length === 4 && panel.players.every((p) => p.volume !== null),
+      'every volume',
+    );
 
     assert.equal(panel.player('RINCON_LIVING').volume, 35);
     assert.equal(panel.player('RINCON_KITCHEN').volume, 18);
@@ -462,39 +481,401 @@ describe('speakers from Sonos', () => {
     panel.close();
   });
 
-  test('a volume changed elsewhere reaches the panel', async () => {
+  test('every zone can be grouped with every other, and none has power', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    const all = panel.players.map((p) => p.id).sort();
+    for (const player of panel.players) {
+      // Sonos groups anything with anything, so this is every OTHER zone.
+      assert.deepEqual(
+        [...player.canGroupWith].sort(),
+        all.filter((id) => id !== player.id),
+      );
+      assert.equal(player.powered, null, 'Sonos speakers have no power concept');
+    }
+
+    panel.close();
+  });
+});
+
+/* ── Phase 2: events ──────────────────────────────────────────────────────*/
+
+describe('live updates', () => {
+  const ctx = isolated();
+
+  test('subscribes to the right services on the right speakers', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+    await waitFor(() => ctx.sonos.liveSubscriptions.length >= 6, 'subscriptions');
+
+    const live = ctx.sonos.liveSubscriptions;
+    const on = (service) => live.filter((s) => s.service === service).map((s) => s.uuid).sort();
+
+    // Volume is per speaker, so every visible zone gets one.
+    assert.deepEqual(on('RenderingControl'), [
+      'RINCON_BEDROOM',
+      'RINCON_KITCHEN',
+      'RINCON_LIVING',
+      'RINCON_STUDY',
+    ]);
+
+    // Transport is per GROUP. The Kitchen is a follower, and its own
+    // AVTransport would report STOPPED while it is audibly playing — so
+    // subscribing to it would deliver a stream of confidently wrong states.
+    assert.deepEqual(on('AVTransport'), ['RINCON_BEDROOM', 'RINCON_LIVING', 'RINCON_STUDY']);
+
+    // Topology is household-wide; one subscription serves it.
+    assert.equal(on('ZoneGroupTopology').length, 1);
+
+    panel.close();
+  });
+
+  test('a volume changed in the Sonos app arrives without being asked for', async () => {
     const panel = new TestPanel(ctx.port);
     await panel.connect();
     await waitFor(() => panel.player('RINCON_BEDROOM')?.volume === 8, 'the starting volume');
 
-    // As if somebody turned it up in the Sonos app.
-    ctx.sonos.set('RINCON_BEDROOM', { volume: 42 });
+    const soapBefore = ctx.sonos.calls.length;
+    await ctx.sonos.set('RINCON_BEDROOM', { volume: 42, mute: true });
 
-    // Phase 1 polls for this; phase 2 replaces the poll with GENA events and
-    // this assertion should then pass in milliseconds rather than seconds.
+    // Two seconds, not the fifteen phase 1's poll needed. If this ever starts
+    // taking longer, the push path has broken and something is polling again.
     await waitFor(
       () => panel.player('RINCON_BEDROOM')?.volume === 42,
-      'the new volume to be noticed',
-      15_000,
+      'the new volume to be pushed',
+      2000,
+    );
+    assert.equal(panel.player('RINCON_BEDROOM').muted, true);
+
+    // And it cost no request of ours: the speaker volunteered it.
+    assert.equal(
+      ctx.sonos.calls.length,
+      soapBefore,
+      'a pushed change must not trigger a read back',
     );
 
     panel.close();
   });
 
-  /*
-   * Phase 1 is read-only, and says so in the data rather than only in a
-   * document. `canGroupWith` empty means the panel draws no "Playing on" bar,
-   * so there is no button that sends a command nothing yet handles.
+  test('a track change pushes the new track and re-anchors the position', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.player('RINCON_LIVING')?.media !== null, 'media');
+
+    await ctx.sonos.set('RINCON_LIVING', {
+      trackNo: 4,
+      duration: '0:03:30',
+      relTime: '0:00:02',
+      track: { title: 'Black Dog', creator: 'Led Zeppelin', album: 'Led Zeppelin IV' },
+    });
+
+    await waitFor(
+      () => panel.player('RINCON_LIVING')?.media?.title === 'Black Dog',
+      'the new track to be pushed',
+      3000,
+    );
+
+    /*
+     * The event carries the duration but never the position, so the backend
+     * follows it with one GetPositionInfo. Without that the panel would
+     * extrapolate from the PREVIOUS track's offset and draw a bar that starts
+     * a minute in.
+     */
+    await waitFor(
+      () => panel.player('RINCON_LIVING')?.media?.elapsed === 2,
+      'the position to be re-anchored',
+      3000,
+    );
+    assert.equal(panel.player('RINCON_LIVING').media.duration, 210);
+
+    panel.close();
+  });
+
+  test('grouping done elsewhere re-shapes the subscriptions', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+    await waitFor(() => ctx.sonos.liveSubscriptions.length >= 6, 'subscriptions');
+
+    // As if somebody grouped the Study into the Living Room in the Sonos app.
+    await ctx.sonos.regroup('RINCON_STUDY', 'RINCON_LIVING');
+
+    await waitFor(
+      () => panel.player('RINCON_STUDY')?.syncedTo === 'RINCON_LIVING',
+      'the new grouping to be pushed',
+      3000,
+    );
+
+    // Its transport subscription has to go: the coordinator speaks for it now.
+    await waitFor(
+      () =>
+        !ctx.sonos.liveSubscriptions.some(
+          (s) => s.uuid === 'RINCON_STUDY' && s.service === 'AVTransport',
+        ),
+      'the follower’s transport subscription to be dropped',
+      3000,
+    );
+
+    // And it must be dropped properly rather than left to lapse — a speaker
+    // whose subscriber vanished keeps POSTing at a dead endpoint.
+    assert.ok(
+      ctx.sonos.subscriptions.some(
+        (s) => s.method === 'UNSUBSCRIBE' && s.uuid === 'RINCON_STUDY',
+      ),
+      'the subscription must be torn down, not abandoned',
+    );
+
+    panel.close();
+  });
+
+  test('refuses a NOTIFY it cannot account for', async () => {
+    // The route carries no bearer token — a speaker has nowhere to put one —
+    // so these three checks are what stand in for one.
+    const base = `http://127.0.0.1:${ctx.port}`;
+    const body =
+      '<e:propertyset xmlns:e="urn:schemas-upnp-org:event-1-0">' +
+      '<e:property><LastChange>x</LastChange></e:property></e:propertyset>';
+
+    // A guessed path.
+    const wrongPath = await fetch(`${base}/sonos/event/deadbeef`, {
+      method: 'NOTIFY',
+      headers: { sid: 'uuid:whatever' },
+      body,
+    });
+    assert.equal(wrongPath.status, 405, 'an unknown path is not even a NOTIFY route');
+
+    // The real path is a per-boot secret we cannot know from here, so the
+    // remaining guard worth reaching from outside is the method policy: no
+    // other route in this app accepts anything but GET or HEAD.
+    const post = await fetch(`${base}/api/config`, { method: 'POST', body });
+    assert.equal(post.status, 405);
+  });
+});
+
+/* ── Phase 3: control ─────────────────────────────────────────────────────*/
+
+/**
+ * Actions that CHANGE something, as opposed to reading it.
+ *
+ * The distinction matters for refusal tests: the store re-reads state in the
+ * background whenever the topology shifts, so "nothing arrived at all" is not
+ * a property a refusal can have. "Nothing was done" is.
+ */
+const COMMAND_ACTIONS = new Set([
+  'Play',
+  'Pause',
+  'Stop',
+  'Next',
+  'Previous',
+  'Seek',
+  'SetPlayMode',
+  'SetAVTransportURI',
+  'BecomeCoordinatorOfStandaloneGroup',
+  'SetVolume',
+  'SetMute',
+]);
+
+describe('driving the speakers', () => {
+  const ctx = isolated();
+
+  /**
+   * The single most common Sonos integration bug.
+   *
+   * `Play` sent to a grouped follower is accepted and does nothing. Nothing
+   * errors, nothing logs, the music just fails to start — so this asserts the
+   * command physically arrived at the coordinator's address.
    */
-  test('advertises no capability it cannot yet honour', async () => {
+  test('transport goes to the coordinator, volume to the speaker', async () => {
     const panel = new TestPanel(ctx.port);
     await panel.connect();
     await waitFor(() => panel.players.length > 0, 'players');
 
-    for (const player of panel.players) {
-      assert.deepEqual(player.canGroupWith, [], 'grouping arrives in phase 3');
-      assert.equal(player.powered, null, 'Sonos speakers have no power concept');
+    const before = ctx.sonos.calls.length;
+    // The Kitchen is a follower of the Living Room.
+    panel.music({ verb: 'next', player: 'RINCON_KITCHEN' });
+
+    const call = await waitFor(
+      () => ctx.sonos.calls.slice(before).find((c) => c.action === 'Next'),
+      'the skip to arrive',
+    );
+    assert.equal(call.uuid, 'RINCON_LIVING', 'transport belongs to the coordinator');
+
+    const volumeBefore = ctx.sonos.calls.length;
+    panel.music({ verb: 'volume', player: 'RINCON_KITCHEN', level: 27 });
+
+    const setVolume = await waitFor(
+      () => ctx.sonos.calls.slice(volumeBefore).find((c) => c.action === 'SetVolume'),
+      'the volume to arrive',
+    );
+    assert.equal(setVolume.uuid, 'RINCON_KITCHEN', 'volume belongs to the speaker itself');
+    assert.equal(setVolume.args.DesiredVolume, '27');
+    assert.equal(setVolume.args.Channel, 'Master');
+
+    panel.close();
+  });
+
+  test('play, pause, seek and mute reach the speaker in Sonos’s own vocabulary', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    const before = ctx.sonos.calls.length;
+    // The Bedroom is PAUSED_PLAYBACK in the fixture, so this must resolve to
+    // Play rather than Pause — the store already knows, so it costs no round
+    // trip to the speaker.
+    panel.music({ verb: 'playPause', player: 'RINCON_BEDROOM' });
+    await waitFor(
+      () => ctx.sonos.calls.slice(before).find((c) => c.action === 'Play'),
+      'play to arrive',
+    );
+
+    const seekBefore = ctx.sonos.calls.length;
+    panel.music({ verb: 'seek', player: 'RINCON_BEDROOM', seconds: 95 });
+    const seek = await waitFor(
+      () => ctx.sonos.calls.slice(seekBefore).find((c) => c.action === 'Seek'),
+      'seek to arrive',
+    );
+    // Sonos accepts H:MM:SS and nothing else.
+    assert.equal(seek.args.Target, '0:01:35');
+    assert.equal(seek.args.Unit, 'REL_TIME');
+
+    const muteBefore = ctx.sonos.calls.length;
+    panel.music({ verb: 'mute', player: 'RINCON_BEDROOM', muted: true });
+    const mute = await waitFor(
+      () => ctx.sonos.calls.slice(muteBefore).find((c) => c.action === 'SetMute'),
+      'mute to arrive',
+    );
+    // Sonos writes booleans as 1/0, never true/false.
+    assert.equal(mute.args.DesiredMute, '1');
+
+    panel.close();
+  });
+
+  /*
+   * Sonos folds shuffle and repeat into ONE setting, so changing either means
+   * sending the combination. `SHUFFLE` means shuffle AND repeat-all;
+   * `SHUFFLE_NOREPEAT` is the one that means what it says.
+   */
+  test('shuffle and repeat are sent as the one setting Sonos has', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.queues.length > 0, 'queues');
+
+    // The Bedroom starts SHUFFLE_NOREPEAT: shuffle on, repeat off.
+    assert.equal(panel.queue('RINCON_BEDROOM').shuffle, true);
+    assert.equal(panel.queue('RINCON_BEDROOM').repeat, 'off');
+
+    const before = ctx.sonos.calls.length;
+    panel.music({ verb: 'repeat', player: 'RINCON_BEDROOM', mode: 'all' });
+
+    const call = await waitFor(
+      () => ctx.sonos.calls.slice(before).find((c) => c.action === 'SetPlayMode'),
+      'the play mode to arrive',
+    );
+    // Shuffle was already on, so turning repeat to "all" is SHUFFLE — not
+    // REPEAT_ALL, which would silently turn shuffle off.
+    assert.equal(call.args.NewPlayMode, 'SHUFFLE');
+
+    panel.close();
+  });
+
+  test('grouping joins with an x-rincon URI and leaves by standing alone', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    const before = ctx.sonos.calls.length;
+    // Living Room currently leads the Kitchen. Set it to lead the Study
+    // instead: one join, one departure, from a single absolute instruction.
+    panel.music({
+      verb: 'group',
+      player: 'RINCON_LIVING',
+      members: ['RINCON_LIVING', 'RINCON_STUDY'],
+    });
+
+    const join = await waitFor(
+      () => ctx.sonos.calls.slice(before).find((c) => c.action === 'SetAVTransportURI'),
+      'the join to arrive',
+    );
+    assert.equal(join.uuid, 'RINCON_STUDY', 'the JOINER is told to follow');
+    assert.equal(join.args.CurrentURI, 'x-rincon:RINCON_LIVING');
+
+    const leave = await waitFor(
+      () =>
+        ctx.sonos.calls
+          .slice(before)
+          .find((c) => c.action === 'BecomeCoordinatorOfStandaloneGroup'),
+      'the departure to arrive',
+    );
+    assert.equal(leave.uuid, 'RINCON_KITCHEN', 'the speaker being dropped stands alone');
+
+    panel.close();
+  });
+
+  test('refuses a zone it was never shown, and anything that is not a verb', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    const cases = [
+      ['an unknown zone', { verb: 'volume', player: 'RINCON_NOPE', level: 50 }],
+      [
+        'an unknown zone inside a group',
+        { verb: 'group', player: 'RINCON_LIVING', members: ['RINCON_NOPE'] },
+      ],
+      ['a volume out of range', { verb: 'volume', player: 'RINCON_LIVING', level: 900 }],
+      ['a negative seek', { verb: 'seek', player: 'RINCON_LIVING', seconds: -5 }],
+      // There is no SOAP action name on the wire to be permitted or refused —
+      // reaching one would mean this repository had written a verb for it.
+      ['a SOAP action name', { verb: 'SetZoneAttributes', player: 'RINCON_LIVING' }],
+      ['a made-up verb', { verb: 'explode', player: 'RINCON_LIVING' }],
+    ];
+
+    for (const [label, cmd] of cases) {
+      const before = ctx.sonos.calls.length;
+      const mark = panel.messageCount;
+      panel.music(cmd);
+
+      await waitFor(() => panel.since(mark).find((m) => m.t === 'error'), `refusal of ${label}`);
+      await sleep(80);
+
+      // Counts COMMANDS, not reads: the store legitimately re-reads state in
+      // the background after a topology change, and a refusal is about
+      // nothing being *done*, not about the backend going quiet.
+      const sent = ctx.sonos.calls.slice(before).filter((c) => COMMAND_ACTIONS.has(c.action));
+      assert.deepEqual(
+        sent.map((c) => c.action),
+        [],
+        `${label} must not reach a speaker`,
+      );
     }
+
+    panel.close();
+  });
+
+  test('says plainly that browsing is not built yet', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    const mark = panel.messageCount;
+    panel.music({
+      verb: 'playItem',
+      player: 'RINCON_LIVING',
+      item: 'library://album/7',
+      enqueue: 'replace',
+    });
+
+    const error = await waitFor(
+      () => panel.since(mark).find((m) => m.t === 'error'),
+      'the refusal',
+    );
+    // Not "Not permitted": this is an absence, not a rejection, and the
+    // difference is what stops somebody debugging a guard that is fine.
+    assert.match(error.message, /next phase/i);
 
     panel.close();
   });
