@@ -183,20 +183,32 @@ export class SmapiClient {
    * just mint.
    */
   async beginLink(): Promise<{ prompt: LinkPrompt; linkCode: string }> {
+    /*
+     * TWO calls, one for each of Sonos's linking policies.
+     *
+     * `AppLink` is the newer one and answers `getAppLink`; `DeviceLink`
+     * answers `getDeviceLinkCode`. Sending the wrong one gets a fault, so a
+     * service that advertised `AppLink` could never be connected while this
+     * only ever asked for a device link code.
+     *
+     * What comes back is the same three fields either way — `getAppLink`
+     * simply wraps them in `authorizeAccount/deviceLink` — so the fields are
+     * looked up by name anywhere in the reply rather than at a fixed path.
+     */
+    const appLink = this.#service.auth === 'AppLink';
     const result = await this.#call(
-      'getDeviceLinkCode',
+      appLink ? 'getAppLink' : 'getDeviceLinkCode',
       `<householdId>${escapeXml(this.#householdId)}</householdId>`,
     );
 
-    const node = find(result, 'getDeviceLinkCodeResult');
-    const linkCode = textOf(node, 'linkCode');
-    const url = textOf(node, 'regUrl');
+    const linkCode = textOf(result, 'linkCode');
+    const url = textOf(result, 'regUrl');
     if (!linkCode || !url) throw new SmapiError('The service did not offer a link code');
 
     return {
       // `showLinkCode` false means the service shows the code on its own page,
       // so repeating it here would be one more number to mistype.
-      prompt: { url, code: textOf(node, 'showLinkCode') === 'false' ? null : linkCode },
+      prompt: { url, code: textOf(result, 'showLinkCode') === 'false' ? null : linkCode },
       linkCode,
     };
   }
@@ -214,11 +226,10 @@ export class SmapiClient {
         `<linkCode>${escapeXml(linkCode)}</linkCode>`,
     );
 
-    const node = find(result, 'getDeviceAuthTokenResult');
-    const token = textOf(node, 'authToken');
+    const token = textOf(result, 'authToken');
     if (!token) throw new SmapiError('The service did not return a token');
 
-    return { token, key: textOf(node, 'privateKey') ?? '', sn: null };
+    return { token, key: textOf(result, 'privateKey') ?? '', sn: null };
   }
 
   /* ── Transport ─────────────────────────────────────────────────────────*/

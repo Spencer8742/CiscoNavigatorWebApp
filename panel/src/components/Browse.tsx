@@ -88,14 +88,20 @@ const TABS: Tab[] = [
  * API. Naming the source is two taps instead of one, and it is the honest
  * shape of the system rather than a guess that silently misses half of it.
  */
-function searchSources(): { id: 'library' | number; label: string }[] {
+function searchSources(): { id: 'library' | number; label: string; ready: boolean }[] {
   return [
-    { id: 'library' as const, label: 'Library' },
-    // Only services that can actually answer: one that is not connected, or
-    // that offers no catalog search, would be a button that always fails.
+    { id: 'library' as const, label: 'Library', ready: true },
+    /*
+     * EVERY searchable service, connected or not.
+     *
+     * Hiding the unconnected ones left a household that has five services in
+     * the Sonos app looking at a lone "Library" chip, with nothing on the
+     * screen to suggest the others could be searched at all. A chip that
+     * offers to connect is a path; an absent chip is a dead end.
+     */
     ...sources.value
-      .filter((s) => s.ready && s.searchable)
-      .map((s) => ({ id: s.sid, label: s.name })),
+      .filter((s) => s.searchable)
+      .map((s) => ({ id: s.sid, label: s.name, ready: s.ready })),
   ];
 }
 
@@ -105,6 +111,25 @@ interface Crumb {
   name: string;
   /** False for a place rather than a record — no "Play all" for Favourites. */
   playable: boolean;
+  /**
+   * The music service this level lives inside, if any.
+   *
+   * Inherited down the stack: anything opened from inside Plex is inside
+   * Plex. It is what puts a search box on a service's page — the Sonos app
+   * scopes search to the service you are looking at, and so does this.
+   */
+  sid?: number;
+}
+
+/** What to call a service in its own search box. */
+function serviceName(sid: number): string {
+  return sources.value.find((s) => s.sid === sid)?.name ?? 'this service';
+}
+
+/** A search chip's classes: selected, or offering to connect. */
+function chipClass(id: 'library' | number, source: 'library' | number, ready: boolean): string {
+  if (!ready) return 'browse-source is-offer';
+  return id === source ? 'browse-source is-active' : 'browse-source';
 }
 
 export function Browse({ playerId, onClose }: { playerId: string; onClose: () => void }) {
@@ -128,6 +153,8 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
   const [chosen, setChosen] = useState<MediaItem | null>(null);
   /** The service being connected, if somebody is part-way through that. */
   const [linking, setLinking] = useState<MusicSource | null>(null);
+  /** What has been typed into a service page's own search box. */
+  const [insideQuery, setInsideQuery] = useState('');
   /**
    * The drill-down stack.
    *
@@ -153,7 +180,18 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
   useEffect(() => {
     let stale = false;
 
-    const req: BrowseRequest = here
+    /*
+     * Inside a service, its own search box wins over its browse tree.
+     *
+     * This is the shape the Sonos app uses and the reason a service page is
+     * worth having at all: "search YouTube Music" belongs on the YouTube Music
+     * page, next to its categories, not behind a chip on a separate screen.
+     */
+    const insideService = here?.sid !== undefined && insideQuery.trim().length > 0;
+
+    const req: BrowseRequest = insideService
+      ? { kind: 'search', text: insideQuery, source: here?.sid as number }
+      : here
       ? { kind: 'item', uri: here.uri, offset }
       : current.request.kind === 'search'
         ? { kind: 'search', text: query, source }
@@ -189,12 +227,27 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
     return () => {
       stale = true;
     };
-  }, [tab, offset, query, source, here?.uri]);
+  }, [tab, offset, query, source, insideQuery, here?.uri]);
 
   const pick = (t: string): void => {
     setTab(t);
     setOffset(0);
     setPath([]);
+    setInsideQuery('');
+  };
+
+  /**
+   * Offer to connect a service, from wherever it was asked for.
+   *
+   * A search chip for a service nobody has linked yet is the commonest place
+   * to discover that connecting is a thing — more so than the Browse list,
+   * because searching is what somebody was already trying to do.
+   */
+  const connect = (sid: 'library' | number): void => {
+    const service = typeof sid === 'number' ? sources.value.find((s) => s.sid === sid) : null;
+    if (!service) return;
+    if (service.linkable) setLinking(service);
+    else setError(`${service.name} cannot be connected from here`);
   };
 
   /** Open an item's contents — an album's tracks, an artist's albums. */
@@ -212,12 +265,25 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
       return;
     }
 
-    setPath((p) => [...p, { uri: item.u, name: item.n, playable: item.o !== true }]);
+    const inherited = item.sid ?? here?.sid;
+    setPath((p) => [
+      ...p,
+      {
+        uri: item.u,
+        name: item.n,
+        playable: item.o !== true,
+        // The row names a service when it IS one; otherwise inherit, because
+        // anything opened from inside a service is still inside it.
+        ...(inherited === undefined ? {} : { sid: inherited }),
+      },
+    ]);
+    setInsideQuery('');
     setOffset(0);
   };
 
   const back = (): void => {
     setPath((p) => p.slice(0, -1));
+    setInsideQuery('');
     setOffset(0);
   };
 
@@ -276,17 +342,34 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
               {searchSources().map((s) => (
                 <Pressable
                   key={s.id}
-                  class={s.id === source ? 'browse-source is-active' : 'browse-source'}
-                  onPress={() => setSource(s.id)}
+                  class={chipClass(s.id, source, s.ready)}
+                  // An unconnected service asks to be connected rather than
+                  // running a search that can only fail.
+                  onPress={() => (s.ready ? setSource(s.id) : connect(s.id))}
                   ariaPressed={s.id === source}
-                  ariaLabel={`Search ${s.label}`}
+                  ariaLabel={s.ready ? `Search ${s.label}` : `Connect ${s.label}`}
                 >
                   {s.label}
+                  {s.ready ? null : <Icon name="plus" size="0.9rem" weight={2.4} />}
                 </Pressable>
               ))}
             </div>
             <SearchBox value={query} onSearch={setQuery} />
           </>
+        ) : null}
+
+        {/*
+          A service's own page carries its own search box, scoped to it.
+          That is the Sonos app's shape: "Search YouTube Music" sits above
+          YouTube Music's own categories, so finding something in a service
+          and browsing it are the same screen rather than two.
+        */}
+        {here?.sid !== undefined ? (
+          <SearchBox
+            value={insideQuery}
+            onSearch={setInsideQuery}
+            placeholder={`Search ${serviceName(here.sid)}`}
+          />
         ) : null}
 
         <div class="sheet-body scroll browse-body">
@@ -508,7 +591,15 @@ function ItemRow({
  * the answers would arrive out of order on a link this app cannot assume is
  * fast.
  */
-function SearchBox({ value, onSearch }: { value: string; onSearch: (text: string) => void }) {
+function SearchBox({
+  value,
+  onSearch,
+  placeholder = 'Artist, album or song',
+}: {
+  value: string;
+  onSearch: (text: string) => void;
+  placeholder?: string;
+}) {
   const [text, setText] = useState(value);
   const input = useRef<HTMLInputElement | null>(null);
 
@@ -532,8 +623,8 @@ function SearchBox({ value, onSearch }: { value: string; onSearch: (text: string
         class="browse-input"
         type="search"
         value={text}
-        placeholder="Artist, album or song"
-        aria-label="Search music"
+        placeholder={placeholder}
+        aria-label={placeholder}
         enterkeyhint="search"
         autocomplete="off"
         autocorrect="off"

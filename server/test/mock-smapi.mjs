@@ -20,6 +20,9 @@ import { createServer } from 'node:http';
 
 const NS = 'http://www.sonos.com/Services/1.1';
 
+/** The calls that obtain a token, and so cannot be asked to present one. */
+const LINK_ACTIONS = new Set(['getDeviceLinkCode', 'getAppLink', 'getDeviceAuthToken']);
+
 export class MockSmapi {
   /** Every request, as `{ action, hasToken, body }`. */
   calls = [];
@@ -93,7 +96,14 @@ export class MockSmapi {
       const hasToken = raw.includes('<loginToken>');
       this.calls.push({ action, hasToken, body: raw });
 
-      if (!this.anonymous && !hasToken && !action.startsWith('getDevice')) {
+      /*
+       * The link calls are the ONE set that must work without a token — they
+       * are how a token is obtained. Everything else is refused, which is what
+       * separates a client that works against an anonymous service from one
+       * that works against a real one.
+       */
+      const linking = LINK_ACTIONS.has(action);
+      if (!this.anonymous && !hasToken && !linking) {
         this.#fault(res, 'Client.LoginUnauthorized');
         return;
       }
@@ -138,6 +148,19 @@ export class MockSmapi {
           '<linkCode>ABCD-1234</linkCode>' +
           '<showLinkCode>true</showLinkCode>' +
           '</getDeviceLinkCodeResult></getDeviceLinkCodeResponse>';
+
+      /*
+       * The newer policy, and a DIFFERENT call with the same three fields
+       * buried one level deeper. A client that only ever asks for a device
+       * link code can never connect an AppLink service at all.
+       */
+      case 'getAppLink':
+        return `<getAppLinkResponse xmlns="${NS}"><getAppLinkResult><authorizeAccount>` +
+          '<appUrlStringId>SONOS_APP_LINK</appUrlStringId><deviceLink>' +
+          '<regUrl>https://example.invalid/app-link</regUrl>' +
+          '<linkCode>WXYZ-9876</linkCode>' +
+          '<showLinkCode>true</showLinkCode>' +
+          '</deviceLink></authorizeAccount></getAppLinkResult></getAppLinkResponse>';
 
       case 'getDeviceAuthToken':
         // Null becomes NOT_LINKED_RETRY: the person has not said yes yet.

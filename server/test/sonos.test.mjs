@@ -1722,6 +1722,47 @@ describe('music services', () => {
  * login, so a household whose speakers report no services at all must lose the
  * service list and nothing else.
  */
+/*
+ * `AppLink` is Sonos's newer linking policy and a DIFFERENT SOAP call, with
+ * the same three fields wrapped one level deeper. Asking every service for a
+ * device link code means an AppLink service can never be connected at all.
+ *
+ * Its own household because the catalog is cached for an hour, and a test that
+ * shares one can only assert conditionally — which is a test that passes
+ * whether or not the code is right.
+ */
+describe('connecting an AppLink service', () => {
+  const ctx = isolated({ services: true });
+
+  before(() => {
+    ctx.sonos.services = [
+      { sid: 210, name: 'Applink', uri: ctx.smapi.url, auth: 'AppLink', capabilities: 563 },
+    ];
+    ctx.sonos.accounts = [{ type: 210 * 256 + 7, sn: 2 }];
+  });
+
+  test('asks for an app link, not a device link code', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+    await panel.browse({ kind: 'sources' });
+
+    const before = ctx.smapi.calls.length;
+    const started = await panel.link(210, 'begin');
+
+    const asked = ctx.smapi.calls.slice(before).map((c) => c.action);
+    assert.ok(asked.includes('getAppLink'), 'the AppLink call');
+    assert.ok(!asked.includes('getDeviceLinkCode'), 'and not the other one');
+
+    // The fields live one level deeper in this shape, so finding them proves
+    // the reply is read by name rather than at a fixed path.
+    assert.equal(started.url, 'https://example.invalid/app-link');
+    assert.equal(started.code, 'WXYZ-9876');
+
+    panel.close();
+  });
+});
+
 describe('a household with no music services', () => {
   const ctx = isolated({ services: true });
 
