@@ -151,11 +151,22 @@ export class MusicServiceCatalog {
     this.#loadedAt = Date.now();
 
     const usable = this.list();
-    log.info(
-      usable.length > 0
-        ? `Music services: ${usable.map((s) => s.name).join(', ')}`
-        : 'No music services are linked to this household',
-    );
+    if (usable.length > 0) {
+      log.info(`Music services: ${usable.map((s) => s.name).join(', ')}`);
+    } else {
+      /*
+       * Say WHICH source came up empty. "No music services" is true of a
+       * household that has none and of a bug that finds none, and the two
+       * need completely different things done about them.
+       */
+      log.warn(
+        `No music services found: ${catalog.size} in the catalog, ` +
+          `${linked.size} account(s) detected. ` +
+          (catalog.size === 0
+            ? 'The speaker listed no services at all.'
+            : 'The catalog loaded but nothing in it is linked to this household.'),
+      );
+    }
   }
 
   /**
@@ -350,10 +361,24 @@ function message(err: unknown): string {
  */
 export function accountsFromUris(text: string): Map<number, number> {
   const out = new Map<number, number>();
+
+  /*
+   * `&amp;` first, and this is the whole bug this function once had.
+   *
+   * Sonos escapes a URI's own `&` when it writes the DIDL, and escapes the
+   * DIDL again when it puts it in `<Result>`. One decode gets you the DIDL
+   * with the query string still reading `?sid=9&amp;flags=32&amp;sn=3` — so a
+   * pattern expecting a literal `&` before `sn=` matches NOTHING, at any
+   * nesting depth, on every real household.
+   *
+   * The symptom was total: no service ever got an account number, so the
+   * household appeared to have no music services at all.
+   */
+  const flat = text.replace(/&amp;/g, '&');
   const re = /[?&]sid=(\d+)[^"'<\s\\]*?[?&]sn=(\d+)/g;
 
   let match: RegExpExecArray | null;
-  while ((match = re.exec(text)) !== null) {
+  while ((match = re.exec(flat)) !== null) {
     const sid = Number.parseInt(match[1] ?? '', 10);
     const sn = Number.parseInt(match[2] ?? '', 10);
     if (Number.isFinite(sid) && Number.isFinite(sn)) out.set(sid, sn);

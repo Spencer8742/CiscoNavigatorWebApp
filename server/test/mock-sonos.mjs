@@ -218,6 +218,29 @@ export class MockSonos {
           'SA_RINCON65031_</desc></item></DIDL-Lite>',
       },
       {
+        /*
+         * A service favourite with a REAL query string.
+         *
+         * `?sid=200&flags=8300&sn=4` is how every service favourite is
+         * actually addressed, and those `&` are escaped once when the URI goes
+         * into the DIDL and again when the DIDL goes into `<Result>`. That is
+         * how a household announces which services it uses — and no fixture
+         * carried one, so a scanner that could not see through the escaping
+         * looked perfectly correct here while finding nothing in a real house.
+         */
+        id: 'FV:2/4',
+        title: 'Late Night Testify',
+        creator: 'Testify playlist',
+        upnpClass: 'object.itemobject.item.sonos-favorite',
+        res: 'x-rincon-cpcontainer:1006206ctestify%3apl%3a99?sid=200&flags=8300&sn=4',
+        resMD:
+          '<DIDL-Lite><item id="1006206ctestify%3apl%3a99" parentID="0" restricted="true">' +
+          '<dc:title>Late Night Testify</dc:title>' +
+          '<upnp:class>object.container.playlistContainer</upnp:class>' +
+          '<desc id="cdudn" nameSpace="urn:schemas-rinconnetworks-com:metadata-1-0/">' +
+          'SA_RINCON51207_X_#Svc51207-0-Token</desc></item></DIDL-Lite>',
+      },
+      {
         // A favourited local album: a container whose URI IS queueable, so
         // "add to queue" and "play now" take different paths through the same
         // row.

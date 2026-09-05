@@ -1196,7 +1196,7 @@ describe('browsing', () => {
 
     const result = await panel.browse({ kind: 'library', media: 'track', favorite: true });
     assert.equal(result.kind, 'list');
-    assert.equal(result.items.length, 3);
+    assert.equal(result.items.length, 4);
 
     const playlist = result.items[0];
     assert.equal(playlist.n, 'Morning & Coffee', 'decoded through both levels of escaping');
@@ -1211,7 +1211,8 @@ describe('browsing', () => {
      */
     assert.equal(playlist.k, 'playlist');
     assert.equal(result.items[1].k, 'radio', 'a station, from one level down');
-    assert.equal(result.items[2].k, 'album', 'an album, from one level down');
+    assert.equal(result.items[2].k, 'playlist', 'a service playlist, from one level down');
+    assert.equal(result.items[3].k, 'album', 'an album, from one level down');
 
     /*
      * The whole point of the registry. A URI here would let the panel name
@@ -1230,7 +1231,7 @@ describe('browsing', () => {
     await waitFor(() => panel.players.length > 0, 'players');
 
     const result = await panel.browse({ kind: 'library', media: 'track', favorite: true });
-    assert.equal(result.more, false, 'three of three items is the end');
+    assert.equal(result.more, false, 'four of four items is the end');
 
     panel.close();
   });
@@ -1731,6 +1732,58 @@ describe('music services', () => {
  * shares one can only assert conditionally — which is a test that passes
  * whether or not the code is right.
  */
+/*
+ * The bug that made a real household look like it had no music services at
+ * all, and the reason it was invisible here for three rounds.
+ *
+ * Sonos escapes a URI's own `&` when it writes the DIDL, and escapes the DIDL
+ * again when it puts it in `<Result>`. So one decode leaves the query string
+ * reading `?sid=200&amp;flags=8300&amp;sn=4`, and a scanner expecting a literal
+ * `&` before `sn=` matches nothing — on every household, at every depth.
+ *
+ * No fixture carried a query string, so the scanner looked perfectly correct.
+ */
+describe('finding services in what the household already has', () => {
+  const ctx = isolated({ services: true });
+
+  before(() => {
+    ctx.sonos.services = [
+      { sid: 200, name: 'Testify', uri: ctx.smapi.url, auth: 'DeviceLink', capabilities: 563 },
+    ];
+    // The firmware serves NO account list. Everything must come from the
+    // favourite, which is the case that was completely broken.
+    ctx.sonos.accounts = null;
+  });
+
+  test('a favourite is enough to discover a service and its account', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    const list = await panel.browse({ kind: 'sources' });
+    assert.ok(
+      list.items.some((i) => i.n === 'Testify'),
+      'the service named by a favourite URI is offered',
+    );
+
+    // And the panel is told about it, which is what puts a chip on Search.
+    await waitFor(
+      () => panel.sources.some((s) => s.sid === 200 && s.searchable),
+      'the service to reach the panel',
+    );
+
+    /*
+     * `sn=4` came out of the favourite. Playing through the wrong account is
+     * silence rather than an error, so this is the value that matters.
+     */
+    const favourites = await panel.browse({ kind: 'library', media: 'track', favorite: true });
+    const row = favourites.items.find((i) => i.n === 'Late Night Testify');
+    assert.ok(row, 'and the favourite itself still plays');
+
+    panel.close();
+  });
+});
+
 describe('connecting an AppLink service', () => {
   const ctx = isolated({ services: true });
 
@@ -1777,7 +1830,7 @@ describe('a household with no music services', () => {
     // Favourites never needed a service login, so they are still the first
     // thing offered — which is the whole point of this assertion.
     assert.deepEqual(names, ['Favourites', 'Sonos Playlists']);
-    assert.equal(list.items[0].s, '3 items', 'the count is real, not a guess');
+    assert.equal(list.items[0].s, '4 items', 'the count is real, not a guess');
 
     // A place rather than a record: no play button on a folder.
     assert.equal(list.items[0].o, true);

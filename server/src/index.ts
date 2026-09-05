@@ -481,6 +481,8 @@ async function main(): Promise<void> {
   // Reads stored service tokens. Discovery of the services themselves is
   // lazy — it needs a household, which arrives with the first topology.
   void musicServices.start();
+  // The catalog loads on first use, after `hello` has already been sent.
+  musicServices.onChange(() => hub.broadcastSources(musicSourceList()));
 
   async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const rawUrl = req.url ?? '/';

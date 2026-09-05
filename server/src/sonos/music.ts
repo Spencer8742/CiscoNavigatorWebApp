@@ -70,11 +70,27 @@ export class MusicServices {
   #refreshedAt = 0;
   #loading: Promise<void> | null = null;
 
+  /** Told whenever the set of services changes. */
+  #onChange: (() => void) | null = null;
+
   constructor(client: SonosClient, tokenPath: string) {
     this.#client = client;
     this.#catalog = new MusicServiceCatalog(client);
     this.#path = tokenPath;
     this.#deviceId = randomUUID();
+  }
+
+  /**
+   * Be told when the services change.
+   *
+   * The catalog loads LAZILY — the first browse of the source list triggers
+   * it — so the `hello` frame a panel connected with is written before any
+   * service is known. Without this the panel keeps that empty list until it
+   * reconnects, and the Search chips stay missing for a household that has
+   * five services.
+   */
+  onChange(fn: () => void): void {
+    this.#onChange = fn;
   }
 
   /* ── Lifecycle ─────────────────────────────────────────────────────────*/
@@ -99,6 +115,7 @@ export class MusicServices {
       .refresh()
       .then(() => {
         this.#refreshedAt = Date.now();
+        this.#onChange?.();
       })
       .catch((err: unknown) => {
         log.warn(`Could not load music services: ${message(err)}`);
@@ -110,9 +127,25 @@ export class MusicServices {
     return this.#loading;
   }
 
-  /** Services worth showing a tab for. */
+  /**
+   * Services worth offering, from the household's list plus our own.
+   *
+   * The union matters: a service THIS APP has a token for is one somebody
+   * connected here on purpose, and it must keep appearing even if the
+   * household's own account detection later comes up empty — a firmware that
+   * stops serving `/status/accounts`, a favourite that got deleted.
+   */
   list(): MusicService[] {
-    return this.#catalog.list();
+    const out = this.#catalog.list();
+    const seen = new Set(out.map((s) => s.sid));
+
+    for (const sid of this.#tokens.keys()) {
+      if (seen.has(sid)) continue;
+      const service = this.#catalog.get(sid);
+      if (service) out.push(service);
+    }
+
+    return out.sort((a, b) => a.name.localeCompare(b.name));
   }
 
   /** Services that are usable right now — anonymous, or linked to us. */
