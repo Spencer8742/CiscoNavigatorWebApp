@@ -87,7 +87,9 @@ export function Settings() {
           {/* The specific reason, when there is one. A missing MASS_TOKEN and
               an unreachable server both read as "disconnected" otherwise, and
               only one of them is fixed by restarting anything. */}
-          {h?.massError ? <Row k="Music Assistant says" v={h.massError} tone="bad" /> : null}
+          {/* `danger`, not `bad`: the stylesheet defines ok / warn / danger,
+              so the previous value styled nothing at all. */}
+          {h?.massError ? <Row k="Music Assistant says" v={h.massError} tone="danger" /> : null}
           <Row
             k="Backend → Sonos"
             v={h?.sonos ?? '—'}
@@ -97,7 +99,17 @@ export function Settings() {
               address, a network that blocks discovery and UPnP switched off
               in the Sonos app all read as "disconnected", and each needs
               something different done about it. */}
-          {h?.sonosError ? <Row k="Sonos says" v={h.sonosError} tone="bad" /> : null}
+          {/* Live or polled is the difference between a panel that keeps up
+              with the house and one that lags behind it, and the cause is
+              always deployment rather than anything on this screen. */}
+          {h?.sonos === 'connected' ? (
+            <Row
+              k="Sonos updates"
+              v={h.sonosUpdates === 'live' ? 'live' : 'polling'}
+              tone={h.sonosUpdates === 'live' ? 'ok' : 'warn'}
+            />
+          ) : null}
+          {h?.sonosError ? <Row k="Sonos says" v={h.sonosError} tone="danger" /> : null}
           <Row k="Overall" v={linkStatus.value} tone={tone(linkStatus.value)} />
           <Row
             k="Last HA message"

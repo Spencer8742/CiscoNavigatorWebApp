@@ -287,12 +287,13 @@ class TestPanel {
 }
 
 /** A backend with its own mock household. */
-function isolated({ host, zones } = {}) {
+function isolated({ host, zones, swallowEvents = false } = {}) {
   const ctx = {};
 
   before(async () => {
     ctx.port = await freePort();
     ctx.sonos = new MockSonos(zones ?? defaultZones());
+    ctx.sonos.swallowEvents = swallowEvents;
     await ctx.sonos.start();
 
     // Point SONOS_HOST at ONE speaker. Everything else — including the other
@@ -652,6 +653,67 @@ describe('live updates', () => {
     // other route in this app accepts anything but GET or HEAD.
     const post = await fetch(`${base}/api/config`, { method: 'POST', body });
     assert.equal(post.status, 405);
+  });
+});
+
+/*
+ * The failure that actually happens in the wild.
+ *
+ * SUBSCRIBE succeeds — it is outbound — and the NOTIFY never arrives, because
+ * the speakers cannot reach the container's address. Commands keep working, so
+ * nothing looks broken; the panel just stops noticing anything done anywhere
+ * else. Falling back to polling is what makes that survivable, and saying so
+ * is what makes it fixable.
+ */
+describe('when events cannot reach the backend', () => {
+  const ctx = isolated({ swallowEvents: true });
+
+  test('falls back to polling rather than going stale', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(
+      () => panel.players.length === 4 && panel.players.every((p) => p.volume !== null),
+      'the initial read',
+    );
+
+    // Changed at the speaker, with no event to announce it.
+    await ctx.sonos.set('RINCON_BEDROOM', { volume: 71 });
+
+    // The poll has to find it. Slower than a push — that is the point of
+    // preferring push — but the panel is not wrong for five minutes.
+    await waitFor(
+      () => panel.player('RINCON_BEDROOM')?.volume === 71,
+      'the poll to notice',
+      15_000,
+    );
+
+    panel.close();
+  });
+
+  test('says it is polling, and why', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+
+    await waitFor(() => panel.health?.sonosUpdates === 'polling', 'the mode to be reported');
+    assert.equal(panel.health.sonos, 'connected', 'the household is reachable; events are not');
+
+    await waitFor(() => panel.health?.sonosError !== null, 'a reason', 30_000);
+    // Names the actual fix rather than describing the symptom.
+    assert.match(panel.health.sonosError, /SONOS_CALLBACK_HOST|host networking/i);
+
+    panel.close();
+  });
+});
+
+describe('when events do arrive', () => {
+  const ctx = isolated();
+
+  test('reports live updates', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.health?.sonosUpdates === 'live', 'live updates to be reported');
+    assert.equal(panel.health.sonosError, null);
+    panel.close();
   });
 });
 
