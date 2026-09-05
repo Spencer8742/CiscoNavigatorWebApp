@@ -76,6 +76,7 @@ export class MusicServiceCatalog {
   #services = new Map<number, MusicService>();
 
   #householdId: string | null = null;
+  #deviceSerial: string | null = null;
   #loadedAt = 0;
 
   constructor(client: SonosClient) {
@@ -120,6 +121,23 @@ export class MusicServiceCatalog {
     return this.#householdId;
   }
 
+  /**
+   * The household's own device serial, as SMAPI's `deviceId`.
+   *
+   * SoCo — the reference implementation everyone else reads — puts the
+   * speaker's serial here rather than a made-up identifier, and the field
+   * means "which device is asking". A random UUID is a placeholder standing
+   * where a real answer exists.
+   *
+   * It is the household this app is controlling, on its owner's instruction,
+   * so this is filling the field in correctly rather than pretending to be
+   * something else. If a service still refuses, that refusal is about
+   * licensing and no identifier changes it.
+   */
+  get deviceSerial(): string | null {
+    return this.#deviceSerial;
+  }
+
   get loaded(): boolean {
     return this.#loadedAt > 0;
   }
@@ -158,6 +176,7 @@ export class MusicServiceCatalog {
 
     this.#services = catalog;
     this.#householdId = (await this.#household(speaker)) ?? this.#householdId;
+    this.#deviceSerial = (await this.#serial(speaker)) ?? this.#deviceSerial;
     this.#loadedAt = Date.now();
 
     const usable = this.list();
@@ -305,6 +324,19 @@ export class MusicServiceCatalog {
       return textOf(response, 'CurrentHouseholdID');
     } catch (err) {
       log.debug(`Could not read the household id: ${message(err)}`);
+      return null;
+    }
+  }
+
+  /** `R_TrialZPSerial` — the speaker's own serial, as SoCo reads it. */
+  async #serial(host: string): Promise<string | null> {
+    try {
+      const response = await this.#client.call(host, 'SystemProperties', 'GetString', {
+        VariableName: 'R_TrialZPSerial',
+      });
+      return textOf(response, 'StringValue');
+    } catch (err) {
+      log.debug(`Could not read the device serial: ${message(err)}`);
       return null;
     }
   }

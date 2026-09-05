@@ -23,7 +23,8 @@ export type SonosService =
   | 'ContentDirectory'
   | 'DeviceProperties'
   | 'Queue'
-  | 'MusicServices';
+  | 'MusicServices'
+  | 'SystemProperties';
 
 interface ServiceDef {
   /** Path of the control endpoint. */
@@ -71,6 +72,10 @@ const SERVICES: Record<SonosService, ServiceDef> = {
   MusicServices: {
     path: '/MusicServices/Control',
     urn: 'urn:schemas-upnp-org:service:MusicServices:1',
+  },
+  SystemProperties: {
+    path: '/SystemProperties/Control',
+    urn: 'urn:schemas-upnp-org:service:SystemProperties:1',
   },
 };
 
