@@ -128,6 +128,10 @@ export class SonosBrowser {
    * Albums, and a house with Plex finds Plex here rather than behind a tab
    * called "Services".
    *
+   * Provider accounts are intentionally absent. Sonos does not share their
+   * credentials with another controller; the supported bridge is the saved
+   * content below, whose DIDL already carries what the speakers need to play.
+   *
    * Each local source is checked for emptiness first — one `Browse` asking for
    * a single row, which answers with the real `TotalMatches` — so the count in
    * the subtitle is a fact and an empty source can be left out entirely
@@ -137,7 +141,9 @@ export class SonosBrowser {
     const music = this.#deps.music;
     const host = this.#anyHost();
 
-    // Services and the local counts are independent; neither should wait.
+    // Service discovery is still warmed here because favourites carry service
+    // ids that the playback path needs. The browse root itself deliberately
+    // exposes only content the household has already saved in Sonos.
     const [, counts] = await Promise.all([music.ready(), this.#counts(host)]);
 
     const items: MediaItem[] = [];
@@ -162,20 +168,6 @@ export class SonosBrowser {
     local(LIBRARY['favorites'] as string, 'Favourites', 'playlist');
     local(LIBRARY['playlists'] as string, 'Sonos Playlists', 'playlist');
 
-    for (const service of music.list()) {
-      const key = this.#deps.uris.register(null, 'root', '', 'object.container', service.sid);
-      if (!key) continue;
-      const item: MediaItem = {
-        u: key,
-        n: service.name,
-        k: 'playlist',
-        sid: service.sid,
-        o: true,
-      };
-      item.s = music.linked(service.sid) ? 'Connected' : service.auth === 'Anonymous' ? 'Browse without signing in' : service.auth === 'UserId' ? 'Use Sonos favourites' : 'Connect to browse';
-      items.push(item);
-    }
-
     local(LIBRARY['radio'] as string, 'Radio Stations', 'radio');
     /*
      * `A:` is the library's own root and answers with its categories —
@@ -185,29 +177,14 @@ export class SonosBrowser {
      */
     local('A:', 'Music Library', 'playlist');
 
-    /*
-     * Last, and quiet. Detection reads the household, so a service that is set
-     * up but has left no favourite, no saved station and no account entry is
-     * invisible to it — this is the way to that service without putting three
-     * hundred rows on the screen everybody uses.
-     */
-    const more = this.#deps.uris.register(null, 'catalog', '', 'object.container');
-    if (more) {
-      items.push({ u: more, n: 'Add a service…', k: 'playlist', s: 'Not listed above', o: true });
-    }
-
     return {
       kind: 'list',
       items,
       offset: 0,
       more: false,
-      ...(items.length === 1
-        ? {
-            note:
-              'No music sources found. Favourite something in the Sonos app, or use ' +
-              '"Add a service" to pick one directly.',
-          }
-        : {}),
+      note:
+        'This is your Sonos household. Music saved here uses the service accounts ' +
+        'already connected in the Sonos app; add favourites or playlists there and they appear here.',
     };
   }
 

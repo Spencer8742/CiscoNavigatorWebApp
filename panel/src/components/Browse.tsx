@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { Icon } from '~/components/Icon.tsx';
 import { Pressable } from '~/components/Pressable.tsx';
-import { browse, link } from '~/net/socket.ts';
+import { browse } from '~/net/socket.ts';
 import { Artwork } from '~/components/Artwork.tsx';
 import { speakers } from '~/state/selectors.ts';
-import { sources } from '~/state/players.ts';
 import * as act from '~/state/actions.ts';
 import { BROWSE_PAGE } from '@shared/protocol.ts';
 import type {
@@ -12,8 +11,6 @@ import type {
   BrowseResult,
   MediaItem,
   MediaKind,
-  MusicSource,
-  ServiceLink,
 } from '@shared/protocol.ts';
 
 /**
@@ -47,7 +44,7 @@ import type {
  * — and nobody scrolls a wall panel for ten minutes anyway.
  */
 
-/** A tab is a library view or a search — never a queue lookup. */
+/** A tab is a household view or local-library search — never a queue lookup. */
 type TabRequest = Extract<
   BrowseRequest,
   { kind: 'library' } | { kind: 'search' } | { kind: 'sources' }
@@ -64,47 +61,22 @@ const TABS: Tab[] = [
   { id: 'favorites', label: 'Favourites', icon: 'heart', request: { kind: 'library', media: 'track', favorite: true } },
   {
     /*
-     * ONE browse tab, opening on the household's own list of sources.
+     * ONE browse tab, opening on the household's own saved Sonos content.
      *
      * There used to be six — Favorites, Playlists, Albums, Artists, Radio,
      * Services — and five of them were empty in a house with no NAS share and
      * nothing saved in the Sonos app. A fixed tab strip asserts what a
-     * household has; this asks. What comes back is Favourites, then each music
-     * service, then the library and saved stations if they exist at all, each
-     * with a count, in one list you can read.
+     * household has; this asks. What comes back is Favourites, Sonos
+     * Playlists, the library and saved stations if they exist, each with a
+     * count, in one list you can read.
      */
     id: 'browse',
-    label: 'Services',
+    label: 'My Sonos',
     icon: 'list',
     request: { kind: 'sources' },
   },
   { id: 'search', label: 'Search', icon: 'search', request: { kind: 'search', text: '' } },
 ];
-
-/**
- * Where a search looks.
- *
- * There is no "search everything": the local library is searched by object id
- * on the speakers, and a streaming catalog only through that service's own
- * API. Naming the source is two taps instead of one, and it is the honest
- * shape of the system rather than a guess that silently misses half of it.
- */
-function searchSources(): { id: 'library' | number; label: string; ready: boolean }[] {
-  return [
-    { id: 'library' as const, label: 'Library', ready: true },
-    /*
-     * EVERY searchable service, connected or not.
-     *
-     * Hiding the unconnected ones left a household that has five services in
-     * the Sonos app looking at a lone "Library" chip, with nothing on the
-     * screen to suggest the others could be searched at all. A chip that
-     * offers to connect is a path; an absent chip is a dead end.
-     */
-    ...sources.value
-      .filter((s) => s.searchable)
-      .map((s) => ({ id: s.sid, label: s.name, ready: s.ready })),
-  ];
-}
 
 /** One level of the drill-down: what we opened, and what it was called. */
 interface Crumb {
@@ -112,63 +84,17 @@ interface Crumb {
   name: string;
   /** False for a place rather than a record — no "Play all" for Favourites. */
   playable: boolean;
-  /**
-   * The music service this level lives inside, if any.
-   *
-   * Inherited down the stack: anything opened from inside Plex is inside
-   * Plex. It is what puts a search box on a service's page — the Sonos app
-   * scopes search to the service you are looking at, and so does this.
-   */
-  sid?: number;
-}
-
-/** Why this service's sign-in method cannot be offered here. */
-function blockedReason(sid: number): string | null {
-  return sources.value.find((s) => s.sid === sid)?.blocked ?? null;
-}
-
-/** What this service said the last time connecting it was tried. */
-function lastLinkError(sid: number): string | null {
-  return sources.value.find((s) => s.sid === sid)?.lastError ?? null;
-}
-
-/** What to call a service in its own search box. */
-function serviceName(sid: number): string {
-  return sources.value.find((s) => s.sid === sid)?.name ?? 'this service';
-}
-
-/** A search chip's classes: selected, or offering to connect. */
-function chipClass(id: 'library' | number, source: 'library' | number, ready: boolean): string {
-  if (!ready) return 'browse-source is-offer';
-  return id === source ? 'browse-source is-active' : 'browse-source';
 }
 
 export function Browse({ playerId, onClose }: { playerId: string; onClose: () => void }) {
   const [tab, setTab] = useState('favorites');
-  // Warm service discovery while favourites remain immediately usable.
-  useEffect(() => { void browse({ kind: 'sources' }).catch(() => {}); }, []);
-  /*
-   * Default to a service when one is connected, not to the library.
-   *
-   * Most households here have no NAS share, so the library is empty and
-   * defaulting to it makes the first search anybody tries return nothing —
-   * which reads as "search is broken" rather than "you searched an empty
-   * shelf". `searchSources` puts the library first and services after it.
-   */
-  const [source, setSource] = useState<'library' | number>(
-    () => sources.value.find((s) => s.ready && s.searchable)?.sid ?? 'library',
-  );
+  const source = 'library' as const;
   const [offset, setOffset] = useState(0);
   const [query, setQuery] = useState('');
   const [result, setResult] = useState<BrowseResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [revision, setRevision] = useState(0);
   const [chosen, setChosen] = useState<MediaItem | null>(null);
-  /** The service being connected, if somebody is part-way through that. */
-  const [linking, setLinking] = useState<MusicSource | null>(null);
-  /** What has been typed into a service page's own search box. */
-  const [insideQuery, setInsideQuery] = useState('');
   /**
    * The drill-down stack.
    *
@@ -194,18 +120,7 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
   useEffect(() => {
     let stale = false;
 
-    /*
-     * Inside a service, its own search box wins over its browse tree.
-     *
-     * This is the shape the Sonos app uses and the reason a service page is
-     * worth having at all: "search YouTube Music" belongs on the YouTube Music
-     * page, next to its categories, not behind a chip on a separate screen.
-     */
-    const insideService = here?.sid !== undefined && insideQuery.trim().length > 0;
-
-    const req: BrowseRequest = insideService
-      ? { kind: 'search', text: insideQuery, source: here?.sid as number }
-      : here
+    const req: BrowseRequest = here
       ? { kind: 'item', uri: here.uri, offset }
       : current.request.kind === 'search'
         ? { kind: 'search', text: query, source }
@@ -241,70 +156,29 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
     return () => {
       stale = true;
     };
-  }, [tab, offset, query, source, insideQuery, here?.uri, revision]);
+  }, [tab, offset, query, source, here?.uri]);
 
   const pick = (t: string): void => {
     setTab(t);
     setOffset(0);
     setPath([]);
-    setInsideQuery('');
-  };
-
-  /**
-   * Offer to connect a service, from wherever it was asked for.
-   *
-   * A search chip for a service nobody has linked yet is the commonest place
-   * to discover that connecting is a thing — more so than the Browse list,
-   * because searching is what somebody was already trying to do.
-   */
-  const connect = (sid: 'library' | number): void => {
-    const service = typeof sid === 'number' ? sources.value.find((s) => s.sid === sid) : null;
-    if (!service) {
-      setError('The service list changed. Close Browse and try again.');
-      return;
-    }
-    if (service.linkable) setLinking(service);
-    else setError(service.blocked ?? `${service.name} cannot be connected from here`);
   };
 
   /** Open an item's contents — an album's tracks, an artist's albums. */
   const open = (item: MediaItem): void => {
-    /*
-     * A music service that has not been connected yet opens the pairing
-     * prompt rather than a folder. Browsing it would only produce "connect
-     * Plex first", which is true and is not something you can act on from a
-     * list of albums that failed to load.
-     */
-    const source = item.sid === undefined ? null : sources.value.find((s) => s.sid === item.sid);
-    if (source && !source.ready) {
-      if (source.linkable) {
-        setLinking(source);
-      } else {
-        // Unsupported sign-in methods explain the fallback instead of doing nothing.
-        setError(source.blocked ?? `${source.name} cannot be connected from here`);
-      }
-      return;
-    }
-
-    const inherited = item.sid ?? here?.sid;
     setPath((p) => [
       ...p,
       {
         uri: item.u,
         name: item.n,
         playable: item.o !== true,
-        // The row names a service when it IS one; otherwise inherit, because
-        // anything opened from inside a service is still inside it.
-        ...(inherited === undefined ? {} : { sid: inherited }),
       },
     ]);
-    setInsideQuery('');
     setOffset(0);
   };
 
   const back = (): void => {
     setPath((p) => p.slice(0, -1));
-    setInsideQuery('');
     setOffset(0);
   };
 
@@ -316,7 +190,7 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
         class="sheet browse-sheet"
         role="dialog"
         aria-label="Browse music"
-        aria-modal={!linking && !chosen}
+        aria-modal={!chosen}
       >
         <div class="sheet-head">
           {here ? (
@@ -364,38 +238,8 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
 
         {tab === 'search' && !here ? (
           <>
-            <div class="browse-sources" role="group" aria-label="Where to search">
-              {searchSources().map((s) => (
-                <Pressable
-                  key={s.id}
-                  class={chipClass(s.id, source, s.ready)}
-                  // An unconnected service asks to be connected rather than
-                  // running a search that can only fail.
-                  onPress={() => (s.ready ? setSource(s.id) : connect(s.id))}
-                  ariaPressed={s.id === source}
-                  ariaLabel={s.ready ? `Search ${s.label}` : `Connect ${s.label}`}
-                >
-                  {s.label}
-                  {s.ready ? null : <Icon name="plus" size="0.9rem" weight={2.4} />}
-                </Pressable>
-              ))}
-            </div>
-            <SearchBox value={query} onSearch={setQuery} />
+            <SearchBox value={query} onSearch={setQuery} placeholder="Search your music library" />
           </>
-        ) : null}
-
-        {/*
-          A service's own page carries its own search box, scoped to it.
-          That is the Sonos app's shape: "Search YouTube Music" sits above
-          YouTube Music's own categories, so finding something in a service
-          and browsing it are the same screen rather than two.
-        */}
-        {here?.sid !== undefined ? (
-          <SearchBox
-            value={insideQuery}
-            onSearch={setInsideQuery}
-            placeholder={`Search ${serviceName(here.sid)}`}
-          />
         ) : null}
 
         <div class="sheet-body scroll browse-body">
@@ -407,7 +251,6 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
             query={query}
             onPick={setChosen}
             onOpen={open}
-            onConnect={connect}
           />
         </div>
 
@@ -451,10 +294,6 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
         />
       ) : null}
 
-      {linking ? <ConnectService source={linking} onDone={() => {
-        setLinking(null);
-        setRevision((value) => value + 1);
-      }} /> : null}
     </div>
   );
 }
@@ -469,7 +308,6 @@ function Results({
   query,
   onPick,
   onOpen,
-  onConnect,
 }: {
   loading: boolean;
   error: string | null;
@@ -478,7 +316,6 @@ function Results({
   query: string;
   onPick: (item: MediaItem) => void;
   onOpen: (item: MediaItem) => void;
-  onConnect: (sid: number) => void;
 }) {
   if (loading) {
     return (
@@ -538,44 +375,21 @@ function Results({
        * somebody "connect SoundCloud first" on a screen with nothing to press
        * is the whole complaint this answers.
        */
-      const needs = result.connect;
       return (
         <div class="browse-state">
-          <Icon name={needs !== undefined ? 'speaker' : searching ? 'search' : 'disc'} size="2rem" weight={1.6} />
+          <Icon name={searching ? 'search' : 'disc'} size="2rem" weight={1.6} />
           <p class="browse-state-title">
-            {needs !== undefined
-              ? 'Not connected yet'
-              : searching && query.trim().length > 0
+            {searching && query.trim().length > 0
                 ? 'Nothing found'
                 : 'Nothing here yet'}
           </p>
           {result.note ? <p class="browse-state-hint">{result.note}</p> : null}
-          {/*
-            Only offer Connect when there is a supported sign-in method.
-            Anonymous and password services explain how to use favourites.
-          */}
-          {needs !== undefined && blockedReason(needs) === null ? (
-            <Pressable class="play-option is-primary" onPress={() => onConnect(needs)} ariaLabel="Connect">
-              <Icon name="plus" size="1.2rem" weight={2.2} />
-              <span>Connect</span>
-            </Pressable>
-          ) : null}
-          {needs !== undefined && blockedReason(needs) !== null ? (
-            <p class="browse-state-hint">{blockedReason(needs)}</p>
-          ) : null}
-          {/*
-            What this service said last time, kept where it can be read after
-            the Connect sheet has closed. Services differ from one another, so
-            the answer to "will this one work" is the answer it gave.
-          */}
-          {needs !== undefined && blockedReason(needs) === null && lastLinkError(needs) !== null ? (
-            <p class="browse-state-hint">{lastLinkError(needs)}</p>
-          ) : null}
         </div>
       );
     }
     return (
       <>
+        {result.note ? <p class="browse-note">{result.note}</p> : null}
         {result.items.map((item) => (
           <ItemRow key={item.u} item={item} onPick={onPick} onOpen={onOpen} />
         ))}
@@ -699,174 +513,6 @@ function SearchBox({
         Search
       </Pressable>
     </form>
-  );
-}
-
-/* ── Connecting a service ─────────────────────────────────────────────────*/
-
-/**
- * Pair this app with a music service.
- *
- * **There is no redirect**, and that is the point rather than a limitation.
- * RoomOS gives the panel one tab, so `window.open` replaces the page it was
- * called from — an OAuth round trip would navigate away from the dashboard and
- * never come back. Sonos's own device-link flow happens to be exactly right
- * for that: a URL and a short code, typed on whatever phone is in the room,
- * while the panel waits.
- *
- * The waiting is polled rather than pushed, because the confirmation happens
- * somewhere this backend has no connection to.
- */
-function ConnectService({ source, onDone }: { source: MusicSource; onDone: () => void }) {
-  const [prompt, setPrompt] = useState<ServiceLink | null>(null);
-  const [state, setState] = useState<'starting' | 'waiting' | 'linked' | 'failed'>('starting');
-  const [error, setError] = useState<string | null>(null);
-  const [attempt, setAttempt] = useState(0);
-  const dialog = useRef<HTMLDivElement>(null);
-  const done = useRef(onDone);
-  done.current = onDone;
-  useEffect(() => {
-    const previous = document.activeElement;
-    dialog.current?.focus();
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.stopPropagation();
-        done.current();
-      }
-      if (event.key === 'Tab') {
-        const buttons = dialog.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)');
-        if (!buttons?.length) return;
-        const first = buttons[0];
-        const last = buttons[buttons.length - 1];
-        if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog.current)) {
-          event.preventDefault(); last?.focus();
-        } else if (!event.shiftKey && document.activeElement === last) {
-          event.preventDefault(); first?.focus();
-        }
-      }
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => {
-      window.removeEventListener('keydown', onKey, true);
-      if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
-    };
-  }, []);
-
-  useEffect(() => {
-    let stale = false;
-    setState('starting');
-    setError(null);
-    setPrompt(null);
-
-    link(source.sid, 'begin')
-      .then((r) => {
-        if (stale) return;
-        setPrompt(r);
-        setState('waiting');
-      })
-      .catch((err: unknown) => {
-        if (stale) return;
-        setError(err instanceof Error ? err.message : 'Could not start');
-        setState('failed');
-      });
-
-    return () => {
-      stale = true;
-    };
-  }, [source.sid, attempt]);
-
-  /*
-   * Poll while the sheet is open.
-   *
-   * Every three seconds, and only while waiting. A service is entitled to
-   * take as long as somebody takes to find their phone, so this is paced for
-   * a person rather than for a machine.
-   */
-  useEffect(() => {
-    if (state !== 'waiting') return;
-    let stale = false;
-
-    let timer: ReturnType<typeof setTimeout>;
-    const poll = async (): Promise<void> => {
-      try {
-        const response = await link(source.sid, 'poll');
-        if (stale) return;
-        if (response.state === 'linked') {
-          setState('linked');
-          return;
-        }
-        timer = setTimeout(() => void poll(), 3000);
-      } catch (err) {
-        if (stale) return;
-        setError(err instanceof Error ? err.message : 'That did not work');
-        setState('failed');
-      }
-    };
-    timer = setTimeout(() => void poll(), 3000);
-    return () => {
-      stale = true;
-      clearTimeout(timer);
-    };
-  }, [state, source.sid]);
-
-  return (
-    <div class="sheet-layer is-nested">
-      <div class="sheet-scrim" onPointerDown={onDone} />
-      <div class="sheet play-sheet" ref={dialog} tabIndex={-1} role="dialog" aria-label={`Connect ${source.name}`} aria-modal="true">
-        <div class="sheet-head">
-          <div class="sheet-titles">
-            <h2 class="sheet-title truncate">Connect {source.name}</h2>
-            <div class="sheet-subtitle truncate">
-              {state === 'linked' ? 'Connected' : 'On your phone or computer'}
-            </div>
-          </div>
-          <Pressable class="sheet-close p-sm" onPress={onDone} ariaLabel="Close">
-            <Icon name="close" size="1.4rem" weight={2} />
-          </Pressable>
-        </div>
-
-        <div class="sheet-body scroll link-body" aria-live="polite">
-          {state === 'starting' ? <p class="link-step">Asking {source.name}…</p> : null}
-
-          {state === 'failed' ? <>
-            <p class="link-error" role="alert">{error}</p>
-            <p class="link-hint">Your saved Sonos favourites are still available in Browse.</p>
-          </> : null}
-
-          {state === 'linked' ? (
-            <p class="link-step">
-              {source.name} is connected. It is now in Services and in Search.
-            </p>
-          ) : null}
-
-          {state === 'waiting' && prompt ? (
-            <>
-              <p class="link-step">Go to</p>
-              {/* Selectable text, not a link: there is nowhere for it to open. */}
-              <p class="link-url">{prompt.url}</p>
-              {prompt.code ? (
-                <>
-                  <p class="link-step">and enter</p>
-                  <p class="link-code">{prompt.code}</p>
-                </>
-              ) : null}
-              <p class="link-hint">This screen will notice when you are done.</p>
-            </>
-          ) : null}
-        </div>
-
-        {state === 'failed' ? (
-          <Pressable class="play-option is-primary" onPress={() => setAttempt((value) => value + 1)} ariaLabel="Try connecting again">
-            <span>Try again</span>
-          </Pressable>
-        ) : null}
-        {state === 'linked' || state === 'failed' ? (
-          <Pressable class="play-option is-primary" onPress={onDone} ariaLabel="Done">
-            <span>Done</span>
-          </Pressable>
-        ) : null}
-      </div>
-    </div>
   );
 }
 
