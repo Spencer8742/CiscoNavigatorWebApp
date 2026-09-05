@@ -18,6 +18,25 @@ import type { SonosClient } from '~/sonos/client.ts';
 const log = logger('music-services');
 
 /**
+ * A service refused because this app is not linked to it.
+ *
+ * Typed rather than a message, because the panel has to DO something about it
+ * — draw a Connect button — and matching on the text of an error to decide
+ * that is the kind of thing that quietly stops working when the wording
+ * changes. "Connect SoundCloud first" with no way to connect is the bug this
+ * class exists to prevent.
+ */
+export class NeedsLink extends Error {
+  readonly sid: number;
+
+  constructor(sid: number, name: string) {
+    super(`Connect ${name} to browse it`);
+    this.name = 'NeedsLink';
+    this.sid = sid;
+  }
+}
+
+/**
  * The household's music services, linked and ready to browse.
  *
  * This is the layer between `smapi.ts` (which knows the protocol) and
@@ -146,6 +165,11 @@ export class MusicServices {
     }
 
     return out.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  /** Sonos's whole catalog, for adding a service detection missed. */
+  all(): MusicService[] {
+    return this.#catalog.all();
   }
 
   /** Services that are usable right now — anonymous, or linked to us. */
@@ -317,15 +341,26 @@ export class MusicServices {
    * token in place would make that offer fail too.
    */
   #explain(err: unknown, sid: number): Error {
-    const name = this.#catalog.get(sid)?.name ?? 'That service';
+    const service = this.#catalog.get(sid);
+    const name = service?.name ?? 'That service';
 
     if (err instanceof SmapiError && err.expired) {
-      void this.#dropToken(sid);
-      return new Error(`${name} needs connecting again`);
+      /*
+       * A refused credential and a missing one are the same fault, and both
+       * mean the same thing to whoever is standing at the panel: this needs
+       * connecting. Dropping a dead token here is what stops the next attempt
+       * failing the same way.
+       *
+       * It also catches a service whose catalog entry claims `Anonymous` and
+       * which then demands a login anyway — SoundCloud does exactly this, and
+       * believing the catalog left the panel with an error and no button.
+       */
+      if (this.#tokens.has(sid)) void this.#dropToken(sid);
+      return new NeedsLink(sid, name);
     }
 
     if (err instanceof SmapiError && !this.#clientFor(sid).ready) {
-      return new Error(`Connect ${name} first`);
+      return new NeedsLink(sid, name);
     }
 
     log.warn(`${name}: ${message(err)}`);

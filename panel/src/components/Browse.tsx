@@ -381,6 +381,7 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
             query={query}
             onPick={setChosen}
             onOpen={open}
+            onConnect={connect}
           />
         </div>
 
@@ -439,6 +440,7 @@ function Results({
   query,
   onPick,
   onOpen,
+  onConnect,
 }: {
   loading: boolean;
   error: string | null;
@@ -447,6 +449,7 @@ function Results({
   query: string;
   onPick: (item: MediaItem) => void;
   onOpen: (item: MediaItem) => void;
+  onConnect: (sid: number) => void;
 }) {
   if (loading) {
     return (
@@ -501,13 +504,29 @@ function Results({
        * a household with no NAS share has no albums — so the difference has to
        * be stated rather than left to be guessed at.
        */
+      /*
+       * A service that needs connecting gets a BUTTON, not a sentence. Telling
+       * somebody "connect SoundCloud first" on a screen with nothing to press
+       * is the whole complaint this answers.
+       */
+      const needs = result.connect;
       return (
         <div class="browse-state">
-          <Icon name={searching ? 'search' : 'disc'} size="2rem" weight={1.6} />
+          <Icon name={needs !== undefined ? 'speaker' : searching ? 'search' : 'disc'} size="2rem" weight={1.6} />
           <p class="browse-state-title">
-            {searching && query.trim().length > 0 ? 'Nothing found' : 'Nothing here yet'}
+            {needs !== undefined
+              ? 'Not connected yet'
+              : searching && query.trim().length > 0
+                ? 'Nothing found'
+                : 'Nothing here yet'}
           </p>
           {result.note ? <p class="browse-state-hint">{result.note}</p> : null}
+          {needs !== undefined ? (
+            <Pressable class="play-option is-primary" onPress={() => onConnect(needs)} ariaLabel="Connect">
+              <Icon name="plus" size="1.2rem" weight={2.2} />
+              <span>Connect</span>
+            </Pressable>
+          ) : null}
         </div>
       );
     }

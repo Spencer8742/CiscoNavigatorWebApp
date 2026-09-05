@@ -6,6 +6,7 @@ import type { SonosClient } from '~/sonos/client.ts';
 import type { SonosStore } from '~/sonos/store.ts';
 import type { UriRegistry } from '~/sonos/uris.ts';
 import type { SpotifySearch } from '~/sonos/spotify.ts';
+import { NeedsLink } from '~/sonos/music.ts';
 import type { MusicServices } from '~/sonos/music.ts';
 import type { SmapiItem } from '~/sonos/smapi.ts';
 import type { MediaArt } from '~/http/media-art.ts';
@@ -114,6 +115,8 @@ export class SonosBrowser {
         return this.#service(req.sid, req.id ?? 'root', clamp(req.offset));
       case 'sources':
         return this.#sources();
+      case 'catalog':
+        return this.#catalog();
     }
   }
 
@@ -182,17 +185,68 @@ export class SonosBrowser {
      */
     local('A:', 'Music Library', 'playlist');
 
+    /*
+     * Last, and quiet. Detection reads the household, so a service that is set
+     * up but has left no favourite, no saved station and no account entry is
+     * invisible to it — this is the way to that service without putting three
+     * hundred rows on the screen everybody uses.
+     */
+    const more = this.#deps.uris.register(null, 'catalog', '', 'object.container');
+    if (more) {
+      items.push({ u: more, n: 'Add a service…', k: 'playlist', s: 'Not listed above', o: true });
+    }
+
+    return {
+      kind: 'list',
+      items,
+      offset: 0,
+      more: false,
+      ...(items.length === 1
+        ? {
+            note:
+              'No music sources found. Favourite something in the Sonos app, or use ' +
+              '"Add a service" to pick one directly.',
+          }
+        : {}),
+    };
+  }
+
+  /**
+   * Every service Sonos knows about, minus the ones already offered.
+   *
+   * Detection reads the household and can only find what the household has
+   * left a trace of. A service somebody set up in the Sonos app but has never
+   * favourited, never saved a station from, and whose account list the
+   * firmware does not serve, leaves no trace at all — and would otherwise be
+   * permanently unreachable here.
+   *
+   * Deliberately not merged into the source list: it is hundreds of rows, and
+   * putting them on the screen everybody uses is what "a ton of lists I can't
+   * make sense of" was.
+   */
+  async #catalog(): Promise<BrowseResult> {
+    const music = this.#deps.music;
+    await music.ready();
+
+    const already = new Set(music.list().map((s) => s.sid));
+    const items = music
+      .all()
+      .filter((s) => !already.has(s.sid))
+      .map((service): MediaItem => ({
+        u: this.#deps.uris.register(null, 'root', '', 'object.container', service.sid) ?? '',
+        n: service.name,
+        k: 'playlist',
+        sid: service.sid,
+        o: true,
+      }));
+
     return {
       kind: 'list',
       items,
       offset: 0,
       more: false,
       ...(items.length === 0
-        ? {
-            note:
-              'No music sources yet. Favourite something in the Sonos app, or add a ' +
-              'music service there, and it will appear here.',
-          }
+        ? { note: 'Every service this household knows about is already listed.' }
         : {}),
     };
   }
@@ -249,7 +303,15 @@ export class SonosBrowser {
     const service = music.get(sid);
     if (!service) throw new Error('That service is not available here');
 
-    const rows = await music.browse(sid, id, offset);
+    let rows;
+    try {
+      rows = await music.browse(sid, id, offset);
+    } catch (err) {
+      // Not an error to report, an action to offer.
+      if (err instanceof NeedsLink) return needsLink(err);
+      throw err;
+    }
+
     return {
       kind: 'list',
       items: rows.map((row) => this.#shapeService(row, sid)),
@@ -407,7 +469,14 @@ export class SonosBrowser {
       return this.#deps.spotify.search(query);
     }
 
-    const groups = await music.search(sid, query);
+    let groups;
+    try {
+      groups = await music.search(sid, query);
+    } catch (err) {
+      if (err instanceof NeedsLink) return needsLink(err);
+      throw err;
+    }
+
     if (groups.length === 0) {
       return {
         kind: 'list',
@@ -454,6 +523,12 @@ export class SonosBrowser {
     // A service's ids mean nothing to a speaker: they are addresses inside
     // Plex or SoundCloud, and opening one is a call to that service.
     if (playable.sid !== null) return this.#service(playable.sid, target, offset);
+
+    /*
+     * The one synthetic address. Routed here rather than matched on its label
+     * in the panel, so the row and what it opens stay one fact in one place.
+     */
+    if (target === 'catalog') return this.#catalog();
 
     return this.#page(target, offset);
   }
@@ -635,6 +710,18 @@ export function kindOf(upnpClass: string): MediaKind {
   // A favourite can be a container of anything; treating an unknown one as a
   // playlist means the panel offers to open it, which is the safer guess.
   return upnpClass.includes('container') ? 'playlist' : 'track';
+}
+
+/** An empty page that offers to connect the service that refused it. */
+function needsLink(err: NeedsLink): BrowseResult {
+  return {
+    kind: 'list',
+    items: [],
+    offset: 0,
+    more: false,
+    connect: err.sid,
+    note: err.message,
+  };
 }
 
 /**

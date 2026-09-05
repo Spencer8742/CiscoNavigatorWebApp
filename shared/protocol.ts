@@ -373,6 +373,15 @@ export type BrowseRequest =
    */
   | { kind: 'sources' }
   /**
+   * Every service Sonos offers, for adding one detection missed.
+   *
+   * Detection reads the household — its accounts, its favourites, its saved
+   * stations — and a service that is set up but has none of those leaves no
+   * trace to find. This is the deliberate way past that: a long list nobody
+   * has to look at unless something they know they have is absent.
+   */
+  | { kind: 'catalog' }
+  /**
    * The contents of one item — an album's tracks, an artist's albums, a
    * playlist's tracks.
    *
@@ -390,6 +399,15 @@ export interface BrowseList {
   offset: number;
   /** Whether another page exists. */
   more: boolean;
+  /**
+   * This service needs connecting before it can answer, and its `sid`.
+   *
+   * The difference between an explanation and a button. "Connect SoundCloud
+   * first" told somebody what was wrong and gave them nowhere to do anything
+   * about it; carrying the id means the empty state can offer the pairing
+   * flow where they are already looking.
+   */
+  connect?: number;
   /**
    * Why this list is empty, when it is.
    *

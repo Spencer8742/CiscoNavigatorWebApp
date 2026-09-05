@@ -392,6 +392,20 @@ URL and a short code to enter on your phone; the panel notices when you are
 done. Connections are stored in `music-services.json` beside `dashboard.yaml`
 (mode `0600` — they are service credentials) and survive a redeploy.
 
+**Spotify asks for Premium.** That is Spotify's own rule for linking a
+third-party controller, not something this app imposes, and there is nothing
+here that can waive it. If you would rather not link Spotify, set
+`SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` instead — that path reads the
+public catalog with no user login at all, no Premium requirement, and
+**playback still runs through the Spotify account linked in your Sonos app**.
+One Spotify entry either way.
+
+**A service that is not listed** can be added by hand: `Add a service…` at the
+bottom of Browse lists everything Sonos knows about. Detection reads your
+household — its accounts, its favourites, its saved stations — so a service you
+set up but have never favourited and never saved a station from leaves nothing
+to find.
+
 Two things worth knowing:
 
 - **Favourites need none of this.** Anything you have favourited in the Sonos
