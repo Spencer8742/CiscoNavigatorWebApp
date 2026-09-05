@@ -8,8 +8,10 @@ import type { UriRegistry } from '~/sonos/uris.ts';
 import type { SpotifySearch } from '~/sonos/spotify.ts';
 import { NeedsLink } from '~/sonos/music.ts';
 import type { MusicServices } from '~/sonos/music.ts';
+import { canSearch } from '~/sonos/services.ts';
 import type { SmapiItem } from '~/sonos/smapi.ts';
 import type { MediaArt } from '~/http/media-art.ts';
+import type { MediaShelf } from '~/sonos/shelf.ts';
 import {
   BROWSE_PAGE,
   type BrowseRequest,
@@ -79,6 +81,7 @@ export interface SonosBrowserDeps {
   art: MediaArt;
   spotify: SpotifySearch;
   music: MusicServices;
+  shelf: MediaShelf;
 }
 
 export class SonosBrowser {
@@ -109,6 +112,20 @@ export class SonosBrowser {
         return this.#search(req);
       case 'item':
         return this.#item(req.uri, clamp(req.offset));
+      case 'shelf': {
+        const items = this.#deps.shelf.list(req.shelf);
+        return {
+          kind: 'list',
+          items,
+          offset: 0,
+          more: false,
+          ...(req.shelf === 'recent'
+            ? { note: 'Music successfully started from this app appears here.' }
+            : items.length === 0
+              ? { note: 'Pin music from its play menu to keep it here.' }
+              : {}),
+        };
+      }
       case 'queue':
         return this.#queue(req.queueId, clamp(req.offset));
       case 'service':
@@ -395,7 +412,31 @@ export class SonosBrowser {
     const query = typeof req.text === 'string' ? req.text.trim().slice(0, MAX_SEARCH_TEXT) : '';
     if (query.length === 0) return { kind: 'groups', groups: [] };
 
-    if (typeof req.source === 'number') return this.#searchService(req.source, query);
+    if (typeof req.source === 'number') return filterGroups(await this.#searchService(req.source, query), req.media);
+
+    if (req.source === 'all') {
+      const music = this.#deps.music;
+      await music.ready();
+      const sources = music.available().filter(canSearch);
+      const results = await Promise.allSettled([
+        this.#search({ kind: 'search', text: query, source: 'library', media: req.media }),
+        ...sources.map((service) => this.#searchService(service.sid, query)),
+      ]);
+      const groups = results.flatMap((result, index) => {
+        if (result.status !== 'fulfilled' || result.value.kind !== 'groups') return [];
+        const prefix = index === 0 ? 'Sonos' : (sources[index - 1]?.name ?? 'Service');
+        return result.value.groups
+          .filter((group) => !req.media || group.items.some((item) => item.k === req.media))
+          .map((group) => ({
+            name: `${prefix} · ${group.name}`,
+            items: req.media ? group.items.filter((item) => item.k === req.media) : group.items,
+          }))
+          .filter((group) => group.items.length > 0);
+      });
+      return groups.length > 0
+        ? { kind: 'groups', groups }
+        : { kind: 'list', items: [], offset: 0, more: false, note: `Nothing connected matches "${query}".` };
+    }
 
     /*
      * Anything that is not `'library'` or a service id is refused rather than
@@ -454,7 +495,7 @@ export class SonosBrowser {
       ...(saved.length > 0 ? [{ name: 'Saved in Sonos', items: saved }] : []),
       ...results.filter((g) => g.items.length > 0),
     ];
-    if (groups.length > 0) return { kind: 'groups', groups };
+    if (groups.length > 0) return filterGroups({ kind: 'groups', groups }, req.media);
 
     /*
      * A local search that finds nothing is usually a household with no local
@@ -746,6 +787,16 @@ export function kindOf(upnpClass: string): MediaKind {
   // A favourite can be a container of anything; treating an unknown one as a
   // playlist means the panel offers to open it, which is the safer guess.
   return upnpClass.includes('container') ? 'playlist' : 'track';
+}
+
+function filterGroups(result: BrowseResult, media: MediaKind | undefined): BrowseResult {
+  if (!media || result.kind !== 'groups') return result;
+  return {
+    kind: 'groups',
+    groups: result.groups
+      .map((group) => ({ ...group, items: group.items.filter((item) => item.k === media) }))
+      .filter((group) => group.items.length > 0),
+  };
 }
 
 /** An empty page that offers to connect the service that refused it. */

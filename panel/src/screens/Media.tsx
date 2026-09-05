@@ -14,6 +14,7 @@ import { Progress } from '~/components/Progress.tsx';
 import { getToken } from '~/net/auth.ts';
 import { health } from '~/state/ui.ts';
 import * as act from '~/state/actions.ts';
+import type { PlayerQueue } from '@shared/protocol.ts';
 
 /**
  * Now Playing.
@@ -33,6 +34,7 @@ export function Media() {
   const [browsing, setBrowsing] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
   const [tuning, setTuning] = useState(false);
+  const [handoffOpen, setHandoffOpen] = useState(false);
 
   const all = speakers.value;
   // Key by id rather than the array, which is a fresh object on every volume
@@ -70,6 +72,11 @@ export function Media() {
           <span>Browse</span>
         </Pressable>
 
+        <Pressable class="browse-button" onPress={() => setHandoffOpen(true)} ariaLabel="Move playback">
+          <Icon name="next" size="1.1rem" weight={1.9} />
+          <span>Move</span>
+        </Pressable>
+
         {/* Bass, sleep timer, inputs — real but occasional, so one tap away
             rather than on the screen somebody uses while standing here. */}
         <Pressable
@@ -94,7 +101,7 @@ export function Media() {
       ) : null}
 
       <div class="screen-body scroll">
-        <NowPlaying player={player} />
+        <NowPlaying player={player} queue={queue} />
       </div>
 
       {/* The queue gets its own entry rather than living inside Now Playing:
@@ -152,6 +159,18 @@ export function Media() {
           onClose={() => setQueueOpen(false)}
         />
       ) : null}
+
+      {handoffOpen ? (
+        <HandoffSheet
+          player={player}
+          onMove={(target) => {
+            act.handoff(player.id, target);
+            setChosen(target);
+            setHandoffOpen(false);
+          }}
+          onClose={() => setHandoffOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -197,7 +216,7 @@ function NoPlayers() {
   );
 }
 
-function NowPlaying({ player }: { player: SpeakerInfo }) {
+function NowPlaying({ player, queue }: { player: SpeakerInfo; queue: PlayerQueue | undefined }) {
   const media = player.media;
   const playing = player.state === 'playing';
   const off = !player.available || player.powered === false;
@@ -277,6 +296,29 @@ function NowPlaying({ player }: { player: SpeakerInfo }) {
           ) : null}
         </div>
 
+        {queue ? (
+          <div class="np-modes" role="group" aria-label="Queue playback mode">
+            <Pressable
+              class={queue.shuffle ? 'np-mode is-on' : 'np-mode'}
+              onPress={() => act.setShuffle(player.id, !queue.shuffle)}
+              ariaPressed={queue.shuffle}
+              ariaLabel="Shuffle"
+            >
+              <Icon name="shuffle" size="1.1rem" weight={2} />
+              <span>Shuffle</span>
+            </Pressable>
+            <Pressable
+              class={queue.repeat !== 'off' ? 'np-mode is-on' : 'np-mode'}
+              onPress={() => act.setRepeat(player.id, nextRepeat(queue.repeat))}
+              ariaPressed={queue.repeat !== 'off'}
+              ariaLabel={`Repeat ${queue.repeat}`}
+            >
+              <Icon name="repeat" size="1.1rem" weight={2} />
+              <span>{queue.repeat === 'one' ? 'Repeat one' : queue.repeat === 'all' ? 'Repeat all' : 'Repeat'}</span>
+            </Pressable>
+          </div>
+        ) : null}
+
         {player.volume !== null ? (
           <div class="np-volume">
             <Pressable
@@ -314,6 +356,55 @@ function NowPlaying({ player }: { player: SpeakerInfo }) {
       </div>
     </div>
   );
+}
+
+function HandoffSheet({
+  player,
+  onMove,
+  onClose,
+}: {
+  player: SpeakerInfo;
+  onMove: (target: string) => void;
+  onClose: () => void;
+}) {
+  const current = new Set(player.members.length > 0 ? player.members : [player.id]);
+  const choices = speakers.value.filter((speaker) => !speaker.isGroup && speaker.available && !current.has(speaker.id));
+  return (
+    <div class="sheet-layer">
+      <div class="sheet-scrim" onPointerDown={onClose} />
+      <div class="sheet group-sheet" role="dialog" aria-label="Move playback" aria-modal="true">
+        <div class="sheet-head">
+          <div class="sheet-titles">
+            <h2 class="sheet-title">Move playback</h2>
+            <div class="sheet-subtitle">Keep the current queue and position</div>
+          </div>
+          <Pressable class="sheet-close p-sm" onPress={onClose} ariaLabel="Close">
+            <Icon name="close" size="1.3rem" weight={2} />
+          </Pressable>
+        </div>
+        <div class="sheet-body scroll">
+          {choices.length === 0 ? (
+            <div class="browse-state"><p class="browse-state-title">No other rooms available</p></div>
+          ) : choices.map((speaker) => (
+            <Pressable key={speaker.id} as="div" class="speaker-row" onPress={() => onMove(speaker.id)} ariaLabel={`Move to ${speaker.name}`}>
+              <div class="speaker-icon"><Icon name="speaker" size="1.4rem" weight={1.7} /></div>
+              <div class="speaker-meta">
+                <div class="speaker-name truncate">{speaker.name}</div>
+                <div class="speaker-sub truncate">Move queue here</div>
+              </div>
+              <Icon name="next" size="1.1rem" weight={2} />
+            </Pressable>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function nextRepeat(value: string): 'off' | 'one' | 'all' {
+  if (value === 'off') return 'all';
+  if (value === 'all') return 'one';
+  return 'off';
 }
 
 /**

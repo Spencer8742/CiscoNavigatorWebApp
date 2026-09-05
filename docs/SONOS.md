@@ -23,9 +23,15 @@ The panel therefore opens playback options when they are tapped instead of
 showing a chevron that leads to an empty folder. Local-library favourites still
 drill into their inner Sonos object id.
 
-Search covers favourite titles, artists, and albums, plus an indexed local
-library. The Music Library row is hidden when `A:` contains only Sonos's empty
+Search can query everything available to this controller at once or one source
+at a time, with filters for songs, albums, artists, playlists, radio, and
+podcasts. The Music Library row is hidden when `A:` contains only Sonos's empty
 category shells and `A:TRACKS` contains no media.
+
+The app also keeps shared, persistent Pinned and Recent shelves. Recent means
+music successfully started through this app because Sonos publishes no full
+household play history. Now Playing includes shuffle and repeat, and Move
+transfers the current queue and position to another room.
 
 - AppLink requests use the documented client fields and read only the
   `authorizeAccount/deviceLink` response. Both linking modes return the private
@@ -68,7 +74,8 @@ shuffle, repeat, grouping, the queue, favourites, playlists, the local library,
 radio, every music service the household has linked, and search across all of
 them — plus the sleep timer, tone controls, group volume and physical inputs.
 
-Play history remains the one thing with no Sonos equivalent; §3 says why.
+Sonos still has no household-wide history feed; §3 explains why Recent records
+plays started through this app.
 
 What each phase delivered, and what it deliberately did not, is in **§15**.
 
@@ -166,12 +173,10 @@ table only to record what it was doing well; §3 accounts for what goes with it.
 Three things go away. Two are replaceable, one is not, and pretending
 otherwise is how a plan gets found out on a wall six weeks later.
 
-**Recently played is gone and has no Sonos equivalent.** Sonos exposes no play
-history — not locally, not in the cloud API. The `Recent` tab is currently
-`music/recently_played_items`, a real history including things you streamed and
-do not own. *Mitigation:* the backend records what it itself enqueues to a
+**Recently played has no Sonos equivalent.** Sonos exposes no play history —
+not locally, not in the cloud API. The backend records what it itself enqueues to a
 small JSON file beside `dashboard.yaml`, the same place `panel-prefs.json` and
-`tv-keys.json` already live. That gives "recently played **from this panel**",
+`tv-keys.json` already live. That gives "recently played **from this app**",
 which is honestly a narrower thing, and the tab should be labelled to match.
 Anything played from the Sonos app will not appear. This is a real regression;
 it is small, and it is the price of the ask.

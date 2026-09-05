@@ -1207,6 +1207,34 @@
   font-weight: 600;
 }
 
+.browse-filters {
+  flex: 0 0 auto;
+  display: flex;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-5);
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.browse-filter {
+  flex: 0 0 auto;
+  min-height: 2.35rem;
+  padding: 0 var(--s-3);
+  border-radius: var(--r-full);
+  background: var(--surface-1);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-dim);
+  font-size: 0.8125rem;
+  font-weight: 560;
+  white-space: nowrap;
+}
+
+.browse-filter.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent-dim);
+}
+
 /* ── Paging and states ────────────────────────────────────────────────── */
 
 .browse-pager {

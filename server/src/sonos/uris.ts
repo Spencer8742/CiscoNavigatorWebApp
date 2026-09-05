@@ -191,6 +191,22 @@ export class UriRegistry {
     return key;
   }
 
+  /** Restore a server-persisted entry without exposing its URI to the panel. */
+  restore(playable: Playable): string | null {
+    const key = this.register(
+      playable.uri,
+      playable.objectId,
+      playable.metadata,
+      playable.style === 'stream'
+        ? 'object.item.audioItem.audioBroadcast'
+        : playable.style === 'container'
+          ? 'object.container'
+          : 'object.item.audioItem.musicTrack',
+      playable.sid,
+    );
+    return key;
+  }
+
   /**
    * Look a key up.
    *
