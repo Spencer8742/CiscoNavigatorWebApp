@@ -83,9 +83,22 @@ export class MusicServiceCatalog {
   }
 
   /** Services this household has linked, or that need no linking at all. */
+  /**
+   * Services this household actually has.
+   *
+   * The bar is an ACCOUNT, not an auth policy. `ListAvailableServices` is
+   * Sonos's whole catalog — every service it supports in this region, hundreds
+   * of them — and a great many need no login. Passing those through put a row
+   * on screen for every podcast aggregator Sonos has ever heard of, which is
+   * what "a ton of lists I can't make sense of" looks like from the sofa.
+   *
+   * `sn` is set from `/status/accounts` and from URIs inside the household's
+   * own favourites, so it means "somebody added this in the Sonos app" — which
+   * is the question being asked.
+   */
   list(): MusicService[] {
     return [...this.#services.values()]
-      .filter((s) => s.sn !== null || s.auth === 'Anonymous')
+      .filter((s) => s.sn !== null)
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
@@ -115,7 +128,19 @@ export class MusicServiceCatalog {
     const catalog = await this.#catalog(speaker);
     if (catalog.size === 0) return;
 
+    /*
+     * Two sources, and the second is the one that keeps working.
+     *
+     * `/status/accounts` is not served by every firmware. Favourites are: each
+     * one carries a URI Sonos itself wrote, naming the service and the account
+     * it plays through. Between them, a service the household genuinely uses
+     * is found whether or not the status page exists.
+     */
     const linked = await this.#accounts(speaker);
+    for (const [sid, sn] of await this.#inUse(speaker)) {
+      if (!linked.has(sid)) linked.set(sid, sn);
+    }
+
     for (const [sid, sn] of linked) {
       const service = catalog.get(sid);
       if (service) service.sn = sn;
@@ -209,6 +234,41 @@ export class MusicServiceCatalog {
     } catch (err) {
       log.debug(`No account list from ${host}: ${message(err)}`);
     }
+    return out;
+  }
+
+  /**
+   * Which services the household's own content actually references.
+   *
+   * Favourites and Sonos playlists are full of URIs the speaker built, and
+   * each carries `sid=` and `sn=`. Reading them is ground truth: a service
+   * that something is favourited from is a service this household has,
+   * whatever `/status/accounts` does or does not say.
+   */
+  async #inUse(host: string): Promise<Map<number, number>> {
+    const out = new Map<number, number>();
+
+    await Promise.all(
+      ['FV:2', 'SQ:'].map(async (objectId) => {
+        try {
+          const response = await this.#client.call(host, 'ContentDirectory', 'Browse', {
+            ObjectID: objectId,
+            BrowseFlag: 'BrowseDirectChildren',
+            Filter: '*',
+            StartingIndex: 0,
+            // Enough to see every service in use; not a page to render.
+            RequestedCount: 200,
+            SortCriteria: '',
+          });
+          for (const [sid, sn] of accountsFromUris(textOf(response, 'Result') ?? '')) {
+            out.set(sid, sn);
+          }
+        } catch {
+          // A household with no favourites is a normal state, not a failure.
+        }
+      }),
+    );
+
     return out;
   }
 

@@ -1,6 +1,6 @@
 import { logger } from '~/lib/log.ts';
 import { artUrl, effectiveClass, parseDidlList, type DidlEntry } from '~/sonos/didl.ts';
-import { integer } from '~/sonos/soap.ts';
+import { integer, SoapError } from '~/sonos/soap.ts';
 import { textOf } from '~/sonos/xml.ts';
 import type { SonosClient } from '~/sonos/client.ts';
 import type { SonosStore } from '~/sonos/store.ts';
@@ -118,32 +118,119 @@ export class SonosBrowser {
   }
 
   /**
-   * The household's music services, as rows.
+   * Everywhere this household's music comes from.
    *
-   * Each is registered as an unplayable container rooted at the service's own
-   * top level, so opening one goes through exactly the same drill-down as
-   * opening an album. A service that is not connected yet still gets a row —
-   * it says so, and tapping it is how somebody connects it.
+   * The top of the browser. Built from what the household ACTUALLY has rather
+   * than from a fixed list of tabs: a house with no NAS share is not offered
+   * Albums, and a house with Plex finds Plex here rather than behind a tab
+   * called "Services".
+   *
+   * Each local source is checked for emptiness first — one `Browse` asking for
+   * a single row, which answers with the real `TotalMatches` — so the count in
+   * the subtitle is a fact and an empty source can be left out entirely
+   * instead of being a row that leads nowhere.
    */
   async #sources(): Promise<BrowseResult> {
     const music = this.#deps.music;
-    await music.ready();
+    const host = this.#anyHost();
 
-    const items = music.list().map((service): MediaItem => {
-      const ready = service.auth === 'Anonymous' || music.linked(service.sid);
+    // Services and the local counts are independent; neither should wait.
+    const [, counts] = await Promise.all([music.ready(), this.#counts(host)]);
+
+    const items: MediaItem[] = [];
+
+    const local = (objectId: string, name: string, kind: MediaKind): void => {
+      const total = counts.get(objectId) ?? 0;
+      if (total === 0) return;
+      const key = this.#deps.uris.register(null, objectId, '', 'object.container');
+      if (!key) return;
+      items.push({
+        u: key,
+        n: name,
+        k: kind,
+        s: `${total} ${total === 1 ? 'item' : 'items'}`,
+        // A place, not a record: no play button, and no "Play all" inside it.
+        o: true,
+      });
+    };
+
+    // Favourites first, always: it is what anybody reaches for, it holds
+    // things from every service, and it needs no login on this side.
+    local(LIBRARY['favorites'] as string, 'Favourites', 'playlist');
+    local(LIBRARY['playlists'] as string, 'Sonos Playlists', 'playlist');
+
+    for (const service of music.list()) {
+      const key = this.#deps.uris.register(null, 'root', '', 'object.container', service.sid);
+      if (!key) continue;
       const item: MediaItem = {
-        u: this.#deps.uris.register(null, 'root', '', 'object.container', service.sid) ?? '',
+        u: key,
         n: service.name,
         k: 'playlist',
-        // The one place a row carries a service id, so the panel can tell
-        // "open this" from "connect this first" without reading the subtitle.
         sid: service.sid,
+        o: true,
       };
-      if (!ready) item.s = 'Not connected';
-      return item;
-    });
+      if (!music.linked(service.sid) && service.auth !== 'Anonymous') item.s = 'Not connected';
+      items.push(item);
+    }
 
-    return { kind: 'list', items, offset: 0, more: false };
+    local(LIBRARY['radio'] as string, 'Radio Stations', 'radio');
+    /*
+     * `A:` is the library's own root and answers with its categories —
+     * Artists, Albums, Genres, Composers, Tracks. Browsing it rather than
+     * listing four object ids here means the categories are whatever this
+     * household's share actually has.
+     */
+    local('A:', 'Music Library', 'playlist');
+
+    return {
+      kind: 'list',
+      items,
+      offset: 0,
+      more: false,
+      ...(items.length === 0
+        ? {
+            note:
+              'No music sources yet. Favourite something in the Sonos app, or add a ' +
+              'music service there, and it will appear here.',
+          }
+        : {}),
+    };
+  }
+
+  /**
+   * How many items each local source holds.
+   *
+   * One `Browse` apiece asking for a single row: Sonos answers with the real
+   * `TotalMatches` regardless, so this costs almost nothing and turns "show a
+   * row that leads to an empty screen" into "do not show that row".
+   *
+   * A source that errors counts as zero. On this screen the difference between
+   * "empty" and "unreachable" is not worth a row that cannot be opened.
+   */
+  async #counts(host: string): Promise<Map<string, number>> {
+    const wanted = [LIBRARY['favorites'], LIBRARY['playlists'], LIBRARY['radio'], 'A:'];
+    const out = new Map<string, number>();
+
+    await Promise.all(
+      wanted.map(async (objectId) => {
+        if (!objectId) return;
+        try {
+          const response = await this.#deps.client.call(host, 'ContentDirectory', 'Browse', {
+            ObjectID: objectId,
+            BrowseFlag: 'BrowseDirectChildren',
+            Filter: '*',
+            StartingIndex: 0,
+            RequestedCount: 1,
+            SortCriteria: '',
+          });
+          out.set(objectId, integer(textOf(response, 'TotalMatches')) ?? 0);
+        } catch {
+          out.set(objectId, 0);
+        }
+      }),
+    );
+
+    return out;
   }
 
   /* ── Music services ────────────────────────────────────────────────────*/
@@ -198,6 +285,8 @@ export class SonosBrowser {
           : (this.#deps.uris.register(null, row.id, '', 'object.container', sid) ?? ''),
       n: row.title,
       k: kindOf(playable?.upnpClass ?? 'object.container'),
+      // The service said this row cannot be played on its own.
+      ...(row.canPlay && playable ? {} : { o: true as const }),
     };
 
     const sub = [row.artist, row.album].filter((p): p is string => !!p);
@@ -277,7 +366,27 @@ export class SonosBrowser {
       }),
     );
 
-    return { kind: 'groups', groups: results.filter((g) => g.items.length > 0) };
+    const groups = results.filter((g) => g.items.length > 0);
+    if (groups.length > 0) return { kind: 'groups', groups };
+
+    /*
+     * A local search that finds nothing is usually a household with no local
+     * library at all, not a household whose library lacks that word. Checking
+     * costs one Browse and turns a blank screen into an answer.
+     */
+    const total = (await this.#counts(this.#anyHost())).get('A:') ?? 0;
+    return {
+      kind: 'list',
+      items: [],
+      offset: 0,
+      more: false,
+      note:
+        total === 0
+          ? 'There is no music library on this household to search. Search a music ' +
+            'service instead, or add a share in the Sonos app.'
+          : `Nothing in the library matches "${query}". Library search matches the ` +
+            'start of a name rather than any part of it.',
+    };
   }
 
   /**
@@ -299,6 +408,16 @@ export class SonosBrowser {
     }
 
     const groups = await music.search(sid, query);
+    if (groups.length === 0) {
+      return {
+        kind: 'list',
+        items: [],
+        offset: 0,
+        more: false,
+        note: `${service?.name ?? 'That service'} found nothing for "${query}".`,
+      };
+    }
+
     return {
       kind: 'groups',
       groups: groups.map((group) => ({
@@ -386,7 +505,25 @@ export class SonosBrowser {
   /** One page of one container, shaped for the panel. */
   async #page(objectId: string, offset: number): Promise<BrowseResult> {
     const host = this.#anyHost();
-    const raw = await this.#browseRaw(host, objectId, offset);
+
+    let raw: { entries: DidlEntry[]; total: number };
+    try {
+      raw = await this.#browseRaw(host, objectId, offset);
+    } catch (err) {
+      /*
+       * A container this household does not have answers with a UPnP fault
+       * rather than an empty list — `R:0/0` on a house that has never used
+       * TuneIn, `A:ALBUM` with no share. The SPEAKER ANSWERED, so this is a
+       * fact about the household and not a failure: it becomes the same empty
+       * list, with the same explanation, as a container that exists and holds
+       * nothing.
+       *
+       * A transport failure still throws. "Sonos could not answer that" is
+       * the right thing to say when nothing answered at all.
+       */
+      if (!(err instanceof SoapError) || err.code === null) throw err;
+      return { kind: 'list', items: [], offset, more: false, note: emptyNote(objectId) };
+    }
 
     const items = raw.entries.map((entry) => this.#shape(entry, host));
 
@@ -399,6 +536,7 @@ export class SonosBrowser {
        * rather than the guess that a full page implied more.
        */
       more: raw.total > offset + items.length,
+      ...(items.length === 0 && offset === 0 ? { note: emptyNote(objectId) } : {}),
     };
   }
 
@@ -424,6 +562,13 @@ export class SonosBrowser {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log.warn(`Browse of ${objectId} failed: ${message}`);
+      /*
+       * A UPnP fault is RETHROWN AS ITSELF so the caller can tell "this
+       * household has no such container" from "nothing answered". Flattening
+       * both into one sentence is what turned an ordinary empty shelf into
+       * "Sonos could not answer that".
+       */
+      if (err instanceof SoapError && err.code !== null) throw err;
       throw new Error('Sonos could not answer that');
     }
   }
@@ -490,6 +635,33 @@ export function kindOf(upnpClass: string): MediaKind {
   // A favourite can be a container of anything; treating an unknown one as a
   // playlist means the panel offers to open it, which is the safer guess.
   return upnpClass.includes('container') ? 'playlist' : 'track';
+}
+
+/**
+ * Why a container came back empty.
+ *
+ * Every one of these is a household that is working correctly and simply does
+ * not have the thing — no NAS share, no saved stations, nothing favourited
+ * yet. On a wall panel that is indistinguishable from a broken integration
+ * unless it is said out loud, which is the entire reason these strings exist.
+ */
+function emptyNote(objectId: string): string {
+  if (objectId.startsWith('A:')) {
+    return (
+      'Nothing here. This is the music library on a NAS or computer share — ' +
+      'add one under Settings → System → Music Library in the Sonos app.'
+    );
+  }
+  if (objectId.startsWith('R:')) {
+    return 'No saved radio stations. Star one in the Sonos app and it will appear here.';
+  }
+  if (objectId.startsWith('SQ:')) {
+    return 'No Sonos playlists yet. Save a queue as a playlist in the Sonos app.';
+  }
+  if (objectId.startsWith('FV:')) {
+    return 'Nothing favourited yet. Anything you star in the Sonos app shows up here.';
+  }
+  return 'Nothing here.';
 }
 
 /** "Artist · Album" for a track, "Artist" for an album, nothing for the rest. */
