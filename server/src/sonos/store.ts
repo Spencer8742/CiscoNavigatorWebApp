@@ -541,6 +541,18 @@ export class SonosStore {
   /* ── Publishing ────────────────────────────────────────────────────────*/
 
   #touch(): void {
+    /*
+     * A full read publishes once, at the end.
+     *
+     * Subscribing makes each speaker send its current state immediately, so
+     * those events land while `#readAll` is still working through the rest of
+     * the household. Publishing on one of them puts a half-read household on
+     * screen — some speakers with volumes, some without — for as long as the
+     * remaining reads take. Nothing is lost by waiting: the events have
+     * already been written into the maps, and `#publishNow` sends everything.
+     */
+    if (this.#refreshing) return;
+
     this.#dirty = true;
     if (this.#publishTimer) return;
     this.#publishTimer = setTimeout(() => {

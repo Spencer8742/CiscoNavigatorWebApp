@@ -371,7 +371,12 @@ describe('speakers from Sonos', () => {
   test('each speaker is read at its own address', async () => {
     const panel = new TestPanel(ctx.port);
     await panel.connect();
-    await waitFor(() => panel.player('RINCON_LIVING')?.volume !== null, 'volumes');
+    // Every volume, not just the first: waiting on one speaker made this pass
+    // or fail depending on the order four concurrent reads happened to finish.
+    await waitFor(
+      () => panel.players.length === 4 && panel.players.every((p) => p.volume !== null),
+      'every volume',
+    );
 
     assert.equal(panel.player('RINCON_LIVING').volume, 35);
     assert.equal(panel.player('RINCON_KITCHEN').volume, 18);
