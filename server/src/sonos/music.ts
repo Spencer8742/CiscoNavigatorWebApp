@@ -97,6 +97,19 @@ export class MusicServices {
    * the process, and re-tried on restart in case a service changes its mind.
    */
   #refused = new Map<number, string>();
+  /**
+   * The last thing a service said when connecting it failed, whatever it was.
+   *
+   * `#refused` covers one specific answer — the service rejecting this app as
+   * a caller — and suppresses the button. Everything else a service can say is
+   * shown in a sheet that closes, which means the answer is gone by the time
+   * anybody could act on it or repeat it. This keeps it on the service's own
+   * page, so pressing Connect once leaves a record of what happened.
+   *
+   * Cleared the moment a link starts working, because a stale explanation of a
+   * failure is worse than none.
+   */
+  #lastLinkError = new Map<number, string>();
   #pending = new Map<number, PendingLink>();
   #deviceId: string;
   #refreshedAt = 0;
@@ -285,6 +298,9 @@ export class MusicServices {
     try {
       const { prompt, linkCode } = await this.#clientFor(sid).beginLink();
       this.#pending.set(sid, { sid, linkCode, prompt, startedAt: Date.now() });
+      // A link that started is the current truth about this service; whatever
+      // it said last time no longer describes it.
+      this.#clearLinkError(sid);
       log.info(`Linking ${service.name}: ${prompt.url}`);
       return prompt;
     } catch (err) {
@@ -320,6 +336,7 @@ export class MusicServices {
      */
     if (/NOT_AUTHORIZED|Unauthorized|FORBIDDEN/i.test(fault)) {
       this.#refused.set(sid, fault);
+      this.#lastLinkError.delete(sid);
       this.#onChange?.();
       return new Error(
         `${name} does not accept connections from this app. Music services can ` +
@@ -328,9 +345,19 @@ export class MusicServices {
       );
     }
 
-    return new Error(
-      fault ? `${name} would not start: ${fault}` : `${name} would not start a connection`,
-    );
+    /*
+     * Anything else is worth keeping ON the service rather than only in a
+     * sheet somebody is about to close. Each service answers for itself here —
+     * one refusing this app says nothing about the next — so the only way to
+     * find out what a given service does is to try it, and the only way that
+     * try is any use is if its answer survives.
+     */
+    const explained = fault
+      ? `${name} would not start: ${fault}`
+      : `${name} would not start a connection`;
+    this.#lastLinkError.set(sid, explained);
+    this.#onChange?.();
+    return new Error(explained);
   }
 
   /**
@@ -353,6 +380,7 @@ export class MusicServices {
 
       this.#tokens.set(sid, token);
       this.#pending.delete(sid);
+      this.#clearLinkError(sid);
       await this.#save();
 
       log.info(`Connected ${this.#catalog.get(sid)?.name ?? sid}`);
@@ -364,11 +392,21 @@ export class MusicServices {
     }
   }
 
-  /** Forget a service's token. */
+  /**
+   * Forget a service's token.
+   *
+   * Also forgets that it ever refused us. Disconnecting is the one moment
+   * somebody has said "start this over", and a service that answered
+   * `NOT_AUTHORIZED` a month ago may not today — holding the refusal past an
+   * explicit reset would make it permanent for reasons the person cannot see.
+   */
   async unlink(sid: number): Promise<void> {
     this.#tokens.delete(sid);
     this.#pending.delete(sid);
+    this.#refused.delete(sid);
+    this.#lastLinkError.delete(sid);
     await this.#save();
+    this.#onChange?.();
     log.info(`Disconnected ${this.#catalog.get(sid)?.name ?? sid}`);
   }
 
@@ -379,6 +417,20 @@ export class MusicServices {
   /** Why this service will not let this app link, if it has said so. */
   refused(sid: number): string | null {
     return this.#refused.get(sid) ?? null;
+  }
+
+  /**
+   * What went wrong the last time connecting this service was tried.
+   *
+   * Distinct from `refused`: that one is final and hides the button, this one
+   * is a report on an attempt that could reasonably be made again.
+   */
+  lastLinkError(sid: number): string | null {
+    return this.#lastLinkError.get(sid) ?? null;
+  }
+
+  #clearLinkError(sid: number): void {
+    if (this.#lastLinkError.delete(sid)) this.#onChange?.();
   }
 
   /* ── Plumbing ──────────────────────────────────────────────────────────*/

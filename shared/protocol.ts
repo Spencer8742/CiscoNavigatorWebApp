@@ -314,6 +314,15 @@ export interface MusicSource {
    * button and says this instead.
    */
   blocked?: string;
+  /**
+   * What the service said the last time connecting it was tried and failed.
+   *
+   * Not the same as `blocked`, which is final. This is an attempt worth making
+   * again, reported where somebody can read it — a Connect sheet closes, and
+   * with it the only account of what actually happened. Each service answers
+   * for itself, so this is how one is told apart from the next.
+   */
+  lastError?: string;
 }
 
 /** Where a device link has got to. */

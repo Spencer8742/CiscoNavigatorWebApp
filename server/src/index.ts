@@ -159,6 +159,7 @@ async function main(): Promise<void> {
   const musicSourceList = (): MusicSource[] =>
     musicServices.list().map((service) => {
       const refused = musicServices.refused(service.sid);
+      const lastError = musicServices.lastLinkError(service.sid);
       return {
         sid: service.sid,
         name: service.name,
@@ -176,6 +177,7 @@ async function main(): Promise<void> {
                 `${service.name} does not accept connections from this app. ` +
                 'Anything you favourite in the Sonos app still plays here.',
             }),
+        ...(lastError === null ? {} : { lastError }),
       };
     });
 

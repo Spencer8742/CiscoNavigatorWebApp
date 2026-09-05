@@ -1667,6 +1667,55 @@ describe('music services', () => {
   });
 
   /*
+   * …and that answer has to OUTLIVE the sheet it was shown in.
+   *
+   * Services differ from one another — one refusing this app says nothing
+   * about the next — so the only way to learn what a given service does is to
+   * press Connect and read what came back. A message that vanishes with the
+   * sheet makes that experiment worthless: somebody presses the button on four
+   * services and ends up knowing nothing about any of them.
+   *
+   * Unlike `blocked`, this does not withdraw the button. The attempt can
+   * reasonably be made again; the report is what changes.
+   */
+  test('what a service said when connecting failed stays on the service', async () => {
+    ctx.smapi.refuseLink = 'Client.AccountRequiresUpgrade';
+
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+    await panel.browse({ kind: 'sources' });
+
+    await assert.rejects(() => panel.link(200, 'begin'));
+
+    const reported = await waitFor(
+      () => panel.sources.find((s) => s.sid === 200 && s.lastError),
+      'the failure to reach the panel',
+    );
+    assert.match(reported.lastError, /AccountRequiresUpgrade/, "the service's own words");
+    assert.equal(reported.linkable, true, 'still worth trying again');
+    assert.equal(reported.blocked, undefined, 'this is not a wall');
+
+    /*
+     * And it clears the moment the service starts working, because a stale
+     * account of a failure is worse than none — it describes a state the
+     * service is no longer in.
+     */
+    ctx.smapi.refuseLink = null;
+    await panel.link(200, 'begin');
+
+    await waitFor(
+      () => panel.sources.find((s) => s.sid === 200)?.lastError === undefined,
+      'the stale failure to be dropped',
+    );
+
+    // Leave no half-finished link behind: `begin` is idempotent within its TTL
+    // and would hand the next test a prompt instead of calling the service.
+    await panel.link(200, 'forget');
+    panel.close();
+  });
+
+  /*
    * The answer a real household got from SoundCloud, and what it means.
    *
    * `Client.NOT_AUTHORIZED` to the FIRST call of a link — before anybody has
