@@ -55,7 +55,9 @@ ui:
 
 # ─── Idle / screensaver behaviour ──────────────────────────────────────────
 idle:
-  # Seconds of no touch before the photo screensaver takes over. 0 disables.
+  # Seconds of no touch before the screensaver takes over. While Sonos is
+  # playing it shows artwork, title, artist and time; otherwise it shows the
+  # photo slideshow. 0 disables.
   timeoutSeconds: 180
 
   # Seconds of no touch before returning to the Home screen from any other
