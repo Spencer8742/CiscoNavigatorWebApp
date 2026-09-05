@@ -1106,37 +1106,6 @@
   border-color: var(--accent-dim);
 }
 
-/* Where a search looks. Sits between the tab strip and the search box, so the
-   choice is visible before typing rather than discovered after an empty
-   result — there is no "search everything" to fall back on. */
-.browse-sources {
-  flex: 0 0 auto;
-  display: flex;
-  gap: var(--s-2);
-  padding: var(--s-3) var(--s-5) 0;
-}
-
-.browse-source {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  min-height: 2.5rem;
-  padding: 0 var(--s-4);
-  border-radius: var(--r-full);
-  background: var(--surface-1);
-  border: 1px solid var(--border-subtle);
-  color: var(--text-dim);
-  font-size: 0.9375rem;
-  font-weight: 560;
-  white-space: nowrap;
-}
-
-.browse-source.is-active {
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-color: var(--accent-dim);
-}
-
 .browse-body {
   flex: 1 1 auto;
   min-height: 0;
@@ -1298,6 +1267,17 @@
   line-height: 1.6;
 }
 
+.browse-note {
+  margin: var(--s-3) var(--s-5);
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--surface-1);
+  color: var(--text-dim);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
 /* ── Play options ─────────────────────────────────────────────────────── */
 
 /* The nested sheet sits above the browser it was opened from. */
@@ -1419,59 +1399,6 @@
   margin: 0 0 var(--s-3);
   color: var(--text-faint);
   font-size: 0.9375rem;
-}
-
-/* ── Connecting a music service ───────────────────────────────────────── */
-
-.link-body {
-  text-align: center;
-  padding: var(--s-4) var(--s-4) var(--s-5);
-}
-
-.link-step {
-  margin: 0 0 var(--s-2);
-  color: var(--text-dim);
-  font-size: 1rem;
-}
-
-/*
- * The URL and the code are read off the screen and typed on a phone, so they
- * are sized to be legible from standing distance and set in a face where a
- * zero cannot be mistaken for an O.
- */
-.link-url,
-.link-code {
-  margin: 0 0 var(--s-4);
-  padding: var(--s-3);
-  border-radius: var(--r-lg);
-  background: var(--surface-1);
-  border: 1px solid var(--border-subtle);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  /* Long enough to wrap on a narrow panel rather than overflow it. */
-  overflow-wrap: anywhere;
-}
-
-.link-url { font-size: 1.0625rem; }
-
-.link-code {
-  font-size: 1.75rem;
-  font-weight: 620;
-  letter-spacing: 0.12em;
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-color: var(--accent-dim);
-}
-
-.link-hint {
-  margin: 0;
-  color: var(--text-dim);
-  font-size: 0.9375rem;
-}
-
-.link-error {
-  margin: 0;
-  color: var(--danger);
-  font-size: 1rem;
 }
 
 /* ── Up next ──────────────────────────────────────────────────────────── */

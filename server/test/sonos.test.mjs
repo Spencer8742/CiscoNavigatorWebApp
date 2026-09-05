@@ -1581,7 +1581,7 @@ describe('music services', () => {
    *
    * The bar is an ACCOUNT: somebody added it in the Sonos app.
    */
-  test('the catalog is not the household — only added services are listed', async () => {
+  test('the browse root contains household content rather than provider logins', async () => {
     ctx.sonos.services = [
       { sid: 200, name: 'Testify', uri: ctx.smapi.url, auth: 'DeviceLink', capabilities: 563 },
       // Three the household has never added. Two need no login at all, which
@@ -1599,37 +1599,25 @@ describe('music services', () => {
     const list = await panel.browse({ kind: 'sources' });
     const names = list.items.map((i) => i.n);
 
-    assert.ok(names.includes('Testify'), 'the one with an account');
+    assert.ok(names.includes('Favourites'));
+    assert.ok(names.includes('Sonos Playlists'));
+    assert.ok(!names.includes('Testify'), 'provider accounts are not offered as new app logins');
     assert.ok(!names.includes('Podcast Firehose'), 'anonymous is not the same as added');
     assert.ok(!names.includes('Regional Radio'));
     assert.ok(!names.includes('Some Streamer'));
+    assert.match(list.note, /accounts already connected in the Sonos app/i);
 
     panel.close();
   });
 
-  test('a service this app is not connected to is listed, and says so', async () => {
+  test('a direct provider browse still explains when separate credentials are required', async () => {
     const panel = new TestPanel(ctx.port);
     await panel.connect();
     await waitFor(() => panel.players.length > 0, 'players');
 
-    const list = await panel.browse({ kind: 'sources' });
-    const row = list.items.find((i) => i.n === 'Testify');
-    assert.ok(row, 'the service is offered');
-    assert.equal(row.s, 'Connect to browse');
-
-    // A key, not a URI: the same rule as everywhere else in this browser.
-    assert.match(row.u, /^[0-9a-f]{16}$/);
-
-    /*
-     * And browsing it comes back as something to ACT on rather than an error.
-     *
-     * "Connect SoundCloud first" on a screen with no button was the whole
-     * complaint: an explanation is not an affordance. The `connect` field
-     * carries the service id so the empty state can offer the pairing flow
-     * where somebody is already looking.
-     */
+    await panel.browse({ kind: 'sources' });
     ctx.smapi.anonymous = false;
-    const refused = await panel.browse({ kind: 'item', uri: row.u });
+    const refused = await panel.browse({ kind: 'service', sid: 200 });
     assert.equal(refused.items.length, 0);
     assert.equal(refused.connect, 200, 'names the service to connect');
     assert.match(refused.note, /connect/i);
@@ -1798,10 +1786,8 @@ describe('music services', () => {
     await panel.connect();
     await waitFor(() => panel.players.length > 0, 'players');
 
-    const list = await panel.browse({ kind: 'sources' });
-    const row = list.items.find((i) => i.n === 'Testify');
-
-    const top = await panel.browse({ kind: 'item', uri: row.u });
+    await panel.browse({ kind: 'sources' });
+    const top = await panel.browse({ kind: 'service', sid: 200 });
     assert.deepEqual(top.items.map((i) => i.n), ['Stations', 'My Playlists']);
 
     // Drill in. The service's own ids are addresses inside the service, and
@@ -1834,9 +1820,8 @@ describe('music services', () => {
     await panel.connect();
     await waitFor(() => panel.players.length > 0, 'players');
 
-    const list = await panel.browse({ kind: 'sources' });
-    const row = list.items.find((i) => i.n === 'Testify');
-    const top = await panel.browse({ kind: 'item', uri: row.u });
+    await panel.browse({ kind: 'sources' });
+    const top = await panel.browse({ kind: 'service', sid: 200 });
     const playlists = await panel.browse({ kind: 'item', uri: top.items[1].u });
     const tracks = await panel.browse({ kind: 'item', uri: playlists.items[0].u });
 
@@ -1937,10 +1922,10 @@ describe('finding services in what the household already has', () => {
     await panel.connect();
     await waitFor(() => panel.players.length > 0, 'players');
 
-    const list = await panel.browse({ kind: 'sources' });
-    assert.ok(
-      list.items.some((i) => i.n === 'Housecast'),
-      'the sn-less service named by a saved station is offered',
+    await panel.browse({ kind: 'sources' });
+    await waitFor(
+      () => panel.sources.some((s) => s.sid === 303),
+      'the sn-less service named by a saved station is discovered',
     );
 
     panel.close();
@@ -1951,13 +1936,9 @@ describe('finding services in what the household already has', () => {
     await panel.connect();
     await waitFor(() => panel.players.length > 0, 'players');
 
-    const list = await panel.browse({ kind: 'sources' });
-    assert.ok(
-      list.items.some((i) => i.n === 'Testify'),
-      'the service named by a favourite URI is offered',
-    );
+    await panel.browse({ kind: 'sources' });
 
-    // And the panel is told about it, which is what puts a chip on Search.
+    // The backend still learns the account for playing saved Sonos content.
     await waitFor(
       () => panel.sources.some((s) => s.sid === 200 && s.searchable),
       'the service to reach the panel',
@@ -2025,12 +2006,10 @@ describe('a household with no music services', () => {
     const list = await panel.browse({ kind: 'sources' });
     const names = list.items.map((i) => i.n);
 
-    // Favourites never needed a service login, so they are still the first
-    // thing offered — which is the whole point of this assertion. "Add a
-    // service" is last and always there: detection can only find what the
-    // household has left a trace of.
-    assert.deepEqual(names, ['Favourites', 'Sonos Playlists', 'Add a service…']);
+    // Favourites never need a second service login, so they remain first.
+    assert.deepEqual(names, ['Favourites', 'Sonos Playlists']);
     assert.equal(list.items[0].s, '4 items', 'the count is real, not a guess');
+    assert.match(list.note, /Sonos app/i);
 
     // A place rather than a record: no play button on a folder.
     assert.equal(list.items[0].o, true);
@@ -2048,7 +2027,7 @@ describe('a household with no music services', () => {
    * saved stations — so a service set up in the Sonos app that has left none
    * of those is invisible to it, and would be permanently unreachable here.
    */
-  test('a service detection cannot find is still reachable', async () => {
+  test('the provider catalog remains available to explicit API callers', async () => {
     ctx.sonos.services = [
       { sid: 400, name: 'Undetectable', uri: 'https://u.invalid/x', auth: 'DeviceLink' },
     ];
@@ -2063,10 +2042,7 @@ describe('a household with no music services', () => {
       'it leaves no trace, so detection does not offer it',
     );
 
-    const add = list.items.find((i) => i.n === 'Add a service…');
-    assert.ok(add, 'but there is a way to it');
-
-    const catalog = await panel.browse({ kind: 'item', uri: add.u });
+    const catalog = await panel.browse({ kind: 'catalog' });
     assert.ok(
       catalog.items.some((i) => i.n === 'Undetectable'),
       'and the catalog has it',
