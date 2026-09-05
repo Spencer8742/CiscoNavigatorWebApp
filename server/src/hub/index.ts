@@ -70,7 +70,7 @@ export interface HubDeps {
   /** Current panel preferences, sent in `hello`. */
   getPrefs: () => PanelPrefs;
   /** Apply a preference change. Returns an error string, or null. */
-  onPref?: (key: string, value: string) => string | null;
+  onPref?: (key: string, value: unknown) => string | null;
   /** Apply a player-layout change. Returns an error string, or null. */
   onLayout?: (layout: unknown) => string | null;
   /** Current Elgato Key Light states, sent in `hello`. */

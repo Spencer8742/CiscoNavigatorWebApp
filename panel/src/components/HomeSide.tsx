@@ -6,7 +6,7 @@ import { fetchGrid, photoUrl } from '~/media/photos.ts';
 import { thumbHashCss } from '~/lib/thumbhash.ts';
 import { getToken } from '~/net/auth.ts';
 import { immichConfig, mediaConfig } from '~/config/index.ts';
-import { prefs, route, screensaverActive, markActivity } from '~/state/ui.ts';
+import { isRouteVisible, navigate, prefs, screensaverActive, markActivity } from '~/state/ui.ts';
 import * as act from '~/state/actions.ts';
 import type { PhotoRef } from '@shared/protocol.ts';
 
@@ -56,16 +56,11 @@ function NowPlayingCard() {
     <section class="side-card" aria-label="Now playing">
       <div class="side-head">
         <h2 class="section-title">Now Playing</h2>
-        <Pressable
-          class="side-more p-sm"
-          onPress={() => {
-            route.value = 'media';
-            markActivity();
-          }}
-          ariaLabel="Open media"
-        >
-          <Icon name="next" size="1rem" weight={2} />
-        </Pressable>
+        {isRouteVisible('media') ? (
+          <Pressable class="side-more p-sm" onPress={() => navigate('media')} ariaLabel="Open media">
+            <Icon name="next" size="1rem" weight={2} />
+          </Pressable>
+        ) : null}
       </div>
 
       <div class="np-body">

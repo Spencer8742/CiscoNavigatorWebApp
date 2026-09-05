@@ -446,9 +446,17 @@ export function selectControlSource(item: string, value: string): boolean {
  * refused. Preferences are stored server-side because RoomOS clears web
  * storage nightly (docs/ROOMOS.md §3).
  */
-export function setPref(key: 'homeSide', value: PanelPrefs['homeSide']): boolean {
+export function setPref(key: 'homeSide', value: PanelPrefs['homeSide']): boolean;
+export function setPref(key: 'visiblePages', value: PanelPrefs['visiblePages']): boolean;
+export function setPref(
+  key: 'homeSide' | 'visiblePages',
+  value: PanelPrefs['homeSide'] | PanelPrefs['visiblePages'],
+): boolean {
   prefs.value = { ...prefs.value, [key]: value };
-  return send({ t: 'pref', id: nextId(), key, value });
+  if (key === 'homeSide') {
+    return send({ t: 'pref', id: nextId(), key, value: value as PanelPrefs['homeSide'] });
+  }
+  return send({ t: 'pref', id: nextId(), key, value: value as PanelPrefs['visiblePages'] });
 }
 
 /**
