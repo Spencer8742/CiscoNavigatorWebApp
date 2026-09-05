@@ -650,10 +650,34 @@ describe('live updates', () => {
     );
     assert.equal(panel.player('RINCON_BEDROOM').muted, true);
 
-    // And it cost no request of ours: the speaker volunteered it.
-    assert.equal(
-      ctx.sonos.calls.length,
-      soapBefore,
+    /*
+     * And it cost no request of ours: the speaker volunteered it.
+     *
+     * Asserted as "nothing re-read THIS SPEAKER'S volume", not "no SOAP call
+     * happened anywhere". The second is a broader claim than this test's own
+     * name makes and it is not true: a topology reconcile debounced from an
+     * earlier event legitimately re-reads a coordinator's transport, and on a
+     * loaded machine that lands inside this two-second window. Reproduced
+     * under CPU contention, where the extra calls were exactly one
+     * `#readGroup` — `GetTransportInfo`, `GetPositionInfo`, `GetMediaInfo`,
+     * `GetTransportSettings`, `GetRemainingSleepTimerDuration`.
+     *
+     * The property worth guarding is the one that breaks if the store starts
+     * polling again: an event about a speaker's volume must not send us back
+     * to ask that speaker its volume. `#readZone` is `GetVolume` + `GetMute`,
+     * so those are what must be absent.
+     */
+    const readBack = ctx.sonos.calls
+      .slice(soapBefore)
+      .filter(
+        (c) =>
+          c.uuid === 'RINCON_BEDROOM' &&
+          (c.action === 'GetVolume' || c.action === 'GetMute'),
+      );
+
+    assert.deepEqual(
+      readBack.map((c) => c.action),
+      [],
       'a pushed change must not trigger a read back',
     );
 
