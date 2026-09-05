@@ -132,7 +132,7 @@ export class MockHomeAssistant {
       case 'call_service':
         this.serviceCalls.push(msg);
 
-        // Behave like Music Assistant for grouping, so a test exercises the
+        // Behave like a real media player for grouping, so a test exercises the
         // whole round trip — tap, service call, state change, UI update —
         // rather than only asserting that a call went out.
         if (msg.domain === 'media_player' && (msg.service === 'join' || msg.service === 'unjoin')) {
@@ -164,7 +164,7 @@ export class MockHomeAssistant {
   }
 
   /**
-   * Seed a Music Assistant speaker.
+   * Seed a media player.
    *
    * The attributes that matter are the ones MA's own integration sets:
    * `mass_player_type` (which nothing else sets, and is how the app
@@ -185,7 +185,7 @@ export class MockHomeAssistant {
   }
 
   /**
-   * Apply a join/unjoin the way Music Assistant does.
+   * Apply a join/unjoin the way a media player does.
    *
    * The important detail: EVERY member reports the same `group_members` list,
    * leader included — that is what lets the panel derive the whole group from

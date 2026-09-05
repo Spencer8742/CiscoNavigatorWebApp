@@ -3,7 +3,7 @@ import { optimistic, peekEntity } from '~/state/entities.ts';
 import { players } from '~/state/players.ts';
 import { markActivity, showToast } from '~/state/ui.ts';
 import { domainOf } from '~/lib/format.ts';
-import type { Enqueue, MassPlayer, MusicCommand } from '@shared/protocol.ts';
+import type { Enqueue, Player, MusicCommand } from '@shared/protocol.ts';
 
 /**
  * Every command the panel can send.
@@ -317,14 +317,13 @@ export function setEntityOption(entityId: string, option: string): void {
 /* ── Music ────────────────────────────────────────────────────────────────
    None of this goes through Home Assistant. It also does not name a music
    system: the panel sends a player id and an INTENTION, and the backend
-   routes it to whichever system owns that speaker — Sonos or Music Assistant.
+   the backend turns into whatever the speaker actually needs.
 
-   That is not indirection for its own sake. It is what lets both run at once
-   while docs/SONOS.md migrates from one to the other, and it is why the panel
-   contains no branch on which one is in use. It also makes the backend guard
-   stronger: with a verb on the wire, an action this app never wrote simply
+   That is not indirection for its own sake: it makes the backend guard
+   stronger. With a verb on the wire, an action this app never wrote simply
    does not exist, where an upstream command name only ever gets an
-   allow-list that somebody has to keep complete.
+   allow-list that somebody has to keep complete. Sonos's local API has no
+   authentication and the same port that pauses a track can rename rooms.
 
    Volume here is 0-100. Both systems use that scale; converting anywhere is
    exactly how a slider ends up setting a speaker to 1% of what was asked. */
@@ -336,12 +335,12 @@ function music(cmd: MusicCommand): void {
   }
 }
 
-function player(playerId: string): MassPlayer | undefined {
+function player(playerId: string): Player | undefined {
   return players.peek().find((p) => p.id === playerId);
 }
 
 /** Optimistically patch one player, so a tap moves the UI in the same frame. */
-function patchPlayer(playerId: string, changes: Partial<MassPlayer>): void {
+function patchPlayer(playerId: string, changes: Partial<Player>): void {
   players.value = players.value.map((p) => (p.id === playerId ? { ...p, ...changes } : p));
 }
 
@@ -416,9 +415,8 @@ export function unjoinPlayer(playerId: string): void {
 }
 
 /* ── The queue ────────────────────────────────────────────────────────────
-   Addressed by SPEAKER, not by queue. The two music systems disagree about
-   what a queue id is — Sonos has one per group, Music Assistant one per
-   player — and resolving that is the backend's job, not the panel's. */
+   Addressed by SPEAKER, not by queue. A Sonos queue belongs to a GROUP
+   rather than to a speaker, and resolving that is the backend's job. */
 
 /** Jump to a track already in the queue. */
 export function playQueueIndex(playerId: string, index: number): void {

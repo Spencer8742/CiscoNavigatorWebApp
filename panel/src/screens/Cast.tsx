@@ -312,7 +312,7 @@ function PhotoPane() {
  *
  * Off unless `cast.audioKeepAlive` is set, and worth understanding before you
  * turn it on: this takes the device's audio focus. On a Nest Hub that is also
- * a Music Assistant speaker, that may interrupt or block playback on the very
+ * a Sonos speaker, that may interrupt or block playback on the very
  * speaker you are looking at. `disableIdleTimeout` in lib/cast.ts is the
  * primary mechanism and costs nothing; this is the fallback for when it is
  * not enough.

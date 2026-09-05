@@ -80,25 +80,14 @@ export function Settings() {
           <Row k="Backend → Home Assistant" v={h?.ha ?? '—'} tone={tone(h?.ha)} />
           <Row k="Backend → Immich" v={h?.immich ?? '—'} tone={tone(h?.immich)} />
           <Row
-            k="Backend → Music Assistant"
-            v={h?.mass ?? '—'}
-            tone={h?.mass === 'disabled' ? undefined : tone(h?.mass)}
-          />
-          {/* The specific reason, when there is one. A missing MASS_TOKEN and
-              an unreachable server both read as "disconnected" otherwise, and
-              only one of them is fixed by restarting anything. */}
-          {/* `danger`, not `bad`: the stylesheet defines ok / warn / danger,
-              so the previous value styled nothing at all. */}
-          {h?.massError ? <Row k="Music Assistant says" v={h.massError} tone="danger" /> : null}
-          <Row
             k="Backend → Sonos"
             v={h?.sonos ?? '—'}
             tone={h?.sonos === 'disabled' ? undefined : tone(h?.sonos)}
           />
-          {/* Same reasoning as the Music Assistant line above: a wrong
-              address, a network that blocks discovery and UPnP switched off
-              in the Sonos app all read as "disconnected", and each needs
-              something different done about it. */}
+          {/* The specific reason, when there is one. A wrong address, a
+              network that blocks discovery and UPnP switched off in the Sonos
+              app all read as "disconnected", and each needs something
+              different done about it. */}
           {/* Live or polled is the difference between a panel that keeps up
               with the house and one that lags behind it, and the cause is
               always deployment rather than anything on this screen. */}

@@ -1,23 +1,28 @@
 # Sonos: direct integration
 
-**Status: phases 1–3 are built and shipping. Phase 4 onward is still a plan.**
+**Status: built. Music Assistant has been removed.**
 
 | Phase | | |
 |---|---|---|
-| 1 | Topology — the household, read-only | ✅ |
-| 2 | Events — GENA, no more polling | ✅ |
+| 1 | Topology — the household | ✅ |
+| 2 | Events — GENA, with a polling fallback | ✅ |
 | 3 | Control — transport, volume, grouping | ✅ |
-| 4 | Browse — favourites, playlists, library, queue | ⬜ |
-| 5 | Spotify search | ⬜ |
-| 6 | Cut over — delete `mass/`, rename the types | ⬜ |
-| 7–8 | SMAPI and play history *(optional)* | ⬜ |
+| 4 | Browse — favourites, playlists, library, radio, queue | ✅ |
+| 5 | Spotify search | ✅ |
+| 6 | Cut over — `mass/` deleted, types renamed | ✅ |
+| 7 | SMAPI *(optional, not built)* | ⬜ |
+| 8 | Play history *(optional, not built)* | ⬜ |
 
-Sonos is now a working remote control: rooms, groups, live state, transport,
-volume, seek, shuffle, repeat and grouping. **What it is not yet is a music
-browser** — nothing can start something that is not already playing or queued,
-because that needs somewhere to browse from. That is phase 4.
+Sonos is the music system: rooms, groups, live state, transport, volume, seek,
+shuffle, repeat, grouping, the queue, favourites, playlists, the local library,
+radio, and search across the library and Spotify.
 
-What each built phase delivered, and what it deliberately did not, is in §15.
+What each phase delivered, and what it deliberately did not, is in **§15**.
+
+> **§1–§14 are the plan as it was written**, kept in the present tense because
+> the reasoning is the point — why the cloud API was rejected, what removing
+> Music Assistant would cost, which failures are silent. Where building it
+> changed a decision, §15 says so and is authoritative.
 
 The goal, stated as the decision it is: **Sonos becomes the music system this
 panel talks to, and Music Assistant is removed.** The backend speaks the local
@@ -154,11 +159,12 @@ navigator-panel (Node 22)
         soap.ts        SOAP envelope, POST :1400, parse
         xml.ts         DIDL-Lite + LastChange decoding
         events.ts      GENA subscribe / renew / unsubscribe
-        store.ts       players + queues, debounced   (mirrors mass/store.ts)
-        commands.ts    the guard: verbs in, SOAP out (mirrors mass/commands.ts)
-        browse.ts      favourites, playlists, library, radio, search
-        smapi.ts       music-service search           (phase 5)
-        uris.ts        opaque id → playable URI + DIDL
+        didl.ts        DIDL-Lite: one track, and browse lists
+        store.ts       players + queues, debounced
+        commands.ts    the guard: verbs in, SOAP out
+        browse.ts      favourites, playlists, library, radio, queue, search
+        spotify.ts     catalog search + x-sonos-spotify URI construction
+        uris.ts        opaque key → playable URI + DIDL
 ```
 
 Every file in that list has a counterpart in `mass/` that already works,
@@ -632,9 +638,9 @@ the device, and no phase starts before the last is verified there.
 | **1** ✅ | Topology | `discovery.ts`, `soap.ts`, `xml.ts`, `didl.ts`, `topology.ts`, `client.ts`, `store.ts`. Players in `hello`, read-only | The Media screen lists your real zones with correct names, groups and volumes. Bonded subs and pair channels do not appear |
 | **2** | Events | `events.ts`: subscribe, renew, unsubscribe, `NOTIFY` route with all three guards | Change volume in the Sonos app → panel moves within ~200 ms. Restart the container → no orphaned subscriptions. Kill the network → the link goes degraded, not stale |
 | **3** | Control | `commands.ts` verbs, coordinator routing, grouping, `uris.ts` | Transport, volume, mute, seek and grouping all work from the panel. A transport command aimed at a follower is refused, not silently dropped |
-| **4** | Browse | `browse.ts`: `FV:2`, `SQ:`, `Q:0`, `A:*`, `R:0/0`, library search, queue editing | Every existing Browse and Queue interaction works against Sonos with no panel changes beyond the tab list |
-| **5** | Spotify search | Spotify Web API search + `x-sonos-spotify` URI construction + DIDL | Searching an artist on the panel plays them on a Sonos speaker through your own linked account |
-| **6** | Cut over | Delete `server/src/mass/`, rename `Mass*` types, strip `MASS_*` from env, compose, Dockerfile and the Unraid template | `npm test` green, bundle under budget, no reference to Music Assistant remains |
+| **4** ✅ | Browse | `browse.ts`, `uris.ts`: `FV:2`, `SQ:`, `Q:0`, `A:*`, `R:0/0`, library search, queue editing | Every existing Browse and Queue interaction works against Sonos with no panel changes beyond the tab list |
+| **5** ✅ | Spotify search | Spotify Web API search + `x-sonos-spotify` URI construction + DIDL | Searching an artist on the panel plays them on a Sonos speaker through your own linked account |
+| **6** ✅ | Cut over | Deleted `server/src/mass/`, renamed `Mass*` types, stripped `MASS_*` from env, compose and the Unraid template | `npm test` green, bundle under budget, no reference to Music Assistant remains |
 | **7** | SMAPI *(optional)* | `smapi.ts`, device-link with off-panel approval, Sonos Radio search | Sonos Radio and any other linked service are searchable |
 | **8** | History *(optional)* | Backend-recorded play history | The Recent tab shows what this panel played |
 
@@ -728,10 +734,48 @@ that must name a subscription this process created. It is matched *before* the
 method check, so an unknown path gets the same 405 as any other non-GET rather
 than revealing that a NOTIFY route exists.
 
-**Still absent after phase 3:** anything that starts new music. `playItem`,
-`favorite` and the queue-editing verbs answer "not available yet" on a Sonos
-player, because there is nowhere to browse from until phase 4. They work
-normally on a Music Assistant player.
+**Still absent after phase 3:** anything that starts new music. That arrived
+with phase 4.
+
+### What phases 4, 5 and 6 built
+
+**Events became a preference, not an assumption.** Reported from a real
+household: every speaker visible, volume and play/pause lagging or never
+updating. Subscriptions were being accepted while nothing came back —
+`SUBSCRIBE` is outbound and succeeds, `NOTIFY` is inbound and on a Docker
+bridge network never arrives. The store now polls every five seconds while
+events are absent, retries subscribing every minute, and recovers to push on
+its own. `Settings → Sonos updates` says which mode is live, because the
+symptom is otherwise impossible to attribute.
+
+**The URI registry generalised the artwork one.** Sonos plays whatever URI it
+is handed, so the panel is handed none: a browse registers each URI plus the
+`r:resMD` that goes with it and returns an opaque key. That closes the hole the
+Music Assistant guard closed differently — it required a library URI with a
+non-network scheme, which does not port, because Sonos's playable URIs *are*
+network URIs.
+
+**Streams and tracks are two playback paths.** A radio favourite goes through
+`SetAVTransportURI`; a track goes through `AddURIToQueue` and then needs the
+player pointed at `x-rincon-queue:<uuid>#0`, without which a speaker on a radio
+station stays on it while the album sits in a queue nothing is reading.
+`r:resMD` is not optional either: play a favourite without it and the speaker
+accepts the command and plays silence.
+
+**"Recently played" is gone, as predicted in §3.** No Sonos equivalent exists,
+and synthesising one from what this panel happened to start would be a narrower
+thing wearing the same label. The Favorites tab took its place at the front.
+
+**Spotify search took the Web API route** (§8 option B). The `sid` and `sn` in
+a Sonos Spotify URI belong to the household, so they are learned from it — any
+existing Spotify favourite is a URI Sonos itself built, carrying the right
+values — with `ListAvailableServices` as the fallback.
+
+**One thing found by CI rather than by review:** `parseDidlList` collected all
+items and then all containers, which silently re-sorted every mixed result.
+Favorites holds playlists, stations and albums interleaved in the order
+somebody chose in the Sonos app, and that order is the whole value of the list.
+It walks in document order now.
 
 ---
 

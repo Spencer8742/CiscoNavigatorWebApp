@@ -9,12 +9,11 @@ import * as act from '~/state/actions.ts';
 import { BROWSE_PAGE, type QueueEntry, type QueuePage } from '@shared/protocol.ts';
 
 /**
- * The queue — the thing this app opened a direct Music Assistant connection
- * for.
+ * The queue — the thing this app talks to the speakers directly for.
  *
- * Home Assistant's Music Assistant integration can tell you the current track,
+ * Home Assistant's media_player model can tell you the current track,
  * the next track and a count. It cannot list the queue, and it has no service
- * to reorder, remove or jump within it. All of that lives on Music Assistant's
+ * to reorder, remove or jump within it. All of that lives on the speaker's
  * own API, so all of it lives here.
  *
  * ## Reordering without dragging
@@ -43,11 +42,11 @@ export function Queue({
   const [confirmClear, setConfirmClear] = useState(false);
 
   /*
-   * Reload whenever Music Assistant says this queue changed.
+   * Reload whenever the backend says this queue changed.
    *
-   * `count` and `index` come from the players push, which Music Assistant
-   * sends the instant anything touches the queue — including from the phone
-   * in someone else's hand. Keying the effect on them means an edit made
+   * `count` and `index` come from the players push, which the speakers send
+   * the instant anything touches the queue — including from the phone in
+   * someone else's hand. Keying the effect on them means an edit made
    * anywhere refreshes these rows, with no polling.
    */
   const live = queues.value.find((q) => q.id === queueId);

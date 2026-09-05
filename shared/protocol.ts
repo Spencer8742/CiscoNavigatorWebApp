@@ -64,13 +64,6 @@ export type LinkState = 'connected' | 'connecting' | 'disconnected';
 export interface BackendHealth {
   ha: LinkState;
   immich: LinkState;
-  /** Music Assistant, spoken to directly. 'disabled' when MASS_URL is unset. */
-  mass: LinkState | 'disabled';
-  /**
-   * Why Music Assistant is unhappy — most usefully, a missing or rejected
-   * token, which is otherwise indistinguishable from the server being down.
-   */
-  massError: string | null;
   /**
    * Sonos, spoken to directly on the LAN. 'disabled' when SONOS_HOST is unset
    * and discovery is off.
@@ -128,27 +121,27 @@ export interface PhotoRef {
   country?: string;
 }
 
-/* ── Music Assistant players ───────────────────────────────────────────── */
+/* ── Speakers ──────────────────────────────────────────────────────────── */
 
 /**
- * A speaker, as Music Assistant describes it.
+ * A speaker, as Sonos describes it.
  *
- * This replaces reading `media_player` entities from Home Assistant. Music
- * Assistant knows things Home Assistant's media_player model has nowhere to
- * put: which players a given speaker is *able* to group with, whether it is a
- * dedicated group or a synced child, and which queue is driving it.
+ * This replaces reading `media_player` entities from Home Assistant. Sonos
+ * knows things that model has nowhere to put: which zone coordinates a group,
+ * which speakers are following it, and whether two are bonded as one.
  *
- * Volume is 0-100 here, not 0-1 — that is Music Assistant's own scale, and
- * converting twice is how off-by-a-factor-of-100 bugs happen.
+ * Volume is 0-100, which is Sonos's own scale — converting it anywhere is how
+ * a slider ends up setting a speaker to 1% of what was asked for.
  */
-export interface MassPlayer {
+export interface Player {
   id: string;
   name: string;
-  /** 'player' | 'stereo_pair' | 'group' — MA's own PlayerType. */
+  /** 'player' when it is one speaker, 'stereo_pair' when two are bonded. */
   type: string;
   available: boolean;
-  /** 'playing' | 'paused' | 'idle' | 'playing'… MA's PlaybackState. */
+  /** 'playing' | 'paused' | 'buffering' | 'idle'. */
   state: string;
+  /** Always null for Sonos, which has no power concept. */
   powered: boolean | null;
   /** 0-100, or null when the player has no volume control. */
   volume: number | null;
@@ -157,17 +150,17 @@ export interface MassPlayer {
   members: string[];
   /** The player this one is synced to, if it is a follower. */
   syncedTo: string | null;
-  /** Players this one is ABLE to group with. Empty means grouping is off. */
+  /** Speakers this one can group with — for Sonos, every other zone. */
   canGroupWith: string[];
   /** The queue driving this player — the id every queue command needs. */
   queueId: string | null;
   /** Group volume when this is a group leader, else the player's own. */
   groupVolume: number | null;
   /** What is on it right now. */
-  media: MassMedia | null;
+  media: NowPlaying | null;
 }
 
-export interface MassMedia {
+export interface NowPlaying {
   title: string | null;
   artist: string | null;
   album: string | null;
@@ -181,7 +174,7 @@ export interface MassMedia {
 }
 
 /** The state of a player's queue, minus the items themselves. */
-export interface MassQueue {
+export interface PlayerQueue {
   id: string;
   name: string;
   /** How many items the queue holds. */
@@ -194,7 +187,7 @@ export interface MassQueue {
 
 /** One row of a queue. */
 export interface QueueEntry {
-  /** MA's queue_item_id — what move and remove act on. */
+  /** The queue object id, `Q:0/5` — what move and remove act on. */
   id: string;
   name: string;
   /** "Artist · Album". */
@@ -207,7 +200,7 @@ export interface QueueEntry {
 
 /* ── Music browsing ────────────────────────────────────────────────────── */
 
-/** The media types Music Assistant's library and search understand. */
+/** The kinds of thing that can appear in a browse result. */
 export type MediaKind =
   | 'artist'
   | 'album'
@@ -231,12 +224,17 @@ export const MEDIA_KINDS: readonly MediaKind[] = [
  * One browsable thing.
  *
  * Short keys, and only the four fields a list row actually draws. A library
- * page is sixty of these and Music Assistant's own item shape carries a dozen
- * fields per entry — sending that raw would triple the frame for data the
- * panel would immediately discard, on a device with a hard memory ceiling.
+ * page is sixty of these and a DIDL entry carries a dozen fields apiece —
+ * sending that raw would triple the frame for data the panel would
+ * immediately discard, on a device with a hard memory ceiling.
  */
 export interface MediaItem {
-  /** Music Assistant URI. The only thing needed to play it. */
+  /**
+   * An opaque key this backend minted. The only thing needed to play it.
+   *
+   * NOT a URI: Sonos will fetch whatever URI it is handed, so the panel is
+   * never given one. See server/src/sonos/uris.ts.
+   */
   u: string;
   /** Name. */
   n: string;
@@ -246,7 +244,8 @@ export interface MediaItem {
   s?: string;
   /** Artwork path on THIS origin, already proxied. See http/media-art.ts. */
   a?: string;
-  /** Favourited in Music Assistant. Absent when the item cannot be one. */
+  /** Favourited upstream. Absent when the state is unknown, which for Sonos
+   *  is always — favourites are managed in the Sonos app, not from here. */
   f?: boolean;
 }
 
@@ -261,18 +260,24 @@ export type BrowseRequest =
   | {
       kind: 'library';
       media: MediaKind;
-      /** Only items marked favourite in Music Assistant. */
+      /** The Favourites container, which on Sonos is a place not a filter. */
       favorite?: boolean;
-      /** Sort by last played rather than by name. */
-      recent?: boolean;
       /**
-       * How many items to skip — an ITEM offset, as Music Assistant itself
-       * uses, not a page number. Page size is fixed by the backend at
-       * `BROWSE_PAGE`, so a caller pages by adding that.
+       * How many items to skip — an ITEM offset, as Sonos itself uses, not a
+       * page number. Page size is fixed by the backend at `BROWSE_PAGE`, so a
+       * caller pages by adding that.
        */
       offset?: number;
     }
-  | { kind: 'search'; text: string }
+  /**
+   * A text search, against one source.
+   *
+   * There is no "search everything": the local library is searched by object
+   * id and a streaming catalog only by that service's own API. So the source
+   * is named rather than guessed, which is two taps instead of one and the
+   * honest shape of the system underneath.
+   */
+  | { kind: 'search'; text: string; source?: 'library' | 'spotify' }
   /**
    * The contents of one item — an album's tracks, an artist's albums, a
    * playlist's tracks.
@@ -302,10 +307,10 @@ export interface BrowseGroups {
 /**
  * A page of the actual queue.
  *
- * This is the thing the Home Assistant integration could not give us:
- * `music_assistant.get_queue` returns a summary — current item, next item, a
- * count. The rows, and the commands that reorder and remove them, exist only
- * on Music Assistant's own API, which is why the panel talks to it directly.
+ * This is the thing the Home Assistant integration could not give us: a
+ * summary with a current item and a count, but never the rows, nor the
+ * commands that reorder and remove them. Those exist only on the speaker's
+ * own API, which is why the backend talks to it directly.
  */
 export interface QueuePage {
   kind: 'queuePage';
@@ -328,23 +333,16 @@ export type Enqueue = 'play' | 'replace' | 'next' | 'replace_next' | 'add';
 /**
  * Everything the panel can ask of a speaker.
  *
- * A closed set of verbs, deliberately, and it replaced a message that carried
- * a Music Assistant command name straight through. Two things came of that:
+ * A closed set of verbs, deliberately, and the reason is a safety property
+ * rather than tidiness. Sonos's local API has no authentication, and the same
+ * port that pauses a track can rename rooms, rewrite alarms and write
+ * music-service credentials. With an upstream command name on the wire the
+ * guarantee is "the allow-list is complete" — something that can be
+ * overlooked into being false. With a verb it is "no other action exists",
+ * which cannot.
  *
- * **The panel stopped knowing which music system it is talking to.** It names
- * a player and an intention; the backend routes to Sonos or to Music Assistant
- * depending on which one owns that id. That is what lets both run at once
- * during the migration in `docs/SONOS.md`, and what makes phase 6 a deletion
- * rather than a rewrite.
- *
- * **The guard got stronger.** Sonos's local API has no authentication, and the
- * same port that pauses a track can rename rooms and rewrite alarms. With a
- * command name on the wire the safety property is "the allow-list is
- * complete"; with a verb it is "no other action exists", which is not a
- * property that can be overlooked into being false.
- *
- * `player` is always a player id, never a queue id — resolving a queue is the
- * backend's job, and the two systems disagree about what a queue even is.
+ * `player` is always a player id, never a queue id: a Sonos queue belongs to a
+ * group rather than to a speaker, and resolving that is the backend's job.
  */
 export type MusicCommand =
   | { verb: 'playPause' | 'play' | 'pause' | 'stop' | 'next' | 'previous'; player: string }
@@ -353,7 +351,7 @@ export type MusicCommand =
   /** 0-100. Both systems use that scale; converting anywhere is a bug. */
   | { verb: 'volume'; player: string; level: number }
   | { verb: 'mute'; player: string; muted: boolean }
-  /** Music Assistant only. Sonos speakers have no power concept. */
+  /** Accepted and refused: Sonos speakers have no power concept. */
   | { verb: 'power'; player: string; on: boolean }
   | { verb: 'shuffle'; player: string; on: boolean }
   | { verb: 'repeat'; player: string; mode: string }
@@ -467,10 +465,10 @@ export type ServerMessage =
       /** Server time, so the panel's clock is right even if the device's isn't. */
       now: number;
       prefs: PanelPrefs;
-      /** Every Music Assistant speaker, if MA is configured. */
-      players: MassPlayer[];
+      /** Every Sonos speaker, if a household was found. */
+      players: Player[];
       /** Queue state for each of those players, keyed by queue id. */
-      queues: MassQueue[];
+      queues: PlayerQueue[];
       /** Every Elgato Key Light named in `controls.keylights`. */
       keylights: KeyLightState[];
       tvs: TvState[];
@@ -478,14 +476,14 @@ export type ServerMessage =
   /** Incremental entity state. */
   | { t: 'patch'; patch: StatePatch }
   /**
-   * Music Assistant state changed.
+   * Speaker state changed.
    *
    * Sent whole rather than as a diff. A house has tens of speakers, not the
    * hundreds of entities that made diffing Home Assistant worth the
    * complexity, and a player carries its now-playing metadata — which changes
    * as a unit anyway when the track does.
    */
-  | { t: 'players'; players: MassPlayer[]; queues: MassQueue[] }
+  | { t: 'players'; players: Player[]; queues: PlayerQueue[] }
   /**
    * Elgato Key Light state changed.
    *
@@ -529,17 +527,16 @@ export type ClientMessage =
    * Drive a speaker.
    *
    * Fire-and-forget, like `call`: the authoritative result arrives moments
-   * later as a `players` push. The backend routes by player id — Sonos zones
-   * to Sonos, everything else to Music Assistant — and validates every id
-   * against what the relevant system actually told it about, for the same
-   * reason the Home Assistant path does. See `MusicCommand` for why this
-   * carries a verb rather than an upstream command name.
+   * later as a `players` push. Every id is validated against what Sonos
+   * actually told the backend about, for the same reason the Home Assistant
+   * path does. See `MusicCommand` for why this carries a verb rather than an
+   * upstream command name.
    */
   | { t: 'music'; id: number; cmd: MusicCommand }
   /** Ask for the next N slideshow photos. */
   | { t: 'photos'; id: number; count: number }
   /**
-   * Ask Music Assistant for something to look at.
+   * Ask for something to look at.
    *
    * The only request/reply pair besides photos. Everything else in this
    * protocol is either a push or fire-and-forget, because a wall panel that

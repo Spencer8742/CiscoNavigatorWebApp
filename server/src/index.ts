@@ -14,14 +14,13 @@ import { Hub } from '~/hub/index.ts';
 import { HaClient } from '~/ha/client.ts';
 import { HaStore, isEmptyPatch } from '~/ha/store.ts';
 import { ServiceGuard } from '~/ha/services.ts';
-import { MassClient } from '~/mass/client.ts';
-import { MassStore } from '~/mass/store.ts';
-import { MassCommands } from '~/mass/commands.ts';
-import { MassBrowser } from '~/mass/browse.ts';
 import { SonosClient } from '~/sonos/client.ts';
 import { SonosStore } from '~/sonos/store.ts';
 import { SonosEvents } from '~/sonos/events.ts';
 import { SonosCommands } from '~/sonos/commands.ts';
+import { SonosBrowser } from '~/sonos/browse.ts';
+import { SpotifySearch } from '~/sonos/spotify.ts';
+import { UriRegistry } from '~/sonos/uris.ts';
 import { CastKeeper } from '~/cast/keeper.ts';
 import { Controls } from '~/controls/index.ts';
 import { PrefsStore } from '~/config/prefs.ts';
@@ -29,7 +28,7 @@ import { ImmichClient } from '~/immich/client.ts';
 import { ImmichImages } from '~/immich/images.ts';
 import { Playlist } from '~/immich/playlist.ts';
 import { MUSIC_VERBS } from '@shared/protocol.ts';
-import type { BackendHealth, MassPlayer, MassQueue } from '@shared/protocol.ts';
+import type { BackendHealth, Player, PlayerQueue } from '@shared/protocol.ts';
 
 const log = logger('server');
 
@@ -146,8 +145,6 @@ async function main(): Promise<void> {
     ha: env.ha.enabled ? haClient.state : 'disconnected',
     immich: env.immich.enabled ? (immichReachable ? 'connected' : 'disconnected') : 'disconnected',
     immichError: env.immich.enabled ? (immich.lastError?.message ?? null) : null,
-    mass: env.mass.enabled ? massClient.state : 'disabled',
-    massError: env.mass.enabled ? massClient.lastError : null,
     sonos: env.sonos.enabled ? sonosClient.state : 'disabled',
     // A household we can reach but whose events never arrive is a specific,
     // actionable problem, and it outranks a stale connection error.
@@ -219,60 +216,17 @@ async function main(): Promise<void> {
 
   const services = new ServiceGuard(haClient, store);
 
-  /* ── Music Assistant ─────────────────────────────────────────────────────
-     A second connection, and the only one this app opens besides Home
-     Assistant. It is here because the music half of a wall panel — the queue,
-     the library, real-time queue changes — is simply not in the slice of
-     Music Assistant that Home Assistant exposes. See mass/client.ts. */
-
-  const massClient = new MassClient(env.mass, {
-    onEvent(event) {
-      massStore.apply(event);
-    },
-
-    onReady() {
-      // Refetch on every (re)connect rather than trusting what we held: while
-      // the link was down the house kept playing, and a stale queue on a wall
-      // is worse than a blank one.
-      void massStore.refresh();
-    },
-
-    onStateChange(state) {
-      log.info(`Music Assistant link: ${state}`);
-      // Unlike Home Assistant, there is no grace period here. A speaker whose
-      // state we cannot verify should stop claiming to be playing, and there
-      // is no equivalent of "the light is probably still on".
-      if (state !== 'connected') massStore.clear();
-      hub.broadcastHealth(getHealth());
-    },
-  });
-
-  const massStore = new MassStore(massClient, mediaArt, {
-    onChange() {
-      // Fanned out as the merged list rather than Music Assistant's own: the
-      // panel holds one player list, so a push from either source has to
-      // carry both or it would delete the other one from the screen.
-      hub.broadcastPlayers(...musicSnapshot());
-    },
-  });
-
-  const massCommands = new MassCommands(massClient, massStore);
-  const massBrowser = new MassBrowser(massClient, massStore, mediaArt);
-
   /* ── Sonos ───────────────────────────────────────────────────────────────
-     Phase 1 of docs/SONOS.md: the household, read-only. Speakers appear in
-     the player list beside Music Assistant's, in the same shape, because the
-     wire protocol describes speakers and queues rather than any one source —
-     which is what lets Sonos arrive in stages instead of one commit.
-
-     Nothing here can control anything yet. Transport, volume and grouping are
-     phase 3, and the guard that makes them safe is the point of that phase. */
+     The music half of the panel, and the only upstream besides Home Assistant
+     this app opens. Everything about music — which speakers exist, what they
+     are playing, the queue, the library — comes off the speakers themselves
+     on the LAN. See docs/SONOS.md. */
 
   const sonosClient = new SonosClient(env.sonos, {
     onStateChange() {
-      // No grace period, for the same reason as Music Assistant: a speaker
-      // whose state we cannot verify should stop claiming to be playing.
-      // There is no equivalent of "the light is probably still on".
+      // No grace period, unlike Home Assistant: a speaker whose state we
+      // cannot verify should stop claiming to be playing, and there is no
+      // equivalent of "the light is probably still on".
       hub.broadcastHealth(getHealth());
     },
   });
@@ -288,8 +242,8 @@ async function main(): Promise<void> {
 
     onSilence(message) {
       // Subscribed, but nothing is arriving — almost always Docker bridge
-      // networking. Commands still work, so without saying this the panel
-      // just goes stale and looks frozen.
+      // networking. The store falls back to polling; this is what tells
+      // somebody why the panel is a few seconds behind the house.
       log.warn(message);
       sonosSilence = message;
       hub.broadcastHealth(getHealth());
@@ -318,24 +272,31 @@ async function main(): Promise<void> {
     hasPanels: () => hub.panelCount > 0,
   });
 
-  const sonosCommands = new SonosCommands(sonosClient, sonosStore);
+  /*
+   * The panel never holds a URI a speaker would fetch — only a key this
+   * process minted from something a browse produced. Same rule, and the same
+   * reasoning, as the artwork registry beside it. See sonos/uris.ts.
+   */
+  const sonosUris = new UriRegistry();
+  const spotify = new SpotifySearch(env.spotify, sonosClient, sonosUris, mediaArt);
+  const sonosCommands = new SonosCommands(sonosClient, sonosStore, sonosUris);
+  const sonosBrowser = new SonosBrowser({
+    client: sonosClient,
+    store: sonosStore,
+    uris: sonosUris,
+    art: mediaArt,
+    spotify,
+  });
 
   /**
-   * Every speaker, from both sources.
+   * Every speaker.
    *
    * A tuple rather than an object so it spreads straight into
-   * `broadcastPlayers`. Player ids cannot collide — Sonos uses `RINCON_…`
-   * UUIDs — so a household reachable through both appears twice rather than
-   * ambiguously, which `env.ts` warns about at boot. Phase 6 deletes the
-   * Music Assistant half and this helper with it.
+   * `broadcastPlayers`.
    */
-  const musicSnapshot = (): [MassPlayer[], MassQueue[]] => {
-    const mass = massStore.snapshot();
-    const sonos = sonosStore.snapshot();
-    return [
-      [...mass.players, ...sonos.players].sort((a, b) => a.name.localeCompare(b.name)),
-      [...mass.queues, ...sonos.queues],
-    ];
+  const musicSnapshot = (): [Player[], PlayerQueue[]] => {
+    const { players, queues } = sonosStore.snapshot();
+    return [players, queues];
   };
 
   const hub: Hub = new Hub(server, {
@@ -360,12 +321,6 @@ async function main(): Promise<void> {
       return { players, queues };
     },
 
-    /*
-     * One verb, two possible destinations. Routing on the player id rather
-     * than asking the panel to choose is what keeps the panel ignorant of
-     * which music system owns which speaker — and what makes phase 6 a
-     * deletion of the second branch rather than a change to the first.
-     */
     onMusic: async (cmd) => {
       // The union is exhaustive in our code; this is about what arrives on a
       // socket from a device anyone in the room can touch.
@@ -373,11 +328,10 @@ async function main(): Promise<void> {
         log.warn(`Refused music command: "${String(cmd?.verb)}" is not a verb`);
         return 'Not permitted';
       }
-      if (sonosStore.hasPlayer(cmd.player)) return sonosCommands.run(cmd);
-      return massCommands.runVerb(cmd);
+      return sonosCommands.run(cmd);
     },
 
-    onBrowse: (req) => massBrowser.browse(req),
+    onBrowse: (req) => sonosBrowser.browse(req),
 
     getKeyLights: () => controls.snapshot(),
     getTvs: () => controls.tvSnapshot(),
@@ -447,7 +401,6 @@ async function main(): Promise<void> {
   });
 
   haClient.start();
-  massClient.start();
   sonosClient.start();
   sonosStore.start();
 
@@ -537,7 +490,7 @@ async function main(): Promise<void> {
      */
     /*
      * Cover art for browsing. `?k=` is a key this backend minted from a URL
-     * Music Assistant gave us — the panel cannot name a URL. See
+     * an upstream gave us — the panel cannot name a URL. See
      * http/media-art.ts for why that distinction is the whole design.
      */
     if (path === '/img/art') {
@@ -628,7 +581,6 @@ async function main(): Promise<void> {
     log.info(`Panel authentication: ${auth.enabled ? 'enabled' : 'DISABLED'}`);
     log.info(`Home Assistant: ${env.ha.enabled ? env.ha.url : 'not configured'}`);
     log.info(`Immich: ${env.immich.enabled ? env.immich.url : 'not configured'}`);
-    log.info(`Music Assistant: ${env.mass.enabled ? env.mass.url : 'not configured'}`);
     log.info(
       `Sonos: ${env.sonos.host || (env.sonos.discovery ? 'discovering' : 'not configured')}`,
     );
@@ -651,8 +603,6 @@ async function main(): Promise<void> {
     log.info(`${signal} received — shutting down`);
 
     haClient.stop();
-    massClient.stop();
-    massStore.dispose();
     sonosClient.stop();
     sonosStore.dispose();
     // Tear the subscriptions down rather than letting them lapse. A speaker

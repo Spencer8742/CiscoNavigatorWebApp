@@ -434,7 +434,6 @@ describe('the keeper', () => {
         HA_TOKEN: '',
         IMMICH_URL: '',
         IMMICH_API_KEY: '',
-        MASS_URL: '',
         LOG_LEVEL: 'error',
       },
       stdio: ['ignore', 'pipe', 'pipe'],

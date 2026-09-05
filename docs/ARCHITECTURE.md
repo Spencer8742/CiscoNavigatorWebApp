@@ -19,7 +19,7 @@ Room Navigator (Chromium 102, kiosk, 10.1")
 navigator-panel (Node 22, ~25 MB container)
         │  holds all credentials, all state, all retry logic
         ├── WS  ──▶ Home Assistant   (the house: lights, locks, sensors)
-        ├── WS  ──▶ Music Assistant  (the music: speakers, queue, library)
+        ├── SOAP ─▶ Sonos           (the music: speakers, queue, library)
         └── HTTP ──▶ Immich          (API key never leaves this process)
 ```
 
@@ -163,7 +163,7 @@ went wrong.
 │             │ StateStore (authoritative entity map)    │             │
 │             │ reconnect w/ exponential backoff + jitter │            │
 │             └──────────────────────────────────────────┘             │
-│  mass/      Music Assistant WS · players · queues · library browse   │
+│  sonos/     Sonos SOAP + events · players · queues · library browse  │
 │  immich/    REST client · album/asset queries · image streaming      │
 │  cast/      Cast v2 over TLS · keeps Nest Hubs showing the dashboard │
 │  config/    dashboard.yaml → validated, versioned, hot-reloaded      │
@@ -265,7 +265,7 @@ CiscoNavigatorWebApp/
 │       ├── http/              # router, static, security headers
 │       ├── hub/               # panel sockets, snapshot, fan-out
 │       ├── ha/                # client.ts, store.ts, services.ts
-│       ├── mass/              # client.ts, store.ts, commands.ts, browse.ts
+│       ├── sonos/             # client, events, store, commands, browse
 │       ├── immich/            # client.ts, images.ts
 │       ├── cast/              # protocol.ts, device.ts, keeper.ts
 │       ├── controls/          # companion.ts, keylight.ts — the macro pages
@@ -364,61 +364,48 @@ Slider drags are **rate-limited to one command per ~120 ms while dragging plus
 a guaranteed final command on release**, so a 3-second drag sends ~25 messages
 instead of ~180, and always ends on the exact value.
 
-### Music Assistant is a SECOND connection, not a Home Assistant feature
+### Sonos is a SECOND connection, not a Home Assistant feature
 
-> **Superseded by [`SONOS.md`](./SONOS.md).** Music Assistant is slated for
-> removal: the backend will speak the local Sonos protocol directly instead.
-> This section describes what is running today, and the reasoning below for
-> *why the music connection is separate from Home Assistant* survives the
-> change unaltered — only the far end does.
+Home Assistant owns the house — lights, locks, covers, sensors. **Sonos owns
+the music**, and the backend talks to the speakers directly on the LAN rather
+than through Home Assistant's `media_player` entities.
 
-Home Assistant owns the house — lights, locks, covers, sensors. **Music
-Assistant owns the music**, and the backend talks to it directly on its own
-WebSocket (`ws://host:8095/ws`) rather than through Home Assistant's
-`music_assistant.*` services.
-
-That is a deliberate reversal of the "one connection, one source of truth"
-rule everywhere else in this document, so it is worth being specific about
-what it bought. The Home Assistant integration exposes a small slice of Music
-Assistant. Three things a wall panel wants are not in it:
+That is a deliberate reversal of the "one connection, one source of truth" rule
+everywhere else in this document, so it is worth being specific about what it
+bought. `media_player` is a lowest-common-denominator model, and four things a
+wall panel wants are not in it:
 
 | | Through Home Assistant | Direct |
 | --- | --- | --- |
 | Queue | current item, next item, a count | the rows, paged — plus move, remove, jump, clear |
-| "Recently played" | the library re-sorted by last-played | a real play history, including things you do not own |
-| Updates | re-fetch after each track change | pushed the instant anything changes it |
-| Drill-down | album → (nothing) | album → tracks, artist → albums, playlist → tracks |
-| Groupable-with | inferred from a feature bitmask | `can_group_with`, exactly |
+| Grouping | join/unjoin, with no notion of a coordinator | the real topology, including which zone leads |
+| Bonded speakers | a subwoofer looks like a speaker | `Invisible="1"`, so it never appears |
+| Updates | polled | pushed the instant anything changes |
 
-Protocol notes, being the parts that fail silently rather than loudly:
+The full design, the protocol traps, and the reasoning against Sonos's cloud
+API are in **[`SONOS.md`](./SONOS.md)**. Three things are worth repeating here
+because they shape the rest of the backend:
 
-- **The server info frame is unsolicited.** It arrives before anything is
-  asked for and carries no `message_id`, so it is consumed as part of
-  connecting rather than dispatched like a reply.
-- **Auth from schema 28.** Newer servers require a token
-  (`MASS_TOKEN`); older ones have no `auth` command at all, so sending one
-  would break them. The schema version in the info frame decides.
-- **Partial results.** A long list arrives as several messages sharing one
-  `message_id`, all but the last flagged `partial`. Treating the first as the
-  whole answer truncates every long list — and only for people with big
-  libraries.
+**Sonos is the only upstream that connects INWARD.** Everything else in this
+app is outbound. A speaker takes a callback URL and POSTs `NOTIFY` to it, which
+means one route that is neither GET nor authenticated — a speaker has nowhere
+to put a bearer token — guarded instead by a per-boot path secret, a source
+address that must be a household member, and a subscription id this process
+minted. It also means bridge networking can silently prevent updates, so the
+backend detects that and falls back to polling rather than going stale.
 
-The command surface is allow-listed by exact name, and that matters more here
-than on the Home Assistant side, not less: Music Assistant's API is an
-*administrative* API. The same socket that skips a track can delete a
-playlist, remove a provider and trigger a full resync. Every player and queue
-id in a command is checked against what Music Assistant actually told us
-about, and `media` must be a library URI — Music Assistant will otherwise
-happily play `file:///etc/passwd` or fetch a URL of the caller's choosing.
+**The panel names a verb, never a SOAP action.** Sonos's local API has no
+authentication and the same port that pauses a track can rename rooms, rewrite
+alarms and write music-service credentials. With a command name on the wire the
+safety property is "the allow-list is complete", which can be overlooked into
+being false; with a verb it is "no other action exists", which cannot.
 
-Cover art never reaches the panel as a Music Assistant URL. Those are
-frequently container hostnames nothing else can resolve, and handing them over
-would tell the panel where another service lives. The backend registers each
-one and returns an opaque key on our own origin — see
-`server/src/http/media-art.ts` for why a key rather than a `?url=` parameter
-is the whole point.
+**The panel never holds a playable URI either.** Sonos fetches whatever URI it
+is given, including `x-rincon-mp3radio://anything`. So browsing registers each
+URI server-side and hands the panel an opaque key — the same rule, and the same
+reasoning, as the artwork registry in `http/media-art.ts`.
 
-**Without `MASS_URL` the panel still runs.** Home Assistant, photos and the
+**Without `SONOS_HOST` the panel still runs.** Home Assistant, photos and the
 clock are unaffected; the Media screen explains what is missing rather than
 sitting empty.
 

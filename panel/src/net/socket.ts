@@ -345,10 +345,10 @@ export function callService(
 }
 
 /**
- * Run a Music Assistant command.
+ * Drive a speaker.
  *
  * Fire-and-forget for the same reason `callService` is: the UI has already
- * moved, and Music Assistant pushes the authoritative state a moment later.
+ * moved, and the speakers push the authoritative state a moment later.
  * Waiting for the ack would add a round trip to every tap.
  */
 export function musicCommand(cmd: MusicCommand): boolean {
@@ -434,11 +434,11 @@ export function setPlayerLayout(layout: PlayerLayout): boolean {
 }
 
 /**
- * Ask Music Assistant for something.
+ * Ask the backend for something to look at.
  *
  * The only call in this file the caller waits on. Rejects rather than
  * resolving empty, because "your library is empty" and "we could not reach
- * Music Assistant" must not look the same on a wall panel — the first is
+ * Sonos" must not look the same on a wall panel — the first is
  * information, the second is something to go and fix.
  */
 export function browse(req: BrowseRequest): Promise<BrowseResult> {
@@ -449,7 +449,7 @@ export function browse(req: BrowseRequest): Promise<BrowseResult> {
       return;
     }
     const timer = setTimeout(() => {
-      if (browseWaiters.delete(id)) reject(new Error('Music Assistant did not respond'));
+      if (browseWaiters.delete(id)) reject(new Error('Sonos did not respond'));
     }, 30_000);
     browseWaiters.set(id, { resolve, reject, timer });
   });
