@@ -1,5 +1,7 @@
 import { logger } from '~/lib/log.ts';
+import { integer } from '~/sonos/soap.ts';
 import { toPlayMode } from '~/sonos/store.ts';
+import { textOf, type XmlNode } from '~/sonos/xml.ts';
 import type { SonosClient } from '~/sonos/client.ts';
 import type { SonosStore } from '~/sonos/store.ts';
 import type { SonosZone } from '~/sonos/topology.ts';
@@ -223,10 +225,18 @@ export class SonosCommands {
   /**
    * Play something a browse produced.
    *
-   * `item` is a key this backend minted, never a URI — see `uris.ts`. The two
-   * paths below are not a nicety: a radio stream has no end and cannot go in a
-   * queue, and `AddURIToQueue` on one either fails or produces an entry that
-   * plays forever.
+   * `item` is a key this backend minted, never a URI — see `uris.ts`. Which of
+   * the three sequences below runs is decided by `Playable.style`, and getting
+   * that wrong is not a cosmetic error:
+   *
+   * - A **stream** has no end and cannot go in a queue at all.
+   * - A **container** is resolved by the speaker itself. Enqueueing one and
+   *   then pointing the transport at the queue is how a favourited playlist
+   *   became `Play → UPnP 701`: the service declined to enqueue, so the
+   *   transport was aimed at an empty queue and there was no transition to
+   *   make. Handing the container straight to `SetAVTransportURI` is what the
+   *   Sonos app's own "Play now" does.
+   * - A **track** is the only one the queue path was ever right for.
    */
   async #playItem(lead: SonosZone, key: string, enqueue: Enqueue): Promise<string | null> {
     const playable = this.#uris.get(key);
@@ -236,32 +246,57 @@ export class SonosCommands {
       return 'That item is no longer loaded — browse to it again';
     }
 
-    if (playable.stream) {
-      // A stream replaces whatever is playing, whichever option was chosen:
-      // there is nothing sensible to queue it behind.
+    /*
+     * A local library container arrives with an object id and no URI of its
+     * own — `A:ALBUM/The%20Wall` is an address in the ContentDirectory, not
+     * something a speaker can fetch. `x-rincon-playlist:` is how that address
+     * is turned into one, and it needs a speaker UUID to be relative to.
+     */
+    const uri =
+      playable.uri ?? (playable.objectId ? `x-rincon-playlist:${lead.uuid}#${playable.objectId}` : null);
+    if (!uri) return 'That item cannot be played';
+
+    const playNow = enqueue === 'play' || enqueue === 'replace';
+
+    /*
+     * A stream replaces what is playing whichever option was chosen — there is
+     * nothing sensible to queue it behind, so "add to queue" on a radio
+     * station is treated as "play it" rather than refused.
+     */
+    if (playable.style === 'stream' || (playable.style === 'container' && playNow)) {
       await this.#av(lead, 'SetAVTransportURI', {
-        CurrentURI: playable.uri,
+        CurrentURI: uri,
         CurrentURIMetaData: playable.metadata,
       });
       await this.#av(lead, 'Play', { Speed: '1' });
       return null;
     }
 
-    if (enqueue === 'replace' || enqueue === 'play') {
-      await this.#av(lead, 'RemoveAllTracksFromQueue');
-    }
+    if (playNow) await this.#av(lead, 'RemoveAllTracksFromQueue');
 
     /*
      * `EnqueueAsNext` puts it after the current track; the first-track number
      * decides where. Zero means "at the end", which is what "add" means.
      */
     const next = enqueue === 'next' || enqueue === 'replace_next';
-    await this.#av(lead, 'AddURIToQueue', {
-      EnqueuedURI: playable.uri,
+    const added = await this.#av(lead, 'AddURIToQueue', {
+      EnqueuedURI: uri,
       EnqueuedURIMetaData: playable.metadata,
       DesiredFirstTrackNumberEnqueued: '0',
       EnqueueAsNext: next ? '1' : '0',
     });
+
+    /*
+     * Sonos answers 200 OK with `NumTracksAdded: 0` when it cannot resolve
+     * what it was handed — a stale service token, a share that is offline.
+     * Unchecked, the next two lines aim the transport at an empty queue and
+     * the failure surfaces as a bare 701 several steps from its cause.
+     */
+    const count = integer(textOf(added, 'NumTracksAdded'));
+    if (count === 0) {
+      log.warn(`Nothing enqueued for ${uri.slice(0, 80)}`);
+      return 'Sonos would not add that to the queue';
+    }
 
     if (enqueue === 'add' || enqueue === 'next') return null;
 
@@ -278,7 +313,11 @@ export class SonosCommands {
       CurrentURI: `x-rincon-queue:${lead.uuid}#0`,
       CurrentURIMetaData: '',
     });
-    await this.#av(lead, 'Seek', { Unit: 'TRACK_NR', Target: '1' });
+
+    // Where Sonos actually put it, which is only 1 when the queue was cleared
+    // first. Assuming 1 starts an "add and play" at somebody else's track.
+    const first = integer(textOf(added, 'FirstTrackNumberEnqueued')) ?? 1;
+    await this.#av(lead, 'Seek', { Unit: 'TRACK_NR', Target: String(first) });
     await this.#av(lead, 'Play', { Speed: '1' });
     return null;
   }
@@ -402,7 +441,7 @@ export class SonosCommands {
     return this.#client.household.zones.get(zone.coordinator) ?? zone;
   }
 
-  #av(zone: SonosZone, action: string, args: Record<string, string> = {}): Promise<unknown> {
+  #av(zone: SonosZone, action: string, args: Record<string, string> = {}): Promise<XmlNode> {
     return this.#client.call(zone.host, 'AVTransport', action, { InstanceID: 0, ...args });
   }
 }

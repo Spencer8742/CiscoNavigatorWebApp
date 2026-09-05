@@ -1,5 +1,5 @@
 import { logger } from '~/lib/log.ts';
-import { artUrl, parseDidlList, type DidlEntry } from '~/sonos/didl.ts';
+import { artUrl, effectiveClass, parseDidlList, type DidlEntry } from '~/sonos/didl.ts';
 import { integer } from '~/sonos/soap.ts';
 import { textOf } from '~/sonos/xml.ts';
 import type { SonosClient } from '~/sonos/client.ts';
@@ -182,9 +182,16 @@ export class SonosBrowser {
     if (!playable) {
       throw new Error('That item is no longer loaded — browse to it again');
     }
-    // Containers usually have no `res`, so the registry stored their object id
-    // instead — which is exactly what Browse wants to open them.
-    return this.#page(playable.uri, offset);
+
+    /*
+     * The OBJECT ID opens things; the URI plays them. A favourited playlist
+     * carries both — `FV:2/12` and `x-rincon-cpcontainer:100…` — and Browsing
+     * the second returns an empty list rather than an error, so preferring the
+     * wrong one here is a tab that silently shows nothing.
+     */
+    const target = playable.objectId ?? playable.uri;
+    if (!target) throw new Error('That item cannot be opened');
+    return this.#page(target, offset);
   }
 
   /* ── The queue ─────────────────────────────────────────────────────────*/
@@ -278,18 +285,26 @@ export class SonosBrowser {
 
   /** A DIDL row → the four fields a list row draws. */
   #shape(entry: DidlEntry, host: string): MediaItem {
+    /*
+     * A favourite's own class describes the favouriting, not the favourite —
+     * see `effectiveClass`. Reading the outer one draws every favourite with a
+     * track icon and, worse, plays it down the wrong path.
+     */
+    const cls = effectiveClass(entry);
+
     const item: MediaItem = {
       /*
        * The KEY, not the URI. The panel never holds something a speaker would
        * fetch — see uris.ts for why that is the whole design rather than a
        * tidiness preference.
        *
-       * Containers are registered under their object id, because that is what
-       * both Browse and AddURIToQueue want for them.
+       * Both halves are registered: the URI is what plays, the object id is
+       * what opens. A favourited playlist has both and they are not
+       * interchangeable.
        */
-      u: this.#deps.uris.register(entry.res ?? entry.id, entry.resMD, entry.upnpClass) ?? '',
+      u: this.#deps.uris.register(entry.res, entry.id, entry.resMD, cls) ?? '',
       n: entry.title,
-      k: kindOf(entry.upnpClass),
+      k: kindOf(cls),
     };
 
     const sub = subtitle(entry);
@@ -323,6 +338,8 @@ export function kindOf(upnpClass: string): MediaKind {
   if (upnpClass.includes('musicAlbum')) return 'album';
   if (upnpClass.includes('musicArtist')) return 'artist';
   if (upnpClass.includes('audioBroadcast')) return 'radio';
+  if (upnpClass.includes('podcast')) return 'podcast';
+  if (upnpClass.includes('audioBook')) return 'audiobook';
   if (upnpClass.includes('playlistContainer')) return 'playlist';
   if (upnpClass.includes('musicTrack') || upnpClass.includes('audioItem')) return 'track';
   // A favourite can be a container of anything; treating an unknown one as a

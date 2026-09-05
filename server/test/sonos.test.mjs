@@ -257,6 +257,22 @@ class TestPanel {
     return this.messages.length;
   }
 
+  /**
+   * The last command refusal the backend sent, or null.
+   *
+   * `music_failed` rather than any `t: 'error'`, so a failed browse in the
+   * same test does not read as a failed command. Asserting this is null is
+   * how a test says "and nothing went wrong", which is the half a call-shape
+   * assertion cannot cover.
+   */
+  get lastToast() {
+    for (let i = this.messages.length - 1; i >= 0; i -= 1) {
+      const msg = this.messages[i];
+      if (msg.t === 'error' && msg.code === 'music_failed') return msg.message;
+    }
+    return null;
+  }
+
   since(i) {
     return this.messages.slice(i);
   }
@@ -533,7 +549,14 @@ describe('live updates', () => {
     const panel = new TestPanel(ctx.port);
     await panel.connect();
     await waitFor(() => panel.players.length > 0, 'players');
-    await waitFor(() => ctx.sonos.liveSubscriptions.length >= 6, 'subscriptions');
+    /*
+     * All EIGHT, not "enough to look started": four RenderingControl, three
+     * AVTransport, one topology. Waiting for a subset and then asserting on
+     * the whole set is a race that passes on a fast machine and fails on a
+     * slow one — the assertions below are the real wait condition, so they
+     * are what this counts.
+     */
+    await waitFor(() => ctx.sonos.liveSubscriptions.length >= 8, 'subscriptions');
 
     const live = ctx.sonos.liveSubscriptions;
     const on = (service) => live.filter((s) => s.service === service).map((s) => s.uuid).sort();
@@ -1007,11 +1030,22 @@ describe('browsing', () => {
 
     const result = await panel.browse({ kind: 'library', media: 'track', favorite: true });
     assert.equal(result.kind, 'list');
-    assert.equal(result.items.length, 2);
+    assert.equal(result.items.length, 3);
 
     const playlist = result.items[0];
     assert.equal(playlist.n, 'Morning & Coffee', 'decoded through both levels of escaping');
+
+    /*
+     * Read from `r:resMD`, NOT from the row's own class.
+     *
+     * Every row in `FV:2` says `object.itemobject.item.sonos-favorite`, which
+     * describes the favouriting rather than the favourite. Trusting it draws
+     * a track icon on everything — and, far worse, plays a playlist down the
+     * single-track path.
+     */
     assert.equal(playlist.k, 'playlist');
+    assert.equal(result.items[1].k, 'radio', 'a station, from one level down');
+    assert.equal(result.items[2].k, 'album', 'an album, from one level down');
 
     /*
      * The whole point of the registry. A URI here would let the panel name
@@ -1030,7 +1064,7 @@ describe('browsing', () => {
     await waitFor(() => panel.players.length > 0, 'players');
 
     const result = await panel.browse({ kind: 'library', media: 'track', favorite: true });
-    assert.equal(result.more, false, 'two of two items is the end');
+    assert.equal(result.more, false, 'three of three items is the end');
 
     panel.close();
   });
@@ -1108,12 +1142,15 @@ describe('browsing', () => {
       'a stream must never be queued',
     );
 
-    // The queueable one.
+    // A real track, which is the only thing the queue path was ever right for.
+    const tracks = await panel.browse({ kind: 'library', media: 'track' });
+    const track = tracks.items[0];
+
     before = ctx.sonos.calls.length;
     panel.music({
       verb: 'playItem',
       player: 'RINCON_LIVING',
-      item: playlist.u,
+      item: track.u,
       enqueue: 'replace',
     });
 
@@ -1135,6 +1172,121 @@ describe('browsing', () => {
     );
     assert.ok(sent.includes('Play'));
 
+    // The container is a third path, proved next.
+    assert.ok(playlist, 'the fixture has a container favourite');
+
+    panel.close();
+  });
+
+  /*
+   * The bug a real household found, and the reason the mock now models a
+   * refusal that looks like a success.
+   *
+   * A favourited playlist is a CONTAINER: the speaker resolves it for itself.
+   * Sent down the track path it was enqueued — except the service answered
+   * "added 0 tracks" with a 200, so the transport was pointed at an empty
+   * queue and `Play` came back UPnP 701.
+   *
+   * `SetAVTransportURI` with the container is what the Sonos app's own "Play
+   * now" does, and it never touches the queue.
+   */
+  test('a container plays without going near the queue', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    const favourites = await panel.browse({ kind: 'library', media: 'track', favorite: true });
+    const playlist = favourites.items.find((i) => i.k === 'playlist');
+
+    const before = ctx.sonos.calls.length;
+    panel.music({
+      verb: 'playItem',
+      player: 'RINCON_LIVING',
+      item: playlist.u,
+      enqueue: 'replace',
+    });
+
+    const set = await waitFor(
+      () => ctx.sonos.calls.slice(before).find((c) => c.action === 'SetAVTransportURI'),
+      'the container to be set',
+    );
+    assert.match(set.args.CurrentURI, /^x-rincon-cpcontainer:/);
+
+    // The `<desc>` naming the service is what tells the speaker which account
+    // to play through. Without it the command is accepted and plays silence.
+    assert.ok(set.args.CurrentURIMetaData.includes('SA_RINCON'), 'the service descriptor rides along');
+
+    await waitFor(
+      () => ctx.sonos.calls.slice(before).some((c) => c.action === 'Play'),
+      'it to start',
+    );
+
+    const sent = ctx.sonos.calls.slice(before).map((c) => c.action);
+    assert.ok(!sent.includes('AddURIToQueue'), 'a container is never enqueued to be played');
+    assert.ok(!sent.includes('RemoveAllTracksFromQueue'), 'and never clears the queue to do it');
+
+    // No refusal reached the panel: the speaker actually started.
+    assert.equal(panel.lastToast, null, `played cleanly, got: ${panel.lastToast}`);
+
+    panel.close();
+  });
+
+  /*
+   * A local album is an address in the ContentDirectory (`A:ALBUM/…`), not
+   * something a speaker can fetch. Registering the bare object id as if it
+   * were a URI produces an `AddURIToQueue` that adds nothing.
+   */
+  test('a library container with no res gets a playable URI built for it', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    const albums = await panel.browse({ kind: 'library', media: 'album' });
+    const bare = albums.items.find((i) => i.n === 'Kind of Blue');
+    assert.ok(bare, 'the fixture has an album with no res of its own');
+
+    const before = ctx.sonos.calls.length;
+    panel.music({ verb: 'playItem', player: 'RINCON_LIVING', item: bare.u, enqueue: 'replace' });
+
+    const set = await waitFor(
+      () => ctx.sonos.calls.slice(before).find((c) => c.action === 'SetAVTransportURI'),
+      'the album to be set',
+    );
+    assert.equal(
+      set.args.CurrentURI,
+      'x-rincon-playlist:RINCON_LIVING#A:ALBUM/Kind%20of%20Blue',
+      'built against the coordinator that will play it',
+    );
+
+    panel.close();
+  });
+
+  /*
+   * `NumTracksAdded: 0` is a refusal wearing a 200. Left unchecked it becomes
+   * a UPnP 701 two commands later, which is a fault code about transitions
+   * describing a problem with credentials.
+   */
+  test('an enqueue that adds nothing is reported, not turned into a 701', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    const tracks = await panel.browse({ kind: 'library', media: 'track' });
+
+    // Make this household refuse the track's own scheme.
+    ctx.sonos.enqueueRefusals = ['x-file-cifs:'];
+
+    panel.music({
+      verb: 'playItem',
+      player: 'RINCON_LIVING',
+      item: tracks.items[0].u,
+      enqueue: 'replace',
+    });
+
+    const toast = await waitFor(() => panel.lastToast, 'a refusal to reach the panel');
+    assert.match(toast, /would not add/i);
+
+    ctx.sonos.enqueueRefusals = ['x-rincon-cpcontainer:'];
     panel.close();
   });
 

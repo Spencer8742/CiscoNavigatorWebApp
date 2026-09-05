@@ -225,7 +225,10 @@ export class SpotifySearch {
     const { uri, metadata } = sonosUri(spotifyUri, name, kind, account);
 
     const item: MediaItem = {
-      u: this.#uris.register(uri, metadata) ?? '',
+      // The class goes with it so the registry knows an album is a container:
+      // the URI scheme alone would say so too, but only for the kinds that
+      // have a prefix, and the class is what keeps the two in step.
+      u: this.#uris.register(uri, null, metadata, UPNP_CLASS[kind] ?? '') ?? '',
       n: name,
       k: kind,
     };
@@ -311,11 +314,20 @@ export class SpotifySearch {
 /**
  * A Spotify URI, as Sonos wants it.
  *
- *   x-sonos-spotify:spotify%3atrack%3a<id>?sid=9&flags=8224&sn=3
+ *   track  x-sonos-spotify:spotify%3atrack%3a<id>?sid=9&flags=8224&sn=3
+ *   album  x-rincon-cpcontainer:1004206cspotify%3aalbum%3a<id>?sid=9&…
  *
- * The DIDL alongside it is not optional. Sonos needs the `<desc>` element
+ * **A track and a container are not the same URI shape**, and that is the
+ * whole reason this returns a scheme rather than always the first line. An
+ * album addressed as `x-sonos-spotify:` is accepted by `SetAVTransportURI` and
+ * then plays nothing, because there is no single stream behind it.
+ *
+ * The eight-digit prefix on a container is Sonos's own type tag. It looks like
+ * a magic number because it is one: a wire format, not a design.
+ *
+ * The DIDL alongside is not optional either. Sonos needs the `<desc>` element
  * naming the service to know which account to play through, and an item sent
- * without it is accepted and plays nothing — the most confusing failure in
+ * without it is accepted and plays silence — the most confusing failure in
  * this whole integration.
  */
 export function sonosUri(
@@ -325,29 +337,37 @@ export function sonosUri(
   account: Account,
 ): { uri: string; metadata: string } {
   const encoded = encodeURIComponent(spotifyUri);
-  const uri = `x-sonos-spotify:${encoded}?sid=${account.sid}&flags=${FLAGS}&sn=${account.sn}`;
+  const prefix = CONTAINER_PREFIX[kind];
 
-  /*
-   * `serviceType = sid * 256 + 7` is Sonos's own relationship between a music
-   * service's id and the token in its metadata descriptor. It looks arbitrary
-   * because it is: it is a wire format, not a design.
-   */
-  const serviceType = account.sid * 256 + 7;
+  const uri = prefix
+    ? `x-rincon-cpcontainer:${prefix}${encoded}?sid=${account.sid}&flags=${CONTAINER_FLAGS}&sn=${account.sn}`
+    : `x-sonos-spotify:${encoded}?sid=${account.sid}&flags=${FLAGS}&sn=${account.sn}`;
 
-  const metadata =
-    '<DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" ' +
-    'xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" ' +
-    'xmlns:r="urn:schemas-rinconnetworks-com:metadata-1-0/" ' +
-    'xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/">' +
-    `<item id="${escapeXml(spotifyUri)}" parentID="-1" restricted="true">` +
-    `<dc:title>${escapeXml(title)}</dc:title>` +
-    `<upnp:class>${UPNP_CLASS[kind] ?? UPNP_CLASS['track']}</upnp:class>` +
-    '<desc id="cdudn" nameSpace="urn:schemas-rinconnetworks-com:metadata-1-0/">' +
-    `SA_RINCON${serviceType}_X_#Svc${serviceType}-0-Token</desc>` +
-    '</item></DIDL-Lite>';
+  const metadata = serviceDidl({
+    id: prefix ? `${prefix}${encoded}` : spotifyUri,
+    title,
+    upnpClass: UPNP_CLASS[kind] ?? UPNP_CLASS['track'] ?? '',
+    sid: account.sid,
+  });
 
   return { uri, metadata };
 }
+
+/**
+ * Sonos's type tag for each kind of container, which rides in front of the
+ * service's own id inside an `x-rincon-cpcontainer:` URI.
+ *
+ * A kind absent from this table is an item rather than a container, and takes
+ * the track URI shape instead.
+ */
+const CONTAINER_PREFIX: Partial<Record<MediaKind, string>> = {
+  album: '1004206c',
+  playlist: '1006206c',
+  artist: '10052064',
+};
+
+/** Containers and items are flagged differently. Both are Sonos's values. */
+const CONTAINER_FLAGS = 8300;
 
 const UPNP_CLASS: Partial<Record<MediaKind, string>> = {
   track: 'object.item.audioItem.musicTrack',
@@ -355,6 +375,35 @@ const UPNP_CLASS: Partial<Record<MediaKind, string>> = {
   artist: 'object.container.person.musicArtist',
   playlist: 'object.container.playlistContainer',
 };
+
+/**
+ * The DIDL a music-service item has to be handed back with.
+ *
+ * `serviceType = sid * 256 + 7` is Sonos's own relationship between a music
+ * service's id and the token in its metadata descriptor — arbitrary-looking,
+ * and load-bearing: it is how the speaker picks the account to play through.
+ */
+export function serviceDidl(item: {
+  id: string;
+  title: string;
+  upnpClass: string;
+  sid: number;
+  parentId?: string;
+}): string {
+  const serviceType = item.sid * 256 + 7;
+  return (
+    '<DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" ' +
+    'xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" ' +
+    'xmlns:r="urn:schemas-rinconnetworks-com:metadata-1-0/" ' +
+    'xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/">' +
+    `<item id="${escapeXml(item.id)}" parentID="${escapeXml(item.parentId ?? '-1')}" restricted="true">` +
+    `<dc:title>${escapeXml(item.title)}</dc:title>` +
+    `<upnp:class>${item.upnpClass}</upnp:class>` +
+    '<desc id="cdudn" nameSpace="urn:schemas-rinconnetworks-com:metadata-1-0/">' +
+    `SA_RINCON${serviceType}_X_#Svc${serviceType}-0-Token</desc>` +
+    '</item></DIDL-Lite>'
+  );
+}
 
 /** Find a `sid`/`sn` pair in any Spotify URI inside a blob of response text. */
 export function accountFromUris(text: string): Account | null {

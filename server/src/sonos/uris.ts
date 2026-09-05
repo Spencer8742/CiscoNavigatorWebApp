@@ -31,20 +31,39 @@ const MAX_ENTRIES = 4000;
 /** Keys are hex digests, so this rejects anything the registry did not mint. */
 const KEY_RE = /^[0-9a-f]{16}$/;
 
+/**
+ * How a thing has to be handed to a speaker.
+ *
+ * Not a taxonomy of music — a taxonomy of *SOAP sequences*, because Sonos has
+ * three genuinely different ones and sending the wrong one is accepted and
+ * then fails, or worse, succeeds silently.
+ *
+ * | Style       | Play now                       | Add to queue        |
+ * |-------------|--------------------------------|---------------------|
+ * | `stream`    | `SetAVTransportURI`            | impossible          |
+ * | `container` | `SetAVTransportURI`            | `AddURIToQueue`     |
+ * | `track`     | `AddURIToQueue` + point at it  | `AddURIToQueue`     |
+ */
+export type PlayStyle = 'stream' | 'container' | 'track';
+
 export interface Playable {
-  /** The `res` value: what actually goes to the speaker. */
-  uri: string;
+  /**
+   * The `res` value: what actually goes to the speaker. Null for a row that
+   * had none, which is normal for local library containers.
+   */
+  uri: string | null;
+  /**
+   * The DIDL object id — `A:ALBUM/The%20Wall`, `FV:2/12`.
+   *
+   * Kept alongside the URI rather than instead of it because the two are used
+   * for different things: the URI plays, the object id BROWSES. A favourited
+   * playlist has both, and using its `x-rincon-cpcontainer:` URI to try to
+   * open it is a Browse that returns nothing.
+   */
+  objectId: string | null;
   /** DIDL-Lite describing it, or '' when Sonos does not need any. */
   metadata: string;
-  /**
-   * Whether this must REPLACE what is playing rather than join a queue.
-   *
-   * A radio stream is not a track: it has no end, cannot be queued behind
-   * anything, and `AddURIToQueue` on one either fails or produces a queue
-   * entry that plays forever. Deciding this at registration is what keeps the
-   * decision next to the metadata that justified it.
-   */
-  stream: boolean;
+  style: PlayStyle;
 }
 
 /**
@@ -69,11 +88,38 @@ const STREAM_SCHEMES = new Set([
   'mms',
 ]);
 
-/** True when this URI names something that cannot sensibly be queued. */
-export function isStream(uri: string, upnpClass = ''): boolean {
-  if (upnpClass.includes('audioBroadcast')) return true;
-  const scheme = uri.slice(0, uri.indexOf(':')).toLowerCase();
-  return STREAM_SCHEMES.has(scheme);
+/**
+ * URI schemes that name a COLLECTION the speaker resolves for itself.
+ *
+ * `x-rincon-cpcontainer` is a music service's playlist, album or station list
+ * — the thing behind almost every favourite that is not a radio station.
+ * `x-rincon-playlist` is the local-library equivalent.
+ *
+ * Both are handed to `SetAVTransportURI` to play, and that is the fix for the
+ * bug this table exists to prevent: sent down the track path instead, the
+ * speaker enqueues nothing, the transport is pointed at an empty queue, and
+ * `Play` answers UPnP 701.
+ */
+const CONTAINER_SCHEMES = new Set(['x-rincon-cpcontainer', 'x-rincon-playlist']);
+
+function schemeOf(uri: string): string {
+  const colon = uri.indexOf(':');
+  return colon === -1 ? '' : uri.slice(0, colon).toLowerCase();
+}
+
+/** Which of the three SOAP sequences this thing needs. */
+export function playStyleOf(uri: string | null, upnpClass = ''): PlayStyle {
+  if (upnpClass.includes('audioBroadcast')) return 'stream';
+
+  if (uri) {
+    const scheme = schemeOf(uri);
+    if (STREAM_SCHEMES.has(scheme)) return 'stream';
+    if (CONTAINER_SCHEMES.has(scheme)) return 'container';
+  }
+
+  // `object.container...` covers albums, artists, playlists and genres —
+  // everything the local library returns without a `res` of its own.
+  return upnpClass.includes('object.container') ? 'container' : 'track';
 }
 
 export class UriRegistry {
@@ -83,23 +129,42 @@ export class UriRegistry {
   /**
    * Register something playable and return the key the panel should use.
    *
-   * Returns null for anything without a URI, so a browse row that cannot be
-   * played becomes a row with no key — which the panel already draws as
-   * disabled — rather than a key that fails later.
+   * Returns null when there is neither a URI nor an object id, so a browse row
+   * that cannot be played becomes a row with no key — which the panel already
+   * draws as disabled — rather than a key that fails later.
    */
-  register(uri: unknown, metadata: unknown, upnpClass = ''): string | null {
-    if (typeof uri !== 'string' || uri.length === 0 || uri.length > 2000) return null;
+  register(
+    uri: string | null,
+    objectId: string | null,
+    metadata: unknown,
+    upnpClass = '',
+  ): string | null {
+    const playUri = usable(uri);
+    const id = usable(objectId);
+    if (!playUri && !id) return null;
 
-    const key = createHash('sha256').update(uri).digest('hex').slice(0, 16);
+    /*
+     * Keyed on BOTH halves, separated by a character neither can contain.
+     *
+     * A local album carries only an object id, and a favourite pointing at
+     * the same album carries only a URI; they are different rows and must not
+     * collide. Joining them without a separator would let one row's URI plus
+     * an empty id hash identically to an empty URI plus another row's id.
+     */
+    const key = createHash('sha256')
+      .update(`${playUri ?? ''}\u0000${id ?? ''}`)
+      .digest('hex')
+      .slice(0, 16);
 
     // Re-registering moves the entry to the back of the eviction queue, so
     // something still on screen does not age out from under a panel that has
     // been idling on one page.
     this.#items.delete(key);
     this.#items.set(key, {
-      uri,
+      uri: playUri,
+      objectId: id,
       metadata: typeof metadata === 'string' ? metadata : '',
-      stream: isStream(uri, upnpClass),
+      style: playStyleOf(playUri, upnpClass),
     });
 
     while (this.#items.size > MAX_ENTRIES) {
@@ -127,4 +192,11 @@ export class UriRegistry {
   get size(): number {
     return this.#items.size;
   }
+}
+
+/** A non-empty string of sane length, or null. */
+function usable(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 && trimmed.length <= 2000 ? trimmed : null;
 }
