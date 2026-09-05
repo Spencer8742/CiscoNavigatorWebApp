@@ -417,7 +417,10 @@ export function serviceDidl(item: {
 
 /** Find a `sid`/`sn` pair in any Spotify URI inside a blob of response text. */
 export function accountFromUris(text: string): Account | null {
-  const match = /x-sonos-spotify:[^"'<\\\s]*[?&]sid=(\d+)[^"'<\\\s]*?[?&]sn=(\d+)/.exec(text);
+  // `&amp;` survives one decode — Sonos escapes the URI's own `&` before it
+  // escapes the DIDL around it. See `accountsFromUris` for what this cost.
+  const flat = text.replace(/&amp;/g, '&');
+  const match = /x-sonos-spotify:[^"'<\\\s]*[?&]sid=(\d+)[^"'<\\\s]*?[?&]sn=(\d+)/.exec(flat);
   if (!match?.[1] || !match[2]) return null;
 
   const sid = Number.parseInt(match[1], 10);
