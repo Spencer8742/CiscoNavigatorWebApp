@@ -121,6 +121,11 @@ interface Crumb {
   sid?: number;
 }
 
+/** A service's own refusal of this app, if it has made one. */
+function blockedReason(sid: number): string | null {
+  return sources.value.find((s) => s.sid === sid)?.blocked ?? null;
+}
+
 /** What to call a service in its own search box. */
 function serviceName(sid: number): string {
   return sources.value.find((s) => s.sid === sid)?.name ?? 'this service';
@@ -247,7 +252,7 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
     const service = typeof sid === 'number' ? sources.value.find((s) => s.sid === sid) : null;
     if (!service) return;
     if (service.linkable) setLinking(service);
-    else setError(`${service.name} cannot be connected from here`);
+    else setError(service.blocked ?? `${service.name} cannot be connected from here`);
   };
 
   /** Open an item's contents — an album's tracks, an artist's albums. */
@@ -260,8 +265,13 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
      */
     const source = item.sid === undefined ? null : sources.value.find((s) => s.sid === item.sid);
     if (source && !source.ready) {
-      setLinking(source.linkable ? source : null);
-      if (!source.linkable) setError(`${source.name} cannot be connected from here`);
+      if (source.linkable) {
+        setLinking(source);
+      } else {
+        // `blocked` is the service's own refusal of this app. Anything else is
+        // a service that needs a password, which a shared screen cannot take.
+        setError(source.blocked ?? `${source.name} cannot be connected from here`);
+      }
       return;
     }
 
@@ -521,11 +531,19 @@ function Results({
                 : 'Nothing here yet'}
           </p>
           {result.note ? <p class="browse-state-hint">{result.note}</p> : null}
-          {needs !== undefined ? (
+          {/*
+            No button for a service that has already refused this app. Offering
+            one again is walking somebody into the same wall, and the reason it
+            cannot work is more use than the offer.
+          */}
+          {needs !== undefined && blockedReason(needs) === null ? (
             <Pressable class="play-option is-primary" onPress={() => onConnect(needs)} ariaLabel="Connect">
               <Icon name="plus" size="1.2rem" weight={2.2} />
               <span>Connect</span>
             </Pressable>
+          ) : null}
+          {needs !== undefined && blockedReason(needs) !== null ? (
+            <p class="browse-state-hint">{blockedReason(needs)}</p>
           ) : null}
         </div>
       );

@@ -157,15 +157,27 @@ async function main(): Promise<void> {
    * those is helped by knowing a SMAPI endpoint or an auth policy name.
    */
   const musicSourceList = (): MusicSource[] =>
-    musicServices.list().map((service) => ({
-      sid: service.sid,
-      name: service.name,
-      ready: service.auth === 'Anonymous' || musicServices.linked(service.sid),
-      searchable: canSearch(service),
-      // A service wanting a username and password is not offered: a shared
-      // wall screen is the wrong place to type either.
-      linkable: service.auth === 'DeviceLink' || service.auth === 'AppLink',
-    }));
+    musicServices.list().map((service) => {
+      const refused = musicServices.refused(service.sid);
+      return {
+        sid: service.sid,
+        name: service.name,
+        ready: service.auth === 'Anonymous' || musicServices.linked(service.sid),
+        searchable: canSearch(service),
+        // A service wanting a username and password is not offered: a shared
+        // wall screen is the wrong place to type either. Nor is one that has
+        // already refused this app as a caller — that button cannot work.
+        linkable:
+          refused === null && (service.auth === 'DeviceLink' || service.auth === 'AppLink'),
+        ...(refused === null
+          ? {}
+          : {
+              blocked:
+                `${service.name} does not accept connections from this app. ` +
+                'Anything you favourite in the Sonos app still plays here.',
+            }),
+      };
+    });
 
   /**
    * Connect or disconnect a music service.

@@ -939,6 +939,44 @@ no Premium requirement, and playback still runs through the household's own
 linked account — so it remains the better option for Spotify specifically, and
 the only one that works on a free account.
 
+### What SMAPI turned out not to be
+
+A real household answered `Client.NOT_AUTHORIZED` to the **first** call of a
+device link — `getDeviceLinkCode`, before anybody had been asked for anything.
+Not an account problem, and not a missing parameter.
+
+**A SMAPI endpoint is contracted between Sonos and each service.** Several
+validate that the caller is a licensed Sonos client, and there is no field to
+fill in that changes the answer. Dressing the request up as a real speaker to
+get past it would be circumventing an access control rather than fixing a bug,
+so it is not done here.
+
+§8 read this the other way round. It treated SMAPI as an open protocol whose
+only obstacle was the device-link handshake needing a browser — and the
+handshake was never the hard part. Getting the service to talk to a controller
+that Sonos has not licensed is, and for some services the answer is no.
+
+What that costs is **catalog search and browsing** for those services, and
+nothing else. Every one of these still works with no linking at all:
+
+| | |
+|---|---|
+| Favourites (`FV:2`) | anything starred in the Sonos app, from any service |
+| Sonos playlists (`SQ:`) | including ones mixing services |
+| Saved stations (`R:0/0`) | Sonos Radio, TuneIn |
+| The local library (`A:*`) | a NAS or computer share |
+| Spotify search | via the Web API — no linking, no Premium |
+
+So a service that refuses is now recorded, the Connect button is withdrawn
+rather than offered again, and the row says why. A button that walks somebody
+into the same wall is worse than the reason it cannot work.
+
+**Spotify is the exception worth setting up.** Its Web API needs no SMAPI, no
+device link and no Premium account: server-to-server credentials read the
+public catalog, and playback still runs through the household's own linked
+account. It is the one service where full catalog search is available here, and
+it costs two environment variables.
+
 ---
 
 ## Sources

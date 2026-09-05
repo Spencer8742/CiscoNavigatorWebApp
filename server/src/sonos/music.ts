@@ -84,6 +84,19 @@ export class MusicServices {
   readonly #path: string;
 
   #tokens = new Map<number, ServiceToken>();
+  /**
+   * Services that refused to let this app link at all, and what they said.
+   *
+   * A SMAPI endpoint is contracted between Sonos and the service, and several
+   * validate that the caller is a licensed Sonos client. When one answers
+   * `NOT_AUTHORIZED` to the FIRST call of a link — before any person has been
+   * asked anything — it is rejecting this app, not an account.
+   *
+   * No parameter changes that, so continuing to offer a Connect button is
+   * leading somebody into the same wall repeatedly. Remembered for the life of
+   * the process, and re-tried on restart in case a service changes its mind.
+   */
+  #refused = new Map<number, string>();
   #pending = new Map<number, PendingLink>();
   #deviceId: string;
   #refreshedAt = 0;
@@ -284,7 +297,7 @@ export class MusicServices {
        * sheet learns nothing and has nowhere to go. The service's own fault
        * is ugly and it is the difference between a dead end and a lead.
        */
-      throw this.#linkFailure(err, service.name);
+      throw this.#linkFailure(err, sid, service.name);
     }
   }
 
@@ -295,9 +308,25 @@ export class MusicServices {
    * account of what actually happened, it is the thing worth putting in a bug
    * report, and no paraphrase of it can be more useful than it is.
    */
-  #linkFailure(err: unknown, name: string): Error {
+  #linkFailure(err: unknown, sid: number, name: string): Error {
     const fault = err instanceof SmapiError && err.fault.trim().length > 0 ? err.fault.trim() : '';
     log.warn(`${name} refused to start a link: ${message(err)}${fault ? ` — ${fault}` : ''}`);
+
+    /*
+     * `NOT_AUTHORIZED` on the first call of a link is the service rejecting
+     * THIS APP as a caller, not rejecting an account: nobody has been asked
+     * for anything yet. Recorded so the panel stops offering a button that
+     * cannot work.
+     */
+    if (/NOT_AUTHORIZED|Unauthorized|FORBIDDEN/i.test(fault)) {
+      this.#refused.set(sid, fault);
+      this.#onChange?.();
+      return new Error(
+        `${name} does not accept connections from this app. Music services can ` +
+          'limit browsing to the Sonos app itself. Anything you favourite there ' +
+          'still plays here.',
+      );
+    }
 
     return new Error(
       fault ? `${name} would not start: ${fault}` : `${name} would not start a connection`,
@@ -331,7 +360,7 @@ export class MusicServices {
     } catch (err) {
       if (err instanceof SmapiError && err.pending) return false;
       // Same reasoning as `beginLink`: mid-link, "please link" says nothing.
-      throw this.#linkFailure(err, this.#catalog.get(sid)?.name ?? 'That service');
+      throw this.#linkFailure(err, sid, this.#catalog.get(sid)?.name ?? 'That service');
     }
   }
 
@@ -345,6 +374,11 @@ export class MusicServices {
 
   linked(sid: number): boolean {
     return this.#tokens.has(sid);
+  }
+
+  /** Why this service will not let this app link, if it has said so. */
+  refused(sid: number): string | null {
+    return this.#refused.get(sid) ?? null;
   }
 
   /* ── Plumbing ──────────────────────────────────────────────────────────*/
