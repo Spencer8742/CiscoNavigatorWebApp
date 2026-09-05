@@ -39,7 +39,8 @@ Full detail, with citations: **[`docs/ROOMOS.md`](docs/ROOMOS.md)**.
 Room Navigator ──── one origin, HTTPS ────▶ navigator-panel (Node)
   Preact + signals                            │  holds ALL credentials
   ~17 KB gz                                   ├──▶ Home Assistant  (WebSocket)
-  no credentials                              ├──▶ Immich          (REST)
+  no credentials                              ├──▶ Sonos           (SOAP + events)
+                                              ├──▶ Immich          (REST)
                                               ├──▶ Bitfocus Companion
                                               └──▶ Elgato Key Lights
 ```
@@ -236,7 +237,7 @@ already in this repository. `--dry-run` prints the XML without sending it.
 | 10 | Failure hardening | ⬜ |
 | 11 | Performance pass on-device | ⬜ |
 | 12 | Deployment polish | 🟡 CI, GHCR images, Unraid template and the device provisioning script done |
-| 13 | Sonos direct — replaces Music Assistant | 🟡 phases 1–3 of 6: live state and full control; browsing next. [`docs/SONOS.md`](docs/SONOS.md) |
+| 13 | Sonos direct — replaced Music Assistant | ✅ [`docs/SONOS.md`](docs/SONOS.md) |
 
 Each phase is verified working before the next begins.
 
@@ -268,8 +269,7 @@ panel/      frontend (Preact + signals, Vite, target chrome102)
               registry.tsx = how it looks · controls.tsx = how it works
 server/     backend  (Node 22, deps: ws + yaml)
   ha/         WebSocket client · state store · service allow-list
-  mass/       Music Assistant · players, queues, library browsing
-  sonos/      Sonos, direct on the LAN · SOAP, XML, household topology
+  sonos/      Sonos, direct on the LAN · topology, events, control, browsing
   immich/     REST client · playlist · image proxy (originals unreachable)
   cast/       Cast v2 — keeps Google Nest Hubs showing the dashboard
   controls/   Companion presses · Elgato Key Lights · HA webhooks

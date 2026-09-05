@@ -11,7 +11,7 @@ const log = logger('sonos-events');
  * UPnP event subscriptions — the reason nothing polls any more.
  *
  * This is the one place in the whole app where an upstream connects **to us**.
- * Home Assistant, Immich, Music Assistant and Companion are all outbound; a
+ * Home Assistant, Immich and Companion are all outbound; a
  * Sonos speaker instead takes a callback URL and POSTs `NOTIFY` to it whenever
  * something changes. That inverts the trust and the networking, and both cost
  * something:

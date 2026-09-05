@@ -32,8 +32,8 @@ import {
  * WebSocket. That is what proves the store talks to each speaker rather than
  * reading one and reporting it for all of them.
  *
- * Home Assistant and Music Assistant are both left unconfigured throughout:
- * Sonos must stand on its own.
+ * Home Assistant is left unconfigured throughout: music must stand on its
+ * own.
  */
 
 const TOKEN = 'panel-token';
@@ -227,6 +227,7 @@ describe('Sonos value conventions', () => {
 /** A panel: connects, records what it is told, and can drive a speaker. */
 class TestPanel {
   #seq = 900;
+  #browsers = new Map();
 
   constructor(port) {
     this.port = port;
@@ -238,6 +239,18 @@ class TestPanel {
 
   music(cmd) {
     this.ws.send(JSON.stringify({ t: 'music', id: (this.#seq += 1), cmd }));
+  }
+
+  /** Ask for something to look at, and wait for the answer. */
+  browse(req) {
+    const id = (this.#seq += 1);
+    return new Promise((resolve, reject) => {
+      this.#browsers.set(id, { resolve, reject });
+      this.ws.send(JSON.stringify({ t: 'browse', id, req }));
+      setTimeout(() => {
+        if (this.#browsers.delete(id)) reject(new Error('browse timed out'));
+      }, 8000);
+    });
   }
 
   get messageCount() {
@@ -263,6 +276,18 @@ class TestPanel {
         this.queues = msg.queues;
       } else if (msg.t === 'health') {
         this.health = msg.health;
+      } else if (msg.t === 'browse') {
+        const w = this.#browsers.get(msg.ref);
+        if (w) {
+          this.#browsers.delete(msg.ref);
+          w.resolve(msg.result);
+        }
+      } else if (msg.t === 'error') {
+        const w = this.#browsers.get(msg.ref);
+        if (w) {
+          this.#browsers.delete(msg.ref);
+          w.reject(new Error(msg.message));
+        }
       }
     });
 
@@ -311,8 +336,6 @@ function isolated({ host, zones, swallowEvents = false } = {}) {
         HA_TOKEN: '',
         IMMICH_URL: '',
         IMMICH_API_KEY: '',
-        // Music Assistant deliberately absent: Sonos must stand alone.
-        MASS_URL: '',
         SONOS_HOST: seed,
         LOG_LEVEL: 'warn',
       },
@@ -918,26 +941,203 @@ describe('driving the speakers', () => {
     panel.close();
   });
 
-  test('says plainly that browsing is not built yet', async () => {
+});
+
+/* ── Phase 4: browsing ────────────────────────────────────────────────────*/
+
+describe('browsing', () => {
+  const ctx = isolated();
+
+  test('favourites come back with keys, not URIs', async () => {
     const panel = new TestPanel(ctx.port);
     await panel.connect();
     await waitFor(() => panel.players.length > 0, 'players');
 
-    const mark = panel.messageCount;
+    const result = await panel.browse({ kind: 'library', media: 'track', favorite: true });
+    assert.equal(result.kind, 'list');
+    assert.equal(result.items.length, 2);
+
+    const playlist = result.items[0];
+    assert.equal(playlist.n, 'Morning & Coffee', 'decoded through both levels of escaping');
+    assert.equal(playlist.k, 'playlist');
+
+    /*
+     * The whole point of the registry. A URI here would let the panel name
+     * anything a speaker will fetch, and Sonos fetches whatever it is given.
+     */
+    assert.match(playlist.u, /^[0-9a-f]{16}$/, 'an opaque key, never a URI');
+    assert.ok(!playlist.u.includes(':'), 'no scheme can appear in a key');
+    assert.match(playlist.a, /^\/img\/art\?k=[0-9a-f]{16}$/, 'artwork is proxied too');
+
+    panel.close();
+  });
+
+  test('reports a real total, so paging is a fact rather than a guess', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    const result = await panel.browse({ kind: 'library', media: 'track', favorite: true });
+    assert.equal(result.more, false, 'two of two items is the end');
+
+    panel.close();
+  });
+
+  test('the queue lists rows, addressed by object id', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    const result = await panel.browse({ kind: 'queue', queueId: 'RINCON_KITCHEN' });
+    assert.equal(result.kind, 'queuePage');
+    assert.equal(result.entries.length, 2);
+
+    // `Q:0/2`, NOT a position. A position would address the wrong track the
+    // moment anything was reordered around it.
+    assert.equal(result.entries[1].id, 'Q:0/2');
+    assert.equal(result.entries[1].name, 'Rock & Roll <Live>');
+    assert.equal(result.entries[0].duration, 295);
+
+    panel.close();
+  });
+
+  test('a library search appends the term to the category id', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    const result = await panel.browse({ kind: 'search', text: 'zeppelin', source: 'library' });
+    assert.equal(result.kind, 'groups');
+
+    const albums = result.groups.find((g) => g.name === 'Albums');
+    assert.ok(albums, 'the album category matched');
+    assert.equal(albums.items[0].n, 'Led Zeppelin IV');
+
+    panel.close();
+  });
+
+  /*
+   * The two playback paths, and the reason they are two.
+   *
+   * A radio stream has no end and cannot go in a queue: `AddURIToQueue` on one
+   * either fails or produces an entry that plays forever. A track has to go
+   * through the queue, and the queue then has to be made the player's source
+   * — a speaker that was on a radio station otherwise stays on it while the
+   * album sits in a queue nothing is reading.
+   */
+  test('a stream replaces what is playing; a track goes through the queue', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    const favourites = await panel.browse({
+      kind: 'library',
+      media: 'track',
+      favorite: true,
+    });
+    const radio = favourites.items.find((i) => i.k === 'radio');
+    const playlist = favourites.items.find((i) => i.k === 'playlist');
+    assert.ok(radio && playlist, 'the fixture has one of each');
+
+    // The stream.
+    let before = ctx.sonos.calls.length;
+    panel.music({ verb: 'playItem', player: 'RINCON_LIVING', item: radio.u, enqueue: 'replace' });
+
+    const set = await waitFor(
+      () => ctx.sonos.calls.slice(before).find((c) => c.action === 'SetAVTransportURI'),
+      'the stream to be set',
+    );
+    assert.match(set.args.CurrentURI, /^x-sonosapi-stream:/);
+    // Sonos needs the metadata handed back, or it accepts this and plays
+    // silence — the least obvious failure in the whole integration.
+    assert.ok(set.args.CurrentURIMetaData.includes('DIDL-Lite'));
+    assert.ok(
+      !ctx.sonos.calls.slice(before).some((c) => c.action === 'AddURIToQueue'),
+      'a stream must never be queued',
+    );
+
+    // The queueable one.
+    before = ctx.sonos.calls.length;
     panel.music({
       verb: 'playItem',
       player: 'RINCON_LIVING',
-      item: 'library://album/7',
+      item: playlist.u,
       enqueue: 'replace',
     });
 
-    const error = await waitFor(
-      () => panel.since(mark).find((m) => m.t === 'error'),
-      'the refusal',
+    await waitFor(
+      () => ctx.sonos.calls.slice(before).find((c) => c.action === 'AddURIToQueue'),
+      'the item to be queued',
     );
-    // Not "Not permitted": this is an absence, not a rejection, and the
-    // difference is what stops somebody debugging a guard that is fine.
-    assert.match(error.message, /next phase/i);
+
+    const sent = ctx.sonos.calls.slice(before).map((c) => c.action);
+    assert.ok(sent.includes('RemoveAllTracksFromQueue'), 'replace clears first');
+
+    const source = ctx.sonos.calls
+      .slice(before)
+      .find((c) => c.action === 'SetAVTransportURI');
+    assert.match(
+      source.args.CurrentURI,
+      /^x-rincon-queue:RINCON_LIVING#0$/,
+      'the player must be pointed at its own queue, or nothing audible changes',
+    );
+    assert.ok(sent.includes('Play'));
+
+    panel.close();
+  });
+
+  test('refuses a key it never minted, and a queue id it never sent', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    const cases = [
+      // A URI, which is exactly what the registry exists to make unsayable.
+      [
+        'a raw URI',
+        { verb: 'playItem', player: 'RINCON_LIVING', item: 'x-rincon-mp3radio://evil/x.mp3', enqueue: 'replace' },
+      ],
+      [
+        'an unminted key',
+        { verb: 'playItem', player: 'RINCON_LIVING', item: 'aaaaaaaaaaaaaaaa', enqueue: 'replace' },
+      ],
+      // RemoveTrackFromQueue takes an ObjectID: an unchecked one would reach
+      // containers elsewhere in the ContentDirectory.
+      ['a non-queue object id', { verb: 'queueRemove', player: 'RINCON_LIVING', item: 'FV:2/1' }],
+    ];
+
+    for (const [label, cmd] of cases) {
+      const before = ctx.sonos.calls.length;
+      const mark = panel.messageCount;
+      panel.music(cmd);
+
+      await waitFor(() => panel.since(mark).find((m) => m.t === 'error'), `refusal of ${label}`);
+      await sleep(80);
+
+      const sent = ctx.sonos.calls.slice(before).filter((c) => COMMAND_ACTIONS.has(c.action));
+      assert.deepEqual(sent.map((c) => c.action), [], `${label} must not reach a speaker`);
+    }
+
+    panel.close();
+  });
+});
+
+/* ── Phase 5: Spotify ─────────────────────────────────────────────────────*/
+
+describe('Spotify search', () => {
+  const ctx = isolated();
+
+  test('says what to do when it is not set up', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    await assert.rejects(
+      () => panel.browse({ kind: 'search', text: 'zeppelin', source: 'spotify' }),
+      // Names the two variables rather than reporting a failed search, because
+      // nobody reads container logs from a wall.
+      /SPOTIFY_CLIENT_ID/,
+    );
 
     panel.close();
   });

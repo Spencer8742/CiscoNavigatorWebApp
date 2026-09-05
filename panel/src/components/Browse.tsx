@@ -16,10 +16,10 @@ import type {
 /**
  * The music browser.
  *
- * Everything here comes from Music Assistant's own services — this app keeps
- * no library, no cache of album names and no search index of its own. Which
- * means whatever you added to Music Assistant this morning is here, and the
- * panel never disagrees with the Music Assistant app about what exists.
+ * Everything here comes off the speakers themselves — this app keeps no
+ * library, no cache of album names and no search index of its own. Which means
+ * whatever you favourited in the Sonos app this morning is here, and the panel
+ * never disagrees with the Sonos app about what exists.
  *
  * ## Why tabs rather than a folder tree
  *
@@ -28,9 +28,12 @@ import type {
  * panel it is four taps and a soft keyboard before you hear anything, and
  * every one of those taps is a round trip.
  *
- * These are seven flat views over the same library call, with the two you
- * actually use — what you played recently, and what you marked as a favorite —
- * first and needing no typing at all.
+ * These are six flat views over the same call, with the one you actually use
+ * — what you favourited in the Sonos app — first and needing no typing at all.
+ *
+ * There is no "Recently played". Sonos keeps no play history, locally or in
+ * its cloud API, and inventing one from what this panel happened to start
+ * would be a narrower thing wearing the same label.
  *
  * ## Memory
  *
@@ -53,30 +56,40 @@ interface Tab {
 
 const TABS: Tab[] = [
   {
-    id: 'recent',
-    label: 'Recent',
-    icon: 'clock',
-    // A real play history from Music Assistant, not the library sorted by
-    // last-played — so a radio station or a streamed track you do not own
-    // still shows up here.
-    request: { kind: 'library', media: 'track', recent: true },
-  },
-  {
     id: 'favorites',
     label: 'Favorites',
     icon: 'heart',
-    request: { kind: 'library', media: 'album', favorite: true },
+    /*
+     * The one that earns its place at the front. On Sonos, Favorites is a
+     * PLACE rather than a filter — whatever you starred in the Sonos app, of
+     * any kind, from any service — and it plays with no service login on this
+     * side at all. For a wall panel it is most of what anyone reaches for.
+     */
+    request: { kind: 'library', media: 'track', favorite: true },
   },
-  { id: 'albums', label: 'Albums', icon: 'disc', request: { kind: 'library', media: 'album' } },
-  { id: 'artists', label: 'Artists', icon: 'media', request: { kind: 'library', media: 'artist' } },
   {
     id: 'playlists',
     label: 'Playlists',
     icon: 'list',
     request: { kind: 'library', media: 'playlist' },
   },
+  { id: 'albums', label: 'Albums', icon: 'disc', request: { kind: 'library', media: 'album' } },
+  { id: 'artists', label: 'Artists', icon: 'media', request: { kind: 'library', media: 'artist' } },
   { id: 'radio', label: 'Radio', icon: 'radio', request: { kind: 'library', media: 'radio' } },
   { id: 'search', label: 'Search', icon: 'search', request: { kind: 'search', text: '' } },
+];
+
+/**
+ * Where a search looks.
+ *
+ * There is no "search everything": the local library is searched by object id
+ * on the speakers, and a streaming catalog only through that service's own
+ * API. Naming the source is two taps instead of one, and it is the honest
+ * shape of the system rather than a guess that silently misses half of it.
+ */
+const SOURCES: { id: 'library' | 'spotify'; label: string }[] = [
+  { id: 'library', label: 'Library' },
+  { id: 'spotify', label: 'Spotify' },
 ];
 
 /** One level of the drill-down: what we opened, and what it was called. */
@@ -86,7 +99,8 @@ interface Crumb {
 }
 
 export function Browse({ playerId, onClose }: { playerId: string; onClose: () => void }) {
-  const [tab, setTab] = useState('recent');
+  const [tab, setTab] = useState('favorites');
+  const [source, setSource] = useState<'library' | 'spotify'>('library');
   const [offset, setOffset] = useState(0);
   const [query, setQuery] = useState('');
   const [result, setResult] = useState<BrowseResult | null>(null);
@@ -121,7 +135,7 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
     const req: BrowseRequest = here
       ? { kind: 'item', uri: here.uri, offset }
       : current.request.kind === 'search'
-        ? { kind: 'search', text: query }
+        ? { kind: 'search', text: query, source }
         : { ...current.request, offset };
 
     // An empty search box is not a request; it is the state before one.
@@ -151,7 +165,7 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
     return () => {
       stale = true;
     };
-  }, [tab, offset, query, here?.uri]);
+  }, [tab, offset, query, source, here?.uri]);
 
   const pick = (t: string): void => {
     setTab(t);
@@ -219,7 +233,24 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
           </div>
         )}
 
-        {tab === 'search' && !here ? <SearchBox value={query} onSearch={setQuery} /> : null}
+        {tab === 'search' && !here ? (
+          <>
+            <div class="browse-sources" role="group" aria-label="Where to search">
+              {SOURCES.map((s) => (
+                <Pressable
+                  key={s.id}
+                  class={s.id === source ? 'browse-source is-active' : 'browse-source'}
+                  onPress={() => setSource(s.id)}
+                  ariaPressed={s.id === source}
+                  ariaLabel={`Search ${s.label}`}
+                >
+                  {s.label}
+                </Pressable>
+              ))}
+            </div>
+            <SearchBox value={query} onSearch={setQuery} />
+          </>
+        ) : null}
 
         <div class="sheet-body scroll browse-body">
           <Results
@@ -244,8 +275,8 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
               <Icon name="chevronLeft" size="1.1rem" weight={2.2} />
               <span>Back</span>
             </Pressable>
-            {/* `offset` counts ITEMS, as Music Assistant does. The page number
-                is a display detail derived from it, not the thing being sent. */}
+            {/* `offset` counts ITEMS, as Sonos does. The page number is a
+                display detail derived from it, not the thing being sent. */}
             <span class="pager-count">Page {Math.floor(offset / BROWSE_PAGE) + 1}</span>
             <Pressable
               class="pager-btn"
@@ -309,8 +340,7 @@ function Results({
         <Icon name="alert" size="2rem" weight={1.6} />
         <p class="browse-state-title">{error}</p>
         <p class="browse-state-hint">
-          Browsing needs the Music Assistant integration in Home Assistant. Speakers and
-          playback work without it.
+          Transport and volume still work — this is only the library.
         </p>
       </div>
     );
@@ -348,7 +378,8 @@ function Results({
           <Icon name="disc" size="2rem" weight={1.6} />
           <p class="browse-state-title">Nothing here yet</p>
           <p class="browse-state-hint">
-            Music Assistant has no items of this kind in its library.
+            Sonos reported nothing of this kind. Favorites and playlists come from the
+            Sonos app; albums and artists need a music library set up there.
           </p>
         </div>
       );
@@ -425,9 +456,9 @@ function ItemRow({
  * the last tab rather than the first, and why nothing else here needs it.
  *
  * The query is submitted rather than live: searching on every keystroke would
- * fire a request per letter through Home Assistant to Music Assistant to
- * whichever streaming provider is behind it, and the answers would arrive out
- * of order on a link this app cannot assume is fast.
+ * fire a request per letter at the speakers or at a streaming service, and
+ * the answers would arrive out of order on a link this app cannot assume is
+ * fast.
  */
 function SearchBox({ value, onSearch }: { value: string; onSearch: (text: string) => void }) {
   const [text, setText] = useState(value);
@@ -543,9 +574,9 @@ function PlayOptions({
                 <span>Add to queue</span>
               </Pressable>
 
-              {/* Music Assistant keeps going with similar music once this
-                  finishes — the difference between hearing one artist and
-                  hearing an evening of them. */}
+              {/* Keeps going with similar music once this finishes — the
+                  difference between hearing one artist and hearing an evening
+                  of them. */}
               <Pressable
                 class="play-option"
                 onPress={() =>
@@ -559,10 +590,9 @@ function PlayOptions({
             </>
           ) : null}
 
-          {/* Favouriting writes to Music Assistant's library, so it shows up
-              in the Favorites tab and in the Music Assistant app alike. Only
-              offered when we actually know the current state — otherwise the
-              button would be a guess at which way it toggles. */}
+          {/* Only offered when the current state is actually known —
+              otherwise the button would be a guess at which way it toggles.
+              Sonos never sets it: favourites are managed in the Sonos app. */}
           {item.f !== undefined ? (
             <Pressable
               class="play-option"

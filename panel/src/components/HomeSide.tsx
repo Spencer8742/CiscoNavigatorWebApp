@@ -24,7 +24,7 @@ import type { PhotoRef } from '@shared/protocol.ts';
  */
 export function HomeSide() {
   const wantsMedia = prefs.value.homeSide === 'media';
-  // Speakers come from Music Assistant now, so "do we have any" is a question
+  // Speakers come from Sonos now, so "do we have any" is a question
   // about what MA reported rather than about what dashboard.yaml listed.
   const hasPlayers = speakers.value.length > 0;
   const photosOn = immichConfig.value.enabled;
@@ -48,7 +48,7 @@ function NowPlayingCard() {
   const artist = media?.artist ?? '';
   const playing = player.state === 'playing';
   const token = getToken();
-  // Already proxied by the backend — the panel never holds a Music Assistant
+  // Already proxied by the backend — the panel never holds a speaker's
   // address. See server/src/http/media-art.ts.
   const art = media?.art ? `${media.art}${token ? `&t=${encodeURIComponent(token)}` : ''}` : null;
 

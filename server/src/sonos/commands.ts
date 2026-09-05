@@ -3,20 +3,20 @@ import { toPlayMode } from '~/sonos/store.ts';
 import type { SonosClient } from '~/sonos/client.ts';
 import type { SonosStore } from '~/sonos/store.ts';
 import type { SonosZone } from '~/sonos/topology.ts';
-import type { MusicCommand } from '@shared/protocol.ts';
+import type { UriRegistry } from '~/sonos/uris.ts';
+import type { Enqueue, MusicCommand } from '@shared/protocol.ts';
 
 const log = logger('sonos-cmd');
 
 /**
  * The guard between a panel and the speakers.
  *
- * `mass/commands.ts` allow-lists Music Assistant command names because that
- * API is administrative. Sonos's local API is worse: the same port that pauses
- * a track can rename rooms (`DeviceProperties.SetZoneAttributes`), rewrite
- * alarms (`AlarmClock`), and write music-service account credentials
+ * Sonos's local API is administrative: the same port that pauses a track can
+ * rename rooms (`DeviceProperties.SetZoneAttributes`), rewrite alarms
+ * (`AlarmClock`), and write music-service account credentials
  * (`SystemProperties`). None of that is behind authentication on the LAN.
  *
- * So the guard is not a longer list, it is a different shape:
+ * So the guard is not an allow-list, it is a different shape:
  *
  * > **The panel names a verb. It never names a SOAP action.**
  *
@@ -50,10 +50,12 @@ const REPEAT_MODES = new Set(['off', 'one', 'all']);
 export class SonosCommands {
   readonly #client: SonosClient;
   readonly #store: SonosStore;
+  readonly #uris: UriRegistry;
 
-  constructor(client: SonosClient, store: SonosStore) {
+  constructor(client: SonosClient, store: SonosStore, uris: UriRegistry) {
     this.#client = client;
     this.#store = store;
+    this.#uris = uris;
   }
 
   /**
@@ -184,21 +186,142 @@ export class SonosCommands {
         return 'Sonos speakers have no power control';
 
       case 'playItem':
-      case 'favorite':
+        return this.#playItem(lead, cmd.item, cmd.enqueue);
+
       case 'queueJump':
-      case 'queueMove':
+        // Sonos counts tracks from 1; the panel counts from 0.
+        await this.#av(lead, 'Seek', {
+          Unit: 'TRACK_NR',
+          Target: String(Math.max(0, Math.floor(cmd.index)) + 1),
+        });
+        return null;
+
       case 'queueRemove':
+        if (!isQueueId(cmd.item)) return 'Not permitted';
+        await this.#av(lead, 'RemoveTrackFromQueue', { ObjectID: cmd.item, UpdateID: '0' });
+        return null;
+
+      case 'queueMove':
+        return this.#moveQueueItem(lead, cmd.item, cmd.by);
+
       case 'queueClear':
-        // Reachable only once browsing exists to produce something to play.
-        return 'Not available yet — Sonos browsing arrives in the next phase';
+        await this.#av(lead, 'RemoveAllTracksFromQueue');
+        return null;
+
+      case 'favorite':
+        /*
+         * Not a refusal, an absence. Sonos manages favourites in its own app
+         * and exposes no way to add one locally — `FV:2` is readable and not
+         * writable. The panel therefore never offers the button (it only does
+         * when the current state is known), so this is the belt to that
+         * braces.
+         */
+        return 'Favourites are managed in the Sonos app';
     }
+  }
+
+  /**
+   * Play something a browse produced.
+   *
+   * `item` is a key this backend minted, never a URI — see `uris.ts`. The two
+   * paths below are not a nicety: a radio stream has no end and cannot go in a
+   * queue, and `AddURIToQueue` on one either fails or produces an entry that
+   * plays forever.
+   */
+  async #playItem(lead: SonosZone, key: string, enqueue: Enqueue): Promise<string | null> {
+    const playable = this.#uris.get(key);
+    if (!playable) {
+      // Expected after a backend restart, or once a key has aged out. The row
+      // is still on screen, so this is an instruction somebody can follow.
+      return 'That item is no longer loaded — browse to it again';
+    }
+
+    if (playable.stream) {
+      // A stream replaces whatever is playing, whichever option was chosen:
+      // there is nothing sensible to queue it behind.
+      await this.#av(lead, 'SetAVTransportURI', {
+        CurrentURI: playable.uri,
+        CurrentURIMetaData: playable.metadata,
+      });
+      await this.#av(lead, 'Play', { Speed: '1' });
+      return null;
+    }
+
+    if (enqueue === 'replace' || enqueue === 'play') {
+      await this.#av(lead, 'RemoveAllTracksFromQueue');
+    }
+
+    /*
+     * `EnqueueAsNext` puts it after the current track; the first-track number
+     * decides where. Zero means "at the end", which is what "add" means.
+     */
+    const next = enqueue === 'next' || enqueue === 'replace_next';
+    await this.#av(lead, 'AddURIToQueue', {
+      EnqueuedURI: playable.uri,
+      EnqueuedURIMetaData: playable.metadata,
+      DesiredFirstTrackNumberEnqueued: '0',
+      EnqueueAsNext: next ? '1' : '0',
+    });
+
+    if (enqueue === 'add' || enqueue === 'next') return null;
+
+    /*
+     * Point the player at its own queue before playing.
+     *
+     * Without this a speaker that was on a radio station stays on it: the
+     * queue now holds the album, and the transport is still pointed somewhere
+     * else. `x-rincon-queue:<uuid>#0` is how a speaker is told "your source is
+     * your queue", and forgetting it is a command that succeeds and changes
+     * nothing audible.
+     */
+    await this.#av(lead, 'SetAVTransportURI', {
+      CurrentURI: `x-rincon-queue:${lead.uuid}#0`,
+      CurrentURIMetaData: '',
+    });
+    await this.#av(lead, 'Seek', { Unit: 'TRACK_NR', Target: '1' });
+    await this.#av(lead, 'Play', { Speed: '1' });
+    return null;
+  }
+
+  /**
+   * Move a queued track by a position shift.
+   *
+   * Sonos reorders by absolute positions rather than by a delta, and the
+   * arithmetic differs by direction: moving DOWN has to account for the track
+   * being lifted out first, so it inserts one further along than the naive
+   * sum. Getting that wrong moves a track down by nothing at all.
+   */
+  async #moveQueueItem(lead: SonosZone, itemId: string, by: number): Promise<string | null> {
+    if (!isQueueId(itemId)) return 'Not permitted';
+
+    const from = positionOf(itemId);
+    if (from === null) return 'Not permitted';
+
+    let insertBefore: number;
+    if (by === 0) {
+      // "Play next": immediately after whatever is playing now.
+      const current = this.#store.snapshot().queues.find((q) => q.id === lead.uuid)?.index ?? 0;
+      insertBefore = current + 2;
+    } else {
+      insertBefore = by < 0 ? from + by : from + by + 1;
+    }
+
+    if (insertBefore < 1) insertBefore = 1;
+
+    await this.#av(lead, 'ReorderTracksInQueue', {
+      StartingIndex: String(from),
+      NumberOfTracks: '1',
+      InsertBefore: String(insertBefore),
+      UpdateID: '0',
+    });
+    return null;
   }
 
   /**
    * Set the group led by `leader` to exactly these members.
    *
    * Absolute rather than incremental, matching `players/cmd/set_members` on
-   * the Music Assistant side — which is what makes removing a speaker the same
+   * every other absolute setter — which is what makes removing a speaker the same
    * operation as adding one, and what stops two panels racing into a group
    * neither asked for.
    */
@@ -267,6 +390,24 @@ function clampVolume(raw: unknown): number | null {
   if (typeof raw !== 'number' || !Number.isFinite(raw)) return null;
   const n = Math.round(raw);
   return n >= 0 && n <= 100 ? n : null;
+}
+
+/**
+ * A queue object id, `Q:0/5`.
+ *
+ * Checked rather than trusted because it goes straight into a SOAP argument
+ * that removes or reorders things: `RemoveTrackFromQueue` takes an ObjectID,
+ * and an unchecked one would let the panel name a container elsewhere in the
+ * ContentDirectory.
+ */
+function isQueueId(raw: unknown): raw is string {
+  return typeof raw === 'string' && /^Q:\d+\/\d+$/.test(raw);
+}
+
+/** The 1-based position out of `Q:0/5`. */
+function positionOf(queueId: string): number | null {
+  const n = Number.parseInt(queueId.slice(queueId.lastIndexOf('/') + 1), 10);
+  return Number.isFinite(n) && n >= 1 ? n : null;
 }
 
 /** Seconds to `H:MM:SS`, which is the only format Sonos's Seek accepts. */

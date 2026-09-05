@@ -7,10 +7,10 @@ import * as act from '~/state/actions.ts';
 /**
  * Speaker grouping, Sonos-style.
  *
- * Every join and separate here is a Music Assistant command sent straight to
- * Music Assistant. This component holds **no grouping state of its own** —
- * what it draws is what Music Assistant says the groups are, which is why
- * grouping done in the Music Assistant app, a Home Assistant dashboard or by
+ * Every join and separate here is a command sent straight to the speakers.
+ * This component holds **no grouping state of its own** — what it draws is
+ * what the household says the groups are, which is why grouping done in the
+ * Sonos app, a Home Assistant dashboard or by
  * voice shows up here immediately and without a refresh.
  *
  * `players/cmd/set_members` replaces the membership rather than appending to
@@ -18,7 +18,7 @@ import * as act from '~/state/actions.ts';
  * list. That is also why there is no Save button: each tap is already a
  * complete, self-contained instruction.
  *
- * Which speakers may be grouped is Music Assistant's answer, not a guess:
+ * Which speakers may be grouped is the household's answer, not a guess:
  * `can_group_with` is exact, and a Chromecast that genuinely cannot sync with
  * a Sonos is never offered.
  */
@@ -28,7 +28,7 @@ export function GroupSheet({
   onClose,
 }: {
   leader: string;
-  /** Make another player (or a Music Assistant group) the active one. */
+  /** Make another player (or a group) the active one. */
   onSelect: (playerId: string) => void;
   onClose: () => void;
 }) {
@@ -38,7 +38,7 @@ export function GroupSheet({
   const active = leaderInfo && leaderInfo.members.length > 0 ? leaderInfo.members : [leader];
 
   /*
-   * Only speakers Music Assistant says this leader can sync with. An entire
+   * Only speakers the household says this leader can sync with. An entire
    * provider may be named instead of individual players, which is Music
    * Assistant's shorthand for "everything of this kind groups together".
    */
@@ -54,7 +54,7 @@ export function GroupSheet({
 
     if (active.includes(speaker.id)) {
       // Removing: take that speaker out. Sending the leader a shorter list
-      // works too, but ungroup is what Music Assistant models as "this
+      // works too, but ungroup is what the backend models as "this
       // speaker leaves" and does the right thing if the leader changed
       // underneath us.
       act.unjoinPlayer(speaker.id);
@@ -127,7 +127,7 @@ export function GroupSheet({
 
           {groups.length > 0 ? (
             <>
-              <div class="group-section">Music Assistant groups</div>
+              <div class="group-section">Groups</div>
               {groups.map((g) => (
                 <Pressable
                   key={g.id}

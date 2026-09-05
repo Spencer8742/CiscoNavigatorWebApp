@@ -7,14 +7,14 @@ const log = logger('media-art');
 /**
  * Cover art for browsing, fetched on the panel's behalf.
  *
- * Music Assistant hands out artwork as an absolute URL pointing at its own
- * image proxy — `http://music-assistant:8095/imageproxy?…`. Two things are
- * wrong with giving that to the panel:
+ * Upstreams hand out artwork as an absolute URL on their own host — a Sonos
+ * speaker answers `http://192.168.1.51:1400/getaa?…`. Two things are wrong
+ * with giving that to the panel:
  *
  *  - it is frequently a container hostname or a Docker-network address that
  *    nothing outside Home Assistant's host can resolve, so half the covers
  *    would silently fail to load and the other half would depend on how the
- *    user happened to deploy Music Assistant
+ *    speaker happened to be answering
  *  - it tells the panel where another service on the LAN lives, which the rest
  *    of this app deliberately never does (docs/ARCHITECTURE.md §3)
  *
@@ -25,9 +25,9 @@ const log = logger('media-art');
  * to, and this process sits on a trusted LAN.
  *
  * So the panel never names a URL. When a browse response comes back from
- * Music Assistant, the backend registers each artwork URL here and replaces it
+ * an upstream, the backend registers each artwork URL here and replaces it
  * with an opaque key. The panel can only ask for keys, and a key can only
- * exist because Music Assistant itself produced the URL it stands for. There
+ * exist because an upstream itself produced the URL it stands for. There
  * is no request the panel can compose that reaches a host of its choosing.
  *
  * The registry is bounded and evicts oldest-first: it is a lookup table for

@@ -168,6 +168,72 @@ export class MockSonos {
   /** Every SOAP action received, as { uuid, service, action, args }. */
   calls = [];
 
+  /**
+   * The ContentDirectory, by object id.
+   *
+   * The two entries that matter are `FV:2` and `Q:0`. A favourite carries an
+   * `r:resMD` that Sonos needs handed back to play it, and a radio favourite's
+   * URI scheme is what marks it as a stream rather than something queueable —
+   * both are invisible in the shape and decisive in the behaviour.
+   */
+  containers = {
+    'FV:2': [
+      {
+        id: 'FV:2/1',
+        title: 'Morning & Coffee',
+        creator: 'Spotify playlist',
+        upnpClass: 'object.container.playlistContainer',
+        res: 'x-rincon-cpcontainer:1006206cspotify%3aplaylist%3a37i9',
+        resMD: '<DIDL-Lite><item id="0"><dc:title>Morning &amp; Coffee</dc:title></item></DIDL-Lite>',
+        albumArtURI: '/getaa?u=spotify',
+      },
+      {
+        id: 'FV:2/2',
+        title: 'BBC Radio 6 Music',
+        upnpClass: 'object.item.audioItem.audioBroadcast',
+        // A stream: no end, cannot be queued behind anything.
+        res: 'x-sonosapi-stream:s44491?sid=254',
+        resMD: '<DIDL-Lite><item id="s44491"><dc:title>BBC 6</dc:title></item></DIDL-Lite>',
+      },
+    ],
+    'SQ:': [
+      {
+        id: 'SQ:3',
+        title: 'Dinner',
+        upnpClass: 'object.container.playlistContainer',
+        res: 'file:///jffs/settings/savedqueues.rsq#3',
+      },
+    ],
+    'A:ALBUM': [
+      {
+        id: 'A:ALBUM/Led%20Zeppelin%20IV',
+        title: 'Led Zeppelin IV',
+        creator: 'Led Zeppelin',
+        upnpClass: 'object.container.album.musicAlbum',
+        res: 'x-rincon-playlist:RINCON_LIVING#A:ALBUM/Led%20Zeppelin%20IV',
+      },
+    ],
+    'Q:0': [
+      {
+        id: 'Q:0/1',
+        title: 'Black Dog',
+        creator: 'Led Zeppelin',
+        album: 'Led Zeppelin IV',
+        upnpClass: 'object.item.audioItem.musicTrack',
+        res: 'x-file-cifs://nas/music/black-dog.flac',
+        duration: '0:04:55',
+      },
+      {
+        id: 'Q:0/2',
+        title: 'Rock & Roll <Live>',
+        creator: 'Led Zeppelin',
+        upnpClass: 'object.item.audioItem.musicTrack',
+        res: 'x-file-cifs://nas/music/rock-and-roll.flac',
+        duration: '0:03:40',
+      },
+    ],
+  };
+
   /** Every SUBSCRIBE / UNSUBSCRIBE, as { uuid, service, method, sid }. */
   subscriptions = [];
 
@@ -491,6 +557,47 @@ export class MockSonos {
       case 'BecomeCoordinatorOfStandaloneGroup':
         void this.regroup(zone.uuid, zone.uuid);
         return ack(action);
+
+      case 'AddURIToQueue':
+        return (
+          '<u:AddURIToQueueResponse xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">' +
+          '<FirstTrackNumberEnqueued>3</FirstTrackNumberEnqueued>' +
+          '<NumTracksAdded>1</NumTracksAdded><NewQueueLength>3</NewQueueLength>' +
+          '</u:AddURIToQueueResponse>'
+        );
+
+      case 'RemoveAllTracksFromQueue':
+      case 'RemoveTrackFromQueue':
+      case 'ReorderTracksInQueue':
+        return ack(action);
+
+      case 'Browse': {
+        const rows = this.containers[args.ObjectID ?? ''] ?? searchOf(this.containers, args.ObjectID);
+        if (!rows) return null;
+
+        const start = Number.parseInt(args.StartingIndex ?? '0', 10) || 0;
+        const count = Number.parseInt(args.RequestedCount ?? '100', 10) || 100;
+        const page = rows.slice(start, start + count);
+
+        return (
+          '<u:BrowseResponse xmlns:u="urn:schemas-upnp-org:service:ContentDirectory:1">' +
+          // Escaped once: DIDL travels as a string inside the body, exactly as
+          // the topology does.
+          `<Result>${esc(didlList(page))}</Result>` +
+          `<NumberReturned>${page.length}</NumberReturned>` +
+          `<TotalMatches>${rows.length}</TotalMatches><UpdateID>1</UpdateID>` +
+          '</u:BrowseResponse>'
+        );
+      }
+
+      case 'ListAvailableServices':
+        return (
+          '<u:ListAvailableServicesResponse xmlns:u="urn:schemas-upnp-org:service:MusicServices:1">' +
+          `<AvailableServiceDescriptorList>${esc(
+            '<Services><Service Id="9" Name="Spotify"/></Services>',
+          )}</AvailableServiceDescriptorList>` +
+          '</u:ListAvailableServicesResponse>'
+        );
     }
 
     switch (action) {
@@ -625,6 +732,56 @@ function soapArgs(body) {
     if (!(name in args)) args[name] = '';
   }
   return args;
+}
+
+/**
+ * A local-library search: `A:ALBUM:zeppelin`.
+ *
+ * Sonos addresses these by appending the term to a category id rather than
+ * having a search action, which is the detail this exists to exercise.
+ */
+function searchOf(containers, objectId) {
+  if (typeof objectId !== 'string') return null;
+  const colon = objectId.lastIndexOf(':');
+  if (colon <= 1) return null;
+
+  const category = objectId.slice(0, colon);
+  const term = objectId.slice(colon + 1).toLowerCase();
+  const rows = containers[category];
+  if (!rows || term.length === 0) return null;
+
+  return rows.filter((r) => r.title.toLowerCase().includes(term));
+}
+
+/** DIDL-Lite for a browse result, before escaping. */
+function didlList(rows) {
+  let items = '';
+  for (const row of rows) {
+    const container = row.upnpClass.includes('container');
+    const tag = container ? 'container' : 'item';
+
+    let inner = `<dc:title>${esc(row.title)}</dc:title>`;
+    inner += `<upnp:class>${row.upnpClass}</upnp:class>`;
+    if (row.creator) inner += `<dc:creator>${esc(row.creator)}</dc:creator>`;
+    if (row.album) inner += `<upnp:album>${esc(row.album)}</upnp:album>`;
+    if (row.albumArtURI) inner += `<upnp:albumArtURI>${esc(row.albumArtURI)}</upnp:albumArtURI>`;
+    if (row.res) {
+      const duration = row.duration ? ` duration="${row.duration}"` : '';
+      inner += `<res${duration} protocolInfo="x">${esc(row.res)}</res>`;
+    }
+    // The field that decides whether a favourite plays or plays silence.
+    if (row.resMD) inner += `<r:resMD>${esc(row.resMD)}</r:resMD>`;
+
+    items += `<${tag} id="${esc(row.id)}" parentID="-1" restricted="true">${inner}</${tag}>`;
+  }
+
+  return (
+    '<DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" ' +
+    'xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" ' +
+    'xmlns:r="urn:schemas-rinconnetworks-com:metadata-1-0/" ' +
+    'xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/">' +
+    `${items}</DIDL-Lite>`
+  );
 }
 
 /** DIDL-Lite for one track, before escaping. */

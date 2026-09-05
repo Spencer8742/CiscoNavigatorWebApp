@@ -17,14 +17,13 @@ import * as act from '~/state/actions.ts';
 /**
  * Now Playing.
  *
- * Everything on this screen comes from Music Assistant directly — the speaker
- * list, what is playing, the volume, the group and the queue. Nothing is read
- * from Home Assistant's `media_player` entities, which were only ever a
- * flattened copy of this with the interesting parts removed.
+ * Everything on this screen comes from Sonos directly — the speaker list, what
+ * is playing, the volume, the group and the queue. Nothing is read from Home
+ * Assistant's `media_player` entities, which were only ever a flattened copy
+ * of this with the interesting parts removed.
  *
- * Music Assistant pushes changes, so a track skipped from a phone or a speaker
- * grouped in the Music Assistant app appears here without the panel asking for
- * anything.
+ * The speakers push changes, so a track skipped from a phone or a group made
+ * in the Sonos app appears here without the panel asking for anything.
  */
 export function Media() {
   const [chosen, setChosen] = useState<string | null>(null);
@@ -153,24 +152,24 @@ function NoPlayers() {
         <h1 class="screen-title">Media</h1>
       </div>
       <div class="screen-body">
-        {h?.mass === 'disabled' ? (
-          <Empty icon="media" title="Music Assistant is not connected">
-            Set <code>MASS_URL</code> to your Music Assistant server (for example{' '}
-            <code>http://192.168.1.10:8095</code>) and <code>MASS_TOKEN</code> to a token from
-            Music Assistant&apos;s Settings, then restart the container.
+        {h?.sonos === 'disabled' ? (
+          <Empty icon="media" title="Sonos is not set up">
+            Set <code>SONOS_HOST</code> to the IP address of any one Sonos speaker (for
+            example <code>192.168.1.51</code>) and restart the container. The panel finds the
+            rest of the household from there.
           </Empty>
-        ) : h?.massError ? (
-          <Empty icon="alert" title="Music Assistant refused the connection">
-            {h.massError}
+        ) : h?.sonosError ? (
+          <Empty icon="alert" title="Sonos could not be reached">
+            {h.sonosError}
           </Empty>
-        ) : h?.mass === 'connected' ? (
+        ) : h?.sonos === 'connected' ? (
           <Empty icon="media" title="No speakers yet">
-            Music Assistant is connected but has no players set up. Add them in Music
-            Assistant and they appear here on their own.
+            Sonos answered but reported no rooms. Check that UPnP is enabled in the Sonos
+            app, under Settings, App Preferences, Privacy.
           </Empty>
         ) : (
-          <Empty icon="media" title="Reaching Music Assistant…">
-            Waiting for the server at <code>MASS_URL</code> to answer.
+          <Empty icon="media" title="Looking for Sonos…">
+            Waiting for the speaker at <code>SONOS_HOST</code> to answer.
           </Empty>
         )}
       </div>
@@ -206,9 +205,9 @@ function NowPlaying({ player }: { player: SpeakerInfo }) {
         {media?.artist ? <div class="np-artist truncate">{media.artist}</div> : null}
         {media?.album ? <div class="np-album truncate">{media.album}</div> : null}
 
-        {/* Position, extrapolated locally. Music Assistant reports elapsed
-            time with the moment it was measured, so the bar can move smoothly
-            between updates instead of stepping once a second. */}
+        {/* Position, extrapolated locally. The backend sends elapsed time
+            with the moment it was measured, so the bar moves smoothly between
+            updates instead of stepping. */}
         {media?.duration ? (
           <Progress
             elapsed={media.elapsed}

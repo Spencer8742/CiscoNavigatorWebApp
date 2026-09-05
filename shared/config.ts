@@ -227,7 +227,7 @@ export interface CastConfig {
    * Play a silent audio loop to hold the cast session open.
    *
    * OFF by default, and worth understanding before turning on: it takes the
-   * device's audio focus, which on a Nest Hub that is ALSO a Music Assistant
+   * device's audio focus, which on a Nest Hub that is ALSO a
    * speaker may interrupt or block playback on that speaker. Only reach for
    * it if `disableIdleTimeout` alone is not holding the session.
    */

@@ -1,5 +1,5 @@
 import { authority } from '~/sonos/soap.ts';
-import { parseXml, textOf } from '~/sonos/xml.ts';
+import { find, parseXml, textOf } from '~/sonos/xml.ts';
 
 /**
  * DIDL-Lite: how Sonos describes a piece of music.
@@ -28,6 +28,94 @@ export interface DidlTrack {
    * looks frozen.
    */
   streamContent: string | null;
+}
+
+/** One row of a browse result. */
+export interface DidlEntry {
+  /** DIDL object id — `Q:0/5`, `A:ALBUM/…`, `FV:2/12`. */
+  id: string;
+  title: string;
+  /** Artist, or the station for a radio favourite. */
+  creator: string | null;
+  album: string | null;
+  artUri: string | null;
+  /** `upnp:class`, which is how Sonos says what kind of thing this is. */
+  upnpClass: string;
+  /** The playable URI, when the row has one. Containers often do. */
+  res: string | null;
+  /**
+   * `r:resMD` — the metadata Sonos needs handed back to play this.
+   *
+   * Favourites and music-service items carry it, and playing one WITHOUT it
+   * gets a speaker that accepts the command and plays silence. It is the
+   * single most important field on a favourite, and the least obvious.
+   */
+  resMD: string | null;
+  /** Seconds, from the `res` element's `duration` attribute. */
+  duration: number | null;
+}
+
+/**
+ * Parse a `Browse` result: a DIDL-Lite document of items and containers.
+ *
+ * Containers and items are treated the same way deliberately. An album is a
+ * container and a track is an item, but both have a title, artwork and a URI
+ * you can hand to a speaker, and the panel draws them from the same row
+ * component. What separates them is `upnp:class`, which is carried through
+ * rather than baked into two shapes here.
+ */
+export function parseDidlList(xml: string | null): DidlEntry[] {
+  if (!xml || xml.length === 0) return [];
+  const root = parseXml(xml);
+  if (!root) return [];
+
+  const out: DidlEntry[] = [];
+
+  /*
+   * Walked in DOCUMENT ORDER, over the root's own children.
+   *
+   * Collecting all the items and then all the containers would be simpler and
+   * would silently re-sort every mixed result — Favorites holds playlists,
+   * stations and albums interleaved in the order somebody chose in the Sonos
+   * app, and that order is the whole value of the list.
+   */
+  for (const node of root.children) {
+    const local = node.name.slice(node.name.indexOf(':') + 1);
+    if (local !== 'item' && local !== 'container') continue;
+
+    const title = textOf(node, 'title');
+    if (!title) continue;
+
+    const res = find(node, 'res');
+
+    out.push({
+      id: node.attrs['id'] ?? '',
+      title,
+      creator: textOf(node, 'creator') ?? textOf(node, 'artist') ?? null,
+      album: textOf(node, 'album'),
+      artUri: textOf(node, 'albumArtURI'),
+      upnpClass: textOf(node, 'class') ?? '',
+      res: res ? (res.text.trim() || null) : null,
+      resMD: textOf(node, 'resMD'),
+      duration: hmsToSeconds(res?.attrs['duration']),
+    });
+  }
+  return out;
+}
+
+/** `0:03:21.000` → 201. The `res` duration carries milliseconds Sonos ignores. */
+function hmsToSeconds(raw: string | undefined): number | null {
+  if (!raw) return null;
+  const parts = raw.split(':');
+  if (parts.length !== 3) return null;
+
+  let total = 0;
+  for (const part of parts) {
+    const n = Number.parseFloat(part);
+    if (!Number.isFinite(n)) return null;
+    total = total * 60 + n;
+  }
+  return Math.round(total);
 }
 
 /** Parse a `TrackMetaData` / `CurrentURIMetaData` payload. */

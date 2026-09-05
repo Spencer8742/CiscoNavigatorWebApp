@@ -10,8 +10,8 @@ import type {
   BrowseResult,
   KeyLightState,
   TvState,
-  MassPlayer,
-  MassQueue,
+  Player,
+  PlayerQueue,
   MusicCommand,
   PanelPrefs,
   ClientMessage,
@@ -55,14 +55,14 @@ export interface HubDeps {
   onPhotos?: (count: number) => Promise<ServerMessage | null>;
   /** Answer a music browse request, or throw with a user-visible reason. */
   onBrowse?: (req: BrowseRequest) => Promise<BrowseResult>;
-  /** Current Music Assistant players and queues, sent in `hello`. */
-  getPlayers: () => { players: MassPlayer[]; queues: MassQueue[] };
+  /** Current speakers and queues, sent in `hello`. */
+  getPlayers: () => { players: Player[]; queues: PlayerQueue[] };
   /**
    * Drive a speaker. Returns an error string, or null.
    *
-   * Routed by player id inside the backend — Sonos zones to Sonos, everything
-   * else to Music Assistant — so the panel never has to know which music
-   * system owns which speaker.
+   * Carries a verb rather than an upstream command name, which is what makes
+   * "no other action exists" a property of the wire format rather than of an
+   * allow-list somebody has to keep complete. See `MusicCommand`.
    */
   onMusic?: (cmd: MusicCommand) => Promise<string | null>;
   /** Current panel preferences, sent in `hello`. */
@@ -326,7 +326,7 @@ export class Hub {
     this.broadcast({ t: 'prefs', prefs });
   }
 
-  broadcastPlayers(players: MassPlayer[], queues: MassQueue[]): void {
+  broadcastPlayers(players: Player[], queues: PlayerQueue[]): void {
     this.broadcast({ t: 'players', players, queues });
   }
 

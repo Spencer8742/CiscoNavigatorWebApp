@@ -200,7 +200,6 @@ before(async () => {
       COMPANION_URL: `http://127.0.0.1:${COMPANION_PORT}`,
       IMMICH_URL: '',
       IMMICH_API_KEY: '',
-      MASS_URL: '',
       LOG_LEVEL: 'warn',
     },
     stdio: ['ignore', 'pipe', 'pipe'],

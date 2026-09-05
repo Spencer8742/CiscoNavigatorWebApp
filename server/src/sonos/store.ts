@@ -8,7 +8,7 @@ import type { SonosClient } from '~/sonos/client.ts';
 import type { SonosEvent, SonosEvents } from '~/sonos/events.ts';
 import type { SonosZone } from '~/sonos/topology.ts';
 import type { MediaArt } from '~/http/media-art.ts';
-import type { MassMedia, MassPlayer, MassQueue } from '@shared/protocol.ts';
+import type { NowPlaying, Player, PlayerQueue } from '@shared/protocol.ts';
 
 const log = logger('sonos-store');
 
@@ -83,7 +83,7 @@ const POSITION_DEBOUNCE_MS = 400;
 const CONCURRENCY = 6;
 
 export interface SonosStoreEvents {
-  onChange(players: MassPlayer[], queues: MassQueue[]): void;
+  onChange(players: Player[], queues: PlayerQueue[]): void;
   /**
    * Push started or stopped working.
    *
@@ -113,7 +113,7 @@ interface ZoneState {
 /** Per-group facts, owned by the coordinator and shared by its members. */
 interface GroupState {
   state: string;
-  media: MassMedia | null;
+  media: NowPlaying | null;
   tracks: number;
   index: number | null;
   shuffle: boolean;
@@ -352,8 +352,8 @@ export class SonosStore {
     metadata: string,
     change: Map<string, string>,
     host: string,
-    previous: MassMedia | null,
-  ): MassMedia | null {
+    previous: NowPlaying | null,
+  ): NowPlaying | null {
     const track = parseTrackMetadata(metadata);
     if (!track) return null;
 
@@ -540,7 +540,7 @@ export class SonosStore {
     }
   }
 
-  #mediaFromPosition(position: XmlNode, host: string): MassMedia | null {
+  #mediaFromPosition(position: XmlNode, host: string): NowPlaying | null {
     const track = parseTrackMetadata(textOf(position, 'TrackMetaData'));
     if (!track) return null;
 
@@ -568,13 +568,13 @@ export class SonosStore {
 
   /* ── Shaping ───────────────────────────────────────────────────────────*/
 
-  snapshot(): { players: MassPlayer[]; queues: MassQueue[] } {
+  snapshot(): { players: Player[]; queues: PlayerQueue[] } {
     const zones = [...this.#client.household.zones.values()];
 
-    const players: MassPlayer[] = zones.map((zone) => this.#describe(zone, zones));
+    const players: Player[] = zones.map((zone) => this.#describe(zone, zones));
     players.sort((a, b) => a.name.localeCompare(b.name));
 
-    const queues: MassQueue[] = [];
+    const queues: PlayerQueue[] = [];
     for (const zone of zones) {
       // One queue per group, owned by its coordinator. A follower has no queue
       // of its own while it is grouped.
@@ -593,7 +593,7 @@ export class SonosStore {
     return { players, queues };
   }
 
-  #describe(zone: SonosZone, all: SonosZone[]): MassPlayer {
+  #describe(zone: SonosZone, all: SonosZone[]): Player {
     const state = this.#zones.get(zone.uuid);
     const group = this.#groups.get(zone.coordinator);
     const leading = zone.coordinator === zone.uuid;

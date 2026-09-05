@@ -7,7 +7,7 @@ import { formatDuration } from '~/lib/format.ts';
  *
  * ## Why the position is computed here rather than pushed
  *
- * Music Assistant emits `queue_time_updated` once a second per playing queue.
+ * A speaker reports its position only when something changes.
  * Forwarding that would mean a message per second per speaker, waking the
  * panel's render loop continuously to move a bar a pixel — on a device whose
  * CPU sits behind a video pipeline and which is meant to idle into a
