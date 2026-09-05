@@ -12,6 +12,7 @@ import type {
   TvState,
   MassPlayer,
   MassQueue,
+  MusicCommand,
   PanelPrefs,
   ClientMessage,
   EntityState,
@@ -56,8 +57,14 @@ export interface HubDeps {
   onBrowse?: (req: BrowseRequest) => Promise<BrowseResult>;
   /** Current Music Assistant players and queues, sent in `hello`. */
   getPlayers: () => { players: MassPlayer[]; queues: MassQueue[] };
-  /** Run a Music Assistant command. Returns an error string, or null. */
-  onMassCommand?: (command: string, args: unknown) => string | null;
+  /**
+   * Drive a speaker. Returns an error string, or null.
+   *
+   * Routed by player id inside the backend — Sonos zones to Sonos, everything
+   * else to Music Assistant — so the panel never has to know which music
+   * system owns which speaker.
+   */
+  onMusic?: (cmd: MusicCommand) => Promise<string | null>;
   /** Current panel preferences, sent in `hello`. */
   getPrefs: () => PanelPrefs;
   /** Apply a preference change. Returns an error string, or null. */
@@ -200,19 +207,19 @@ export class Hub {
         break;
       }
 
-      case 'mass': {
-        if (!this.#deps.onMassCommand) {
+      case 'music': {
+        if (!this.#deps.onMusic) {
           this.#send(panel, {
             t: 'error',
             ref: msg.id,
-            code: 'mass_unavailable',
-            message: 'Music Assistant is not configured',
+            code: 'music_unavailable',
+            message: 'No music system is configured',
           });
           return;
         }
-        const problem = this.#deps.onMassCommand(msg.command, msg.args);
+        const problem = await this.#deps.onMusic(msg.cmd);
         if (problem) {
-          this.#send(panel, { t: 'error', ref: msg.id, code: 'mass_failed', message: problem });
+          this.#send(panel, { t: 'error', ref: msg.id, code: 'music_failed', message: problem });
         }
         break;
       }

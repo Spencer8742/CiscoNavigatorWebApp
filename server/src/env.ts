@@ -65,6 +65,14 @@ export interface Env {
     host: string;
     /** Fall back to SSDP when no host is set. Off unless asked for. */
     discovery: boolean;
+    /**
+     * Address the speakers should POST events back to.
+     *
+     * Normally derived from the socket that reached the first speaker, which
+     * is right on a multi-homed host and across VLANs. It cannot see through
+     * Docker's bridge NAT, which is the one case this exists for.
+     */
+    callbackHost: string;
     enabled: boolean;
   };
 
@@ -170,6 +178,7 @@ export function loadEnv(): Env {
     sonos: {
       host: sonosHost,
       discovery: sonosDiscovery,
+      callbackHost: str('SONOS_CALLBACK_HOST').trim(),
       // Opt-in on both counts. Turning SSDP on by default would have every
       // existing deployment start multicasting the moment it updates, to find
       // speakers nobody asked it to look for.

@@ -26,9 +26,13 @@ import { BROWSE_PAGE, type QueueEntry, type QueuePage } from '@shared/protocol.t
  * a wall, reaching up. A button cannot be half-done.
  */
 export function Queue({
+  playerId,
   queueId,
   onClose,
 }: {
+  /** The speaker. Every command is addressed to it, never to the queue. */
+  playerId: string;
+  /** The queue to LIST. Only browsing needs this; see state/actions.ts. */
   queueId: string;
   onClose: () => void;
 }) {
@@ -128,7 +132,7 @@ export function Queue({
                 key={entry.id}
                 entry={entry}
                 playing={entry.index === current}
-                queueId={queueId}
+                playerId={playerId}
               />
             ))
           )}
@@ -179,7 +183,7 @@ export function Queue({
               <Pressable
                 class="play-option is-danger"
                 onPress={() => {
-                  act.clearQueue(queueId);
+                  act.clearQueue(playerId);
                   setConfirmClear(false);
                   onClose();
                 }}
@@ -206,11 +210,11 @@ export function Queue({
 function QueueRow({
   entry,
   playing,
-  queueId,
+  playerId,
 }: {
   entry: QueueEntry;
   playing: boolean;
-  queueId: string;
+  playerId: string;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -219,7 +223,7 @@ function QueueRow({
       <Pressable
         as="div"
         class="queue-main"
-        onPress={() => act.playQueueIndex(queueId, entry.index)}
+        onPress={() => act.playQueueIndex(playerId, entry.index)}
         ariaLabel={`Play ${entry.name}`}
       >
         <Artwork src={entry.art} icon={playing ? 'play' : 'media'} />
@@ -247,7 +251,7 @@ function QueueRow({
         <div class="queue-actions">
           <Pressable
             class="move-chip"
-            onPress={() => act.moveQueueItem(queueId, entry.id, -1)}
+            onPress={() => act.moveQueueItem(playerId, entry.id, -1)}
             ariaLabel="Move up"
           >
             <Icon name="chevronUp" size="1rem" weight={2.2} />
@@ -255,7 +259,7 @@ function QueueRow({
           </Pressable>
           <Pressable
             class="move-chip"
-            onPress={() => act.moveQueueItem(queueId, entry.id, 1)}
+            onPress={() => act.moveQueueItem(playerId, entry.id, 1)}
             ariaLabel="Move down"
           >
             <Icon name="chevronDown" size="1rem" weight={2.2} />
@@ -263,7 +267,7 @@ function QueueRow({
           </Pressable>
           <Pressable
             class="move-chip"
-            onPress={() => act.moveQueueItemNext(queueId, entry.id)}
+            onPress={() => act.moveQueueItemNext(playerId, entry.id)}
             ariaLabel="Play next"
           >
             <Icon name="next" size="1rem" weight={2} />
@@ -271,7 +275,7 @@ function QueueRow({
           </Pressable>
           <Pressable
             class="move-chip is-danger"
-            onPress={() => act.removeQueueItem(queueId, entry.id)}
+            onPress={() => act.removeQueueItem(playerId, entry.id)}
             ariaLabel={`Remove ${entry.name}`}
           >
             <Icon name="close" size="1rem" weight={2.2} />

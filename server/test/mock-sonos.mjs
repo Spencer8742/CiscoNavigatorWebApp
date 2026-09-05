@@ -31,6 +31,18 @@ import { createServer } from 'node:http';
  *    0 if you let it and draws a progress bar on a radio station.
  */
 
+/** Event endpoints, mirroring the ones the backend subscribes to. */
+const SERVICE_OF_EVENT_PATH = {
+  '/ZoneGroupTopology/Event': 'ZoneGroupTopology',
+  '/MediaRenderer/AVTransport/Event': 'AVTransport',
+  '/MediaRenderer/RenderingControl/Event': 'RenderingControl',
+};
+
+/** An empty success, which is all Sonos returns for a command. */
+function ack(action, service = 'AVTransport') {
+  return `<u:${action}Response xmlns:u="urn:schemas-upnp-org:service:${service}:1"/>`;
+}
+
 /** Escape exactly once, as a Sonos speaker does at each nesting level. */
 function esc(raw) {
   return raw
@@ -149,15 +161,32 @@ export function defaultZones() {
 export class MockSonos {
   /** uuid → { zone, server, port }. */
   #speakers = new Map();
+  /** SID → { uuid, service, callback }. */
+  #subs = new Map();
+  #sidSeq = 0;
 
-  /** Every SOAP action received, as { uuid, service, action }. */
+  /** Every SOAP action received, as { uuid, service, action, args }. */
   calls = [];
+
+  /** Every SUBSCRIBE / UNSUBSCRIBE, as { uuid, service, method, sid }. */
+  subscriptions = [];
 
   /** Set to make every speaker answer 500 with a UPnP fault. */
   failing = false;
 
   constructor(zones = defaultZones()) {
     this.zones = zones;
+  }
+
+  /** Subscriptions currently live, i.e. subscribed and not unsubscribed. */
+  get liveSubscriptions() {
+    return [...this.#subs.values()];
+  }
+
+  zone(uuid) {
+    const speaker = this.#speakers.get(uuid);
+    if (!speaker) throw new Error(`No mock speaker ${uuid}`);
+    return speaker.zone;
   }
 
   async start() {
@@ -182,14 +211,44 @@ export class MockSonos {
     return `127.0.0.1:${speaker.port}`;
   }
 
-  /** Change a zone's state, as turning a knob in the Sonos app would. */
-  set(uuid, changes) {
+  /**
+   * Change a zone's state, as turning a knob in the Sonos app would — and
+   * push the event a real speaker would push.
+   *
+   * That second half is the point: from phase 2 the backend does not poll, so
+   * a mock that only mutates its own state proves nothing. Which service the
+   * event goes out on is decided by what changed, exactly as a speaker does.
+   */
+  async set(uuid, changes) {
     const speaker = this.#speakers.get(uuid);
     if (!speaker) throw new Error(`No mock speaker ${uuid}`);
     Object.assign(speaker.zone, changes);
+
+    const rendering = 'volume' in changes || 'mute' in changes;
+    const transport =
+      'transportState' in changes ||
+      'playMode' in changes ||
+      'track' in changes ||
+      'nrTracks' in changes ||
+      'trackNo' in changes ||
+      'duration' in changes;
+
+    if (rendering) await this.#notifyRendering(uuid);
+    if (transport) await this.#notifyTransport(uuid);
+  }
+
+  /** Move a zone into another's group, as grouping in the Sonos app would. */
+  async regroup(uuid, coordinator) {
+    this.zone(uuid).coordinator = coordinator;
+    await this.#notifyTopology();
   }
 
   #handle(zone, req, res) {
+    if (req.method === 'SUBSCRIBE' || req.method === 'UNSUBSCRIBE') {
+      this.#subscription(zone, req, res);
+      return;
+    }
+
     if (req.method !== 'POST') {
       res.writeHead(405).end();
       return;
@@ -200,18 +259,23 @@ export class MockSonos {
     const action = match?.[1] ?? '';
     const service = /urn:[^#]*:service:([A-Za-z]+):1/.exec(String(soapAction))?.[1] ?? '';
 
-    // Drain the body: a client that gets a reply before it finished sending
-    // sees ECONNRESET on some Node versions.
-    req.resume();
+    // The body is kept rather than drained: what a command CARRIES is most of
+    // what is worth asserting — that SetVolume went to the right speaker with
+    // the right number, that joining a group used an `x-rincon:` URI.
+    let raw = '';
+    req.setEncoding('utf8');
+    req.on('data', (chunk) => {
+      raw += chunk;
+    });
     req.on('end', () => {
-      this.calls.push({ uuid: zone.uuid, service, action });
+      this.calls.push({ uuid: zone.uuid, service, action, args: soapArgs(raw) });
 
       if (this.failing) {
         this.#fault(res, 500);
         return;
       }
 
-      const body = this.#respond(zone, action);
+      const body = this.#respond(zone, action, soapArgs(raw));
       if (body === null) {
         this.#fault(res, 401);
         return;
@@ -227,6 +291,134 @@ export class MockSonos {
     });
   }
 
+  /* ── GENA ──────────────────────────────────────────────────────────────
+     The half of the protocol that makes the panel live rather than polled.
+     A real speaker hands back a SID, sends the current state immediately, and
+     expects the subscription to be renewed or torn down. */
+
+  #subscription(zone, req, res) {
+    const service = SERVICE_OF_EVENT_PATH[req.url ?? ''];
+    if (!service) {
+      res.writeHead(404).end();
+      return;
+    }
+
+    req.resume();
+
+    if (req.method === 'UNSUBSCRIBE') {
+      const sid = req.headers['sid'] ?? '';
+      this.subscriptions.push({ uuid: zone.uuid, service, method: 'UNSUBSCRIBE', sid });
+      this.#subs.delete(sid);
+      res.writeHead(200).end();
+      return;
+    }
+
+    // A renewal carries a SID and no CALLBACK; a fresh subscription the other
+    // way round. Getting these confused is how a renewal silently creates a
+    // second subscription and doubles every event.
+    const existing = req.headers['sid'];
+    if (existing) {
+      this.subscriptions.push({ uuid: zone.uuid, service, method: 'RENEW', sid: existing });
+      res.writeHead(200, { SID: existing, TIMEOUT: 'Second-3600' }).end();
+      return;
+    }
+
+    const callback = /<([^>]+)>/.exec(String(req.headers['callback'] ?? ''))?.[1];
+    if (!callback) {
+      res.writeHead(412).end();
+      return;
+    }
+
+    this.#sidSeq += 1;
+    const sid = `uuid:mock-${zone.uuid}-${service}-${this.#sidSeq}`;
+    this.#subs.set(sid, { uuid: zone.uuid, service, callback });
+    this.subscriptions.push({ uuid: zone.uuid, service, method: 'SUBSCRIBE', sid });
+
+    res.writeHead(200, { SID: sid, TIMEOUT: 'Second-3600' }).end();
+
+    // A real speaker sends current state the moment you subscribe, unprompted.
+    // That is what lets events REPLACE the initial read rather than supplement
+    // it, so a mock that waits for a change would hide a real dependency.
+    setTimeout(() => {
+      if (service === 'RenderingControl') void this.#notifyRendering(zone.uuid);
+      else if (service === 'AVTransport') void this.#notifyTransport(zone.uuid);
+      else void this.#notifyTopology();
+    }, 10);
+  }
+
+  async #notifyRendering(uuid) {
+    const zone = this.zone(uuid);
+    const body =
+      '<Event xmlns="urn:schemas-upnp-org:metadata-1-0/RCS/"><InstanceID val="0">' +
+      `<Volume channel="Master" val="${zone.volume}"/>` +
+      // A stereo pair reports LF and RF too, and neither is the number anyone
+      // means by "the volume". A reader that takes the last one gets the wrong
+      // answer for exactly the speakers that are hardest to test against.
+      `<Volume channel="LF" val="100"/><Volume channel="RF" val="100"/>` +
+      `<Mute channel="Master" val="${zone.mute ? 1 : 0}"/>` +
+      '</InstanceID></Event>';
+    await this.#notify(uuid, 'RenderingControl', 'LastChange', body);
+  }
+
+  async #notifyTransport(uuid) {
+    const zone = this.zone(uuid);
+    const body =
+      '<Event xmlns="urn:schemas-upnp-org:metadata-1-0/AVT/"><InstanceID val="0">' +
+      `<TransportState val="${zone.transportState}"/>` +
+      `<CurrentPlayMode val="${zone.playMode}"/>` +
+      `<NumberOfTracks val="${zone.nrTracks}"/>` +
+      `<CurrentTrack val="${zone.trackNo}"/>` +
+      `<CurrentTrackDuration val="${zone.duration}"/>` +
+      // Escaped INTO an attribute, which is then escaped into the propertyset.
+      // Three levels in total once DIDL's own escaping is counted.
+      `<CurrentTrackMetaData val="${esc(didl(zone.track))}"/>` +
+      '</InstanceID></Event>';
+    await this.#notify(uuid, 'AVTransport', 'LastChange', body);
+  }
+
+  async #notifyTopology() {
+    for (const [, sub] of this.#subs) {
+      if (sub.service !== 'ZoneGroupTopology') continue;
+      await this.#post(sub, 'ZoneGroupState', this.#topology());
+    }
+  }
+
+  async #notify(uuid, service, property, value) {
+    for (const [, sub] of this.#subs) {
+      if (sub.uuid !== uuid || sub.service !== service) continue;
+      await this.#post(sub, property, value);
+    }
+  }
+
+  async #post(sub, property, value) {
+    const body =
+      '<?xml version="1.0"?>' +
+      '<e:propertyset xmlns:e="urn:schemas-upnp-org:event-1-0">' +
+      `<e:property><${property}>${esc(value)}</${property}></e:property>` +
+      '</e:propertyset>';
+
+    // Find a SID for this subscription: the backend refuses a NOTIFY whose SID
+    // it did not mint, so sending one without it would test the guard rather
+    // than the path.
+    const sid = [...this.#subs.entries()].find(([, s]) => s === sub)?.[0] ?? '';
+
+    try {
+      await fetch(sub.callback, {
+        method: 'NOTIFY',
+        headers: {
+          'content-type': 'text/xml; charset="utf-8"',
+          nt: 'upnp:event',
+          nts: 'upnp:propchange',
+          sid,
+          seq: '1',
+        },
+        body,
+      });
+    } catch {
+      // The backend may be shutting down. Not this mock's problem.
+    }
+  }
+
   /** A UPnP fault, in the shape a real speaker sends: HTTP 500 with a code. */
   #fault(res, code) {
     res.writeHead(500, { 'content-type': 'text/xml; charset="utf-8"' });
@@ -239,7 +431,56 @@ export class MockSonos {
     );
   }
 
-  #respond(zone, action) {
+  #respond(zone, action, args) {
+    /*
+     * Commands. A real speaker applies these and then announces the result on
+     * its event stream, so the mock does too — otherwise a test could only
+     * ever assert that a request was SENT, never that the panel comes to
+     * agree with the speaker afterwards.
+     */
+    switch (action) {
+      case 'SetVolume':
+        void this.set(zone.uuid, { volume: Number.parseInt(args.DesiredVolume ?? '0', 10) });
+        return ack(action, 'RenderingControl');
+
+      case 'SetMute':
+        void this.set(zone.uuid, { mute: args.DesiredMute === '1' });
+        return ack(action, 'RenderingControl');
+
+      case 'Play':
+        void this.set(zone.uuid, { transportState: 'PLAYING' });
+        return ack(action);
+
+      case 'Pause':
+        void this.set(zone.uuid, { transportState: 'PAUSED_PLAYBACK' });
+        return ack(action);
+
+      case 'Stop':
+        void this.set(zone.uuid, { transportState: 'STOPPED' });
+        return ack(action);
+
+      case 'SetPlayMode':
+        void this.set(zone.uuid, { playMode: args.NewPlayMode ?? 'NORMAL' });
+        return ack(action);
+
+      case 'Next':
+      case 'Previous':
+      case 'Seek':
+        return ack(action);
+
+      case 'SetAVTransportURI': {
+        // `x-rincon:<uuid>` is how a speaker is told to follow another. It is
+        // not an obvious API and it is the only local way to group.
+        const leader = /^x-rincon:(.+)$/.exec(args.CurrentURI ?? '')?.[1];
+        if (leader) void this.regroup(zone.uuid, leader);
+        return ack(action);
+      }
+
+      case 'BecomeCoordinatorOfStandaloneGroup':
+        void this.regroup(zone.uuid, zone.uuid);
+        return ack(action);
+    }
+
     switch (action) {
       case 'GetZoneGroupState':
         return (
@@ -347,6 +588,31 @@ export class MockSonos {
     }
     return `${xml}</ZoneGroups><VanishedDevices/></ZoneGroupState>`;
   }
+}
+
+/**
+ * The arguments out of a SOAP body.
+ *
+ * Deliberately naive — the mock is asserting what we sent, so it reads the
+ * envelope as text rather than sharing a parser with the code under test. A
+ * bug in `sonos/xml.ts` must not be able to make these assertions pass.
+ */
+function soapArgs(body) {
+  const inner = /<u:[A-Za-z]+[^>]*>([\s\S]*?)<\/u:[A-Za-z]+>/.exec(body)?.[1] ?? '';
+  const args = {};
+  for (const [, name, value] of inner.matchAll(/<([A-Za-z][\w.-]*)>([\s\S]*?)<\/\1>/g)) {
+    args[name] = value
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'")
+      .replace(/&amp;/g, '&');
+  }
+  // A self-closing or empty element still counts as present.
+  for (const [, name] of inner.matchAll(/<([A-Za-z][\w.-]*)\s*\/>/g)) {
+    if (!(name in args)) args[name] = '';
+  }
+  return args;
 }
 
 /** DIDL-Lite for one track, before escaping. */

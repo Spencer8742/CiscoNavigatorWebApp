@@ -127,7 +127,11 @@ export function Media() {
       {browsing ? <Browse playerId={activeId} onClose={() => setBrowsing(false)} /> : null}
 
       {queueOpen && player.queueId ? (
-        <Queue queueId={player.queueId} onClose={() => setQueueOpen(false)} />
+        <Queue
+          playerId={player.id}
+          queueId={player.queueId}
+          onClose={() => setQueueOpen(false)}
+        />
       ) : null}
     </div>
   );

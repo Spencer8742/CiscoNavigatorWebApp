@@ -567,7 +567,7 @@ function PlayOptions({
             <Pressable
               class="play-option"
               onPress={() => {
-                act.setFavorite(item.u, !item.f);
+                act.setFavorite(playerId, item.u, !item.f);
                 onCancel();
               }}
               ariaLabel={item.f ? 'Remove from favorites' : 'Add to favorites'}

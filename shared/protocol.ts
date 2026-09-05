@@ -309,6 +309,87 @@ export interface QueuePage {
 
 export type BrowseResult = BrowseList | BrowseGroups | QueuePage;
 
+/* ── Music commands ────────────────────────────────────────────────────── */
+
+/** What to do with the queue when playing something new. */
+export type Enqueue = 'play' | 'replace' | 'next' | 'replace_next' | 'add';
+
+/**
+ * Everything the panel can ask of a speaker.
+ *
+ * A closed set of verbs, deliberately, and it replaced a message that carried
+ * a Music Assistant command name straight through. Two things came of that:
+ *
+ * **The panel stopped knowing which music system it is talking to.** It names
+ * a player and an intention; the backend routes to Sonos or to Music Assistant
+ * depending on which one owns that id. That is what lets both run at once
+ * during the migration in `docs/SONOS.md`, and what makes phase 6 a deletion
+ * rather than a rewrite.
+ *
+ * **The guard got stronger.** Sonos's local API has no authentication, and the
+ * same port that pauses a track can rename rooms and rewrite alarms. With a
+ * command name on the wire the safety property is "the allow-list is
+ * complete"; with a verb it is "no other action exists", which is not a
+ * property that can be overlooked into being false.
+ *
+ * `player` is always a player id, never a queue id — resolving a queue is the
+ * backend's job, and the two systems disagree about what a queue even is.
+ */
+export type MusicCommand =
+  | { verb: 'playPause' | 'play' | 'pause' | 'stop' | 'next' | 'previous'; player: string }
+  /** Seconds from the start of the current track. */
+  | { verb: 'seek'; player: string; seconds: number }
+  /** 0-100. Both systems use that scale; converting anywhere is a bug. */
+  | { verb: 'volume'; player: string; level: number }
+  | { verb: 'mute'; player: string; muted: boolean }
+  /** Music Assistant only. Sonos speakers have no power concept. */
+  | { verb: 'power'; player: string; on: boolean }
+  | { verb: 'shuffle'; player: string; on: boolean }
+  | { verb: 'repeat'; player: string; mode: string }
+  /** Set the group led by `player` to exactly these members. Absolute. */
+  | { verb: 'group'; player: string; members: string[] }
+  | { verb: 'ungroup'; player: string }
+  | { verb: 'playItem'; player: string; item: string; enqueue: Enqueue; radio?: boolean }
+  | { verb: 'queueJump'; player: string; index: number }
+  /** `by` is a position shift, not an index. */
+  | { verb: 'queueMove'; player: string; item: string; by: number }
+  | { verb: 'queueRemove'; player: string; item: string }
+  | { verb: 'queueClear'; player: string }
+  | { verb: 'favorite'; player: string; item: string; on: boolean };
+
+/**
+ * Every verb, for the runtime check the type system cannot do.
+ *
+ * A panel is a device on a wall that anyone can touch, and the socket carries
+ * JSON — so "the union is exhaustive" is a compile-time fact about our code,
+ * not about what arrives. Checking membership here is what makes an
+ * unrecognised verb a refusal rather than a silent no-op, and it is the
+ * property the test suite asserts in place of the old allow-list of upstream
+ * command names.
+ */
+export const MUSIC_VERBS: readonly string[] = [
+  'playPause',
+  'play',
+  'pause',
+  'stop',
+  'next',
+  'previous',
+  'seek',
+  'volume',
+  'mute',
+  'power',
+  'shuffle',
+  'repeat',
+  'group',
+  'ungroup',
+  'playItem',
+  'queueJump',
+  'queueMove',
+  'queueRemove',
+  'queueClear',
+  'favorite',
+];
+
 /** How many items one library page holds. Fixed here so a panel cannot ask
  *  for five hundred rows and then be killed for the memory it took. */
 export const BROWSE_PAGE = 60;
@@ -434,14 +515,16 @@ export type ClientMessage =
       data?: Record<string, unknown>;
     }
   /**
-   * Run a Music Assistant command.
+   * Drive a speaker.
    *
    * Fire-and-forget, like `call`: the authoritative result arrives moments
-   * later as a `players` push. The backend checks the command against its own
-   * allow-list and validates every player and queue id in the arguments, for
-   * the same reason the Home Assistant path does — see ha/services.ts.
+   * later as a `players` push. The backend routes by player id — Sonos zones
+   * to Sonos, everything else to Music Assistant — and validates every id
+   * against what the relevant system actually told it about, for the same
+   * reason the Home Assistant path does. See `MusicCommand` for why this
+   * carries a verb rather than an upstream command name.
    */
-  | { t: 'mass'; id: number; command: string; args?: Record<string, unknown> }
+  | { t: 'music'; id: number; cmd: MusicCommand }
   /** Ask for the next N slideshow photos. */
   | { t: 'photos'; id: number; count: number }
   /**
