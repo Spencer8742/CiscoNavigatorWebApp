@@ -390,7 +390,15 @@ export class MusicServices {
     const household = this.#catalog.householdId;
     if (!household) throw new Error('Sonos has not reported a household id yet');
 
-    return new SmapiClient(service, household, this.#deviceId, this.#tokens.get(sid) ?? null);
+    /*
+     * The household's own serial when the speakers gave one, and a stable
+     * generated id only as a fallback. `deviceId` means "which device is
+     * asking"; a UUID we invented is a placeholder standing where a real
+     * answer exists, and the reference implementation uses the serial.
+     */
+    const deviceId = this.#catalog.deviceSerial ?? this.#deviceId;
+
+    return new SmapiClient(service, household, deviceId, this.#tokens.get(sid) ?? null);
   }
 
   /**

@@ -809,6 +809,18 @@ export class MockSonos {
     }
 
     switch (action) {
+      case 'GetString':
+        /*
+         * `R_TrialZPSerial` is the speaker's own serial, and SMAPI's
+         * `deviceId` is meant to carry it — a controller that invents a UUID
+         * is filling in a field it had a real answer for.
+         */
+        return (
+          '<u:GetStringResponse xmlns:u="urn:schemas-upnp-org:service:SystemProperties:1">' +
+          '<StringValue>48-A6-B8-11-22-33:7</StringValue>' +
+          '</u:GetStringResponse>'
+        );
+
       case 'GetHouseholdID':
         return (
           '<u:GetHouseholdIDResponse xmlns:u="urn:schemas-upnp-org:service:DeviceProperties:1">' +

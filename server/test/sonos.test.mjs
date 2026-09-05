@@ -1682,6 +1682,30 @@ describe('music services', () => {
     panel.close();
   });
 
+  /*
+   * `deviceId` carries the household's own serial, not an invented UUID.
+   *
+   * SoCo — the reference implementation — reads `R_TrialZPSerial` and sends
+   * that, because the field means "which device is asking" and this app is a
+   * controller for a real household. A generated id is a placeholder standing
+   * where a real answer exists.
+   */
+  test('a link identifies the household, not an invented device', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+    await panel.browse({ kind: 'sources' });
+
+    const before = ctx.smapi.calls.length;
+    await panel.link(200, 'begin');
+
+    const call = ctx.smapi.calls.slice(before)[0];
+    assert.match(call.body, /<deviceId>48-A6-B8-11-22-33:7<\/deviceId>/);
+    assert.match(call.body, /<deviceProvider>Sonos<\/deviceProvider>/);
+
+    panel.close();
+  });
+
   test('connecting is a code to type, not a redirect', async () => {
     ctx.smapi.pollsBeforeLink = 1;
 
