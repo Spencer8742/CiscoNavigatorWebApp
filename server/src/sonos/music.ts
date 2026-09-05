@@ -275,8 +275,33 @@ export class MusicServices {
       log.info(`Linking ${service.name}: ${prompt.url}`);
       return prompt;
     } catch (err) {
-      throw this.#explain(err, sid);
+      /*
+       * NOT `#explain`. That answers "this needs connecting", which is
+       * circular here — connecting is precisely what just failed — and it
+       * threw away the only thing worth having: what the service said.
+       *
+       * A person reading "Connect SoundCloud to browse it" on the Connect
+       * sheet learns nothing and has nowhere to go. The service's own fault
+       * is ugly and it is the difference between a dead end and a lead.
+       */
+      throw this.#linkFailure(err, service.name);
     }
+  }
+
+  /**
+   * A link that would not start, said in a way that can be acted on.
+   *
+   * The fault string is passed through rather than summarised. It is the only
+   * account of what actually happened, it is the thing worth putting in a bug
+   * report, and no paraphrase of it can be more useful than it is.
+   */
+  #linkFailure(err: unknown, name: string): Error {
+    const fault = err instanceof SmapiError && err.fault.trim().length > 0 ? err.fault.trim() : '';
+    log.warn(`${name} refused to start a link: ${message(err)}${fault ? ` — ${fault}` : ''}`);
+
+    return new Error(
+      fault ? `${name} would not start: ${fault}` : `${name} would not start a connection`,
+    );
   }
 
   /**
@@ -305,7 +330,8 @@ export class MusicServices {
       return true;
     } catch (err) {
       if (err instanceof SmapiError && err.pending) return false;
-      throw this.#explain(err, sid);
+      // Same reasoning as `beginLink`: mid-link, "please link" says nothing.
+      throw this.#linkFailure(err, this.#catalog.get(sid)?.name ?? 'That service');
     }
   }
 

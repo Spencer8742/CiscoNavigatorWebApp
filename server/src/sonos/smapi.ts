@@ -196,10 +196,22 @@ export class SmapiClient {
      * looked up by name anywhere in the reply rather than at a fixed path.
      */
     const appLink = this.#service.auth === 'AppLink';
-    const result = await this.#call(
-      appLink ? 'getAppLink' : 'getDeviceLinkCode',
-      `<householdId>${escapeXml(this.#householdId)}</householdId>`,
-    );
+    const household = `<householdId>${escapeXml(this.#householdId)}</householdId>`;
+
+    /*
+     * `getAppLink` takes more than the household, and several services reject
+     * a call missing them rather than defaulting. They describe the CLIENT
+     * asking to be linked, which is this app rather than a speaker — saying so
+     * honestly is also what stops a service treating us as a player it can
+     * make assumptions about.
+     */
+    const body = appLink
+      ? `${household}<hardware>navigator-panel</hardware>` +
+        '<osVersion>1.0</osVersion>' +
+        `<sn>${this.#service.sn ?? 1}</sn>`
+      : household;
+
+    const result = await this.#call(appLink ? 'getAppLink' : 'getDeviceLinkCode', body);
 
     const linkCode = textOf(result, 'linkCode');
     const url = textOf(result, 'regUrl');
