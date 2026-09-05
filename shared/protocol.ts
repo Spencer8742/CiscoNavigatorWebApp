@@ -86,6 +86,17 @@ export interface BackendHealth {
    */
   sonosError: string | null;
   /**
+   * How Sonos state is arriving.
+   *
+   * `live` means the speakers are pushing changes, which is what makes the
+   * panel keep up with a volume knob turned anywhere else. `polling` is the
+   * fallback for when those pushes cannot reach the backend — almost always
+   * Docker bridge networking — and is shown rather than hidden because the
+   * symptom (a panel that responds to taps but lags behind the house) is
+   * otherwise impossible to attribute.
+   */
+  sonosUpdates: 'live' | 'polling' | 'off';
+  /**
    * Why Immich is unhappy, if it is — already human-readable, and including
    * whatever Immich itself said. Null when the last request succeeded.
    *

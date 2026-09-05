@@ -43,12 +43,29 @@ const log = logger('sonos-store');
  */
 
 /**
- * Reconciliation, not polling. See the note above.
+ * How often the timer wakes up. What it DOES depends on whether events work.
  *
  * Gated on a panel being connected, like the key-light poll — a container
  * running before the Navigator is provisioned talks to nobody.
  */
+const TICK_MS = 5000;
+
+/**
+ * Reconciliation, while events are arriving. See the note above.
+ *
+ * Slow because it is a safety net, not the mechanism: a single dropped
+ * `NOTIFY` leaves one value wrong with nothing to correct it.
+ */
 const RECONCILE_MS = 300_000;
+
+/**
+ * How often to try subscribing again while events are NOT arriving.
+ *
+ * A minute rather than every tick: re-subscribing is a request per speaker
+ * per service, and the thing that usually changes to fix this is a container
+ * being restarted with `SONOS_CALLBACK_HOST` set — not a retry.
+ */
+const RESUBSCRIBE_MS = 60_000;
 
 /** Long enough to absorb a burst of events, short enough to feel immediate. */
 const PUBLISH_DEBOUNCE_MS = 120;
@@ -67,6 +84,14 @@ const CONCURRENCY = 6;
 
 export interface SonosStoreEvents {
   onChange(players: MassPlayer[], queues: MassQueue[]): void;
+  /**
+   * Push started or stopped working.
+   *
+   * Worth a health broadcast of its own: recovering from polling to live is
+   * invisible otherwise, and somebody who has just set `SONOS_CALLBACK_HOST`
+   * wants to see it take effect without reloading anything.
+   */
+  onUpdatesChange(mode: 'live' | 'polling'): void;
 }
 
 export interface SonosStoreDeps {
@@ -111,6 +136,10 @@ export class SonosStore {
   #positionTimer: ReturnType<typeof setTimeout> | undefined;
   #positionWanted = new Set<string>();
   #refreshing = false;
+  /** When the last full read finished, so `#tick` can pace itself. */
+  #lastFullRead = 0;
+  /** Last reported update mode, so a change is announced exactly once. */
+  #lastMode: 'live' | 'polling' | null = null;
 
   constructor(deps: SonosStoreDeps) {
     this.#client = deps.client;
@@ -129,10 +158,70 @@ export class SonosStore {
     void this.refresh();
 
     clearInterval(this.#reconcileTimer);
-    this.#reconcileTimer = setInterval(() => {
-      if (this.#hasPanels()) void this.refresh();
-    }, RECONCILE_MS);
+    this.#reconcileTimer = setInterval(() => this.#tick(), TICK_MS);
     this.#reconcileTimer.unref();
+  }
+
+  /**
+   * How state is currently arriving.
+   *
+   * Shown on the Settings screen, because the difference is the difference
+   * between a panel that keeps up and one that lags by seconds — and because
+   * "polling" is a fact about the deployment (almost always Docker bridge
+   * networking) that nobody can guess from the symptoms.
+   */
+  get updates(): 'live' | 'polling' {
+    return this.#events.healthy ? 'live' : 'polling';
+  }
+
+  /**
+   * One timer, two behaviours.
+   *
+   * **This is the fallback that keeps the panel working when events do not
+   * arrive.** Speakers push, and when that works there is nothing to do here
+   * but reconcile occasionally. When it does not — a container on a bridge
+   * network the speakers cannot reach back into, a firewall, a VLAN — the
+   * alternative to polling is a panel that responds to taps and never
+   * notices anything anyone else does, which is worse than a few requests a
+   * second on a LAN.
+   *
+   * Subscribing is retried while degraded, so fixing the network or setting
+   * `SONOS_CALLBACK_HOST` restores push without a restart.
+   */
+  #tick(): void {
+    if (!this.#hasPanels()) return;
+
+    const since = Date.now() - this.#lastFullRead;
+
+    if (this.#events.healthy) {
+      if (since >= RECONCILE_MS) void this.refresh();
+      return;
+    }
+
+    // Events are not reaching us. Keep the panel current the slow way, and
+    // keep trying to make that unnecessary.
+    if (since >= RESUBSCRIBE_MS) void this.refresh();
+    else void this.poll();
+  }
+
+  /**
+   * Re-read state without touching the topology or the subscriptions.
+   *
+   * The polling half of `#tick`. Deliberately lighter than `refresh()`: the
+   * household does not change every five seconds, and re-subscribing that
+   * often would be a request storm rather than a fallback.
+   */
+  async poll(): Promise<void> {
+    if (this.#refreshing) return;
+    this.#refreshing = true;
+    try {
+      await this.#readAll();
+      this.#publishNow();
+    } catch (err) {
+      log.debug('Sonos poll failed:', err);
+    } finally {
+      this.#refreshing = false;
+    }
   }
 
   dispose(): void {
@@ -362,6 +451,7 @@ export class SonosStore {
       log.warn('Failed to read Sonos state:', err);
     } finally {
       this.#refreshing = false;
+      this.#lastFullRead = Date.now();
     }
   }
 
@@ -564,6 +654,18 @@ export class SonosStore {
 
   #publishNow(): void {
     this.#dirty = false;
+
+    const mode = this.updates;
+    if (mode !== this.#lastMode) {
+      this.#lastMode = mode;
+      log.info(
+        mode === 'live'
+          ? 'Sonos updates are live — the speakers are pushing changes'
+          : 'Sonos updates are POLLED — no events are reaching this backend',
+      );
+      this.#listeners.onUpdatesChange(mode);
+    }
+
     const { players, queues } = this.snapshot();
     this.#listeners.onChange(players, queues);
   }

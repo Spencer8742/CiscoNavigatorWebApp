@@ -174,6 +174,16 @@ export class MockSonos {
   /** Set to make every speaker answer 500 with a UPnP fault. */
   failing = false;
 
+  /**
+   * Accept subscriptions and then never deliver anything.
+   *
+   * This is what a Docker bridge network looks like from the backend's side:
+   * the SUBSCRIBE succeeds, because that is outbound, and the NOTIFY never
+   * arrives, because the callback address is unreachable. It is the failure
+   * that matters most and the one that cannot be spotted by reading code.
+   */
+  swallowEvents = false;
+
   constructor(zones = defaultZones()) {
     this.zones = zones;
   }
@@ -391,6 +401,8 @@ export class MockSonos {
   }
 
   async #post(sub, property, value) {
+    if (this.swallowEvents) return;
+
     const body =
       '<?xml version="1.0"?>' +
       '<e:propertyset xmlns:e="urn:schemas-upnp-org:event-1-0">' +

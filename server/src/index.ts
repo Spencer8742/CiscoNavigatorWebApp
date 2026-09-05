@@ -152,6 +152,7 @@ async function main(): Promise<void> {
     // A household we can reach but whose events never arrive is a specific,
     // actionable problem, and it outranks a stale connection error.
     sonosError: env.sonos.enabled ? (sonosSilence ?? sonosClient.lastError) : null,
+    sonosUpdates: env.sonos.enabled ? sonosStore.updates : 'off',
     haLastMessage: haClient.lastMessageAt ? new Date(haClient.lastMessageAt).toISOString() : null,
     uptime: Math.floor((Date.now() - STARTED_AT) / 1000),
     version: VERSION,
@@ -305,6 +306,13 @@ async function main(): Promise<void> {
     listeners: {
       onChange() {
         hub.broadcastPlayers(...musicSnapshot());
+      },
+
+      onUpdatesChange(mode) {
+        // Recovering from polling back to live is otherwise invisible, and
+        // somebody who has just set SONOS_CALLBACK_HOST wants to see it work.
+        if (mode === 'live') sonosSilence = null;
+        hub.broadcastHealth(getHealth());
       },
     },
     hasPanels: () => hub.panelCount > 0,
