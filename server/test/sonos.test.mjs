@@ -1596,9 +1596,19 @@ describe('music services', () => {
     // A key, not a URI: the same rule as everywhere else in this browser.
     assert.match(row.u, /^[0-9a-f]{16}$/);
 
-    // And browsing it says what to do rather than reporting a fault code.
+    /*
+     * And browsing it comes back as something to ACT on rather than an error.
+     *
+     * "Connect SoundCloud first" on a screen with no button was the whole
+     * complaint: an explanation is not an affordance. The `connect` field
+     * carries the service id so the empty state can offer the pairing flow
+     * where somebody is already looking.
+     */
     ctx.smapi.anonymous = false;
-    await assert.rejects(() => panel.browse({ kind: 'item', uri: row.u }), /connect/i);
+    const refused = await panel.browse({ kind: 'item', uri: row.u });
+    assert.equal(refused.items.length, 0);
+    assert.equal(refused.connect, 200, 'names the service to connect');
+    assert.match(refused.note, /connect/i);
 
     panel.close();
   });
@@ -1749,10 +1759,47 @@ describe('finding services in what the household already has', () => {
   before(() => {
     ctx.sonos.services = [
       { sid: 200, name: 'Testify', uri: ctx.smapi.url, auth: 'DeviceLink', capabilities: 563 },
+      // Sonos's own kind: no separate account, so its URIs carry no `sn`.
+      { sid: 303, name: 'Housecast', uri: 'https://radio.invalid/smapi', auth: 'Anonymous' },
     ];
-    // The firmware serves NO account list. Everything must come from the
-    // favourite, which is the case that was completely broken.
+
+    /*
+     * A saved station, only in this suite.
+     *
+     * Sonos's OWN services name no account — `?sid=303&flags=8300`, no `sn` —
+     * because there is no separate login to identify. A scanner insisting on
+     * the pair never found them, so a household that plainly has Sonos Radio
+     * appeared not to. Saved stations are where they show up.
+     */
+    ctx.sonos.containers['R:0/0'] = [
+      {
+        id: 'R:0/0/1',
+        title: 'Main Stream',
+        upnpClass: 'object.item.audioItem.audioBroadcast',
+        res: 'x-sonosapi-radio:ST%3aetc?sid=303&flags=8300',
+      },
+    ];
+    // The firmware serves NO account list. Everything must come from what the
+    // household already holds, which is the case that was completely broken.
     ctx.sonos.accounts = null;
+  });
+
+  /*
+   * Sonos's own services carry no `sn`, and requiring one lost every last of
+   * them — Sonos Radio and TuneIn both. A saved station is where they appear.
+   */
+  test('a service with no account number is still found', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    const list = await panel.browse({ kind: 'sources' });
+    assert.ok(
+      list.items.some((i) => i.n === 'Housecast'),
+      'the sn-less service named by a saved station is offered',
+    );
+
+    panel.close();
   });
 
   test('a favourite is enough to discover a service and its account', async () => {
@@ -1828,8 +1875,10 @@ describe('a household with no music services', () => {
     const names = list.items.map((i) => i.n);
 
     // Favourites never needed a service login, so they are still the first
-    // thing offered — which is the whole point of this assertion.
-    assert.deepEqual(names, ['Favourites', 'Sonos Playlists']);
+    // thing offered — which is the whole point of this assertion. "Add a
+    // service" is last and always there: detection can only find what the
+    // household has left a trace of.
+    assert.deepEqual(names, ['Favourites', 'Sonos Playlists', 'Add a service…']);
     assert.equal(list.items[0].s, '4 items', 'the count is real, not a guess');
 
     // A place rather than a record: no play button on a folder.
@@ -1843,6 +1892,38 @@ describe('a household with no music services', () => {
    * nowhere. This household has no NAS share and no saved stations, which is
    * the common case and used to produce four tabs that were all blank.
    */
+  /*
+   * The escape hatch. Detection reads the household — accounts, favourites,
+   * saved stations — so a service set up in the Sonos app that has left none
+   * of those is invisible to it, and would be permanently unreachable here.
+   */
+  test('a service detection cannot find is still reachable', async () => {
+    ctx.sonos.services = [
+      { sid: 400, name: 'Undetectable', uri: 'https://u.invalid/x', auth: 'DeviceLink' },
+    ];
+
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    const list = await panel.browse({ kind: 'sources' });
+    assert.ok(
+      !list.items.some((i) => i.n === 'Undetectable'),
+      'it leaves no trace, so detection does not offer it',
+    );
+
+    const add = list.items.find((i) => i.n === 'Add a service…');
+    assert.ok(add, 'but there is a way to it');
+
+    const catalog = await panel.browse({ kind: 'item', uri: add.u });
+    assert.ok(
+      catalog.items.some((i) => i.n === 'Undetectable'),
+      'and the catalog has it',
+    );
+
+    panel.close();
+  });
+
   test('a source with nothing in it is not offered at all', async () => {
     const panel = new TestPanel(ctx.port);
     await panel.connect();

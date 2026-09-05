@@ -893,6 +893,52 @@ because "could not answer" is the right thing to say when nothing did.
 Search defaults to a connected service rather than the library, for the same
 reason: searching an empty shelf reads as a broken search.
 
+### Discovery, and the three things it could not see
+
+Three reports from the household, each a different hole in reading a household
+from the outside.
+
+**`&amp;` survives one decode.** Sonos escapes a URI's own `&` writing the
+DIDL, then escapes the DIDL again putting it in `<Result>`, so one decode
+leaves `?sid=200&amp;flags=8300&amp;sn=4`. A scanner wanting a literal `&`
+matched nothing, anywhere, and the household appeared to have no services at
+all. Third bug in this integration from Sonos's layered escaping, and the first
+two were caught because `xml.ts` exists for exactly this — these scanners
+bypassed it with a regex. No fixture carried a query string, so the mock's
+correct double-escaping had nothing to escape.
+
+**`sn` is optional.** A third-party service names the account it plays through;
+Sonos's own do not, because there is no separate login — Sonos Radio and TuneIn
+are `?sid=254&flags=32` with no `sn`. Insisting on the pair lost every one of
+them. An absent `sn` now means account 0, which is Sonos's own value for it,
+and saved stations (`R:0/0`) are scanned as well as favourites, because that is
+where a station somebody listens to daily but never favourited appears.
+
+**Some services leave no trace at all.** Detection reads accounts, favourites
+and saved stations. A service set up in the Sonos app with none of those — and
+on firmware that does not serve `/status/accounts` — is invisible, and was
+therefore unreachable. `Add a service…` at the foot of Browse lists the whole
+catalog: hundreds of rows nobody has to look at unless something they know they
+have is missing, which is the shape that keeps the everyday screen readable.
+
+**An explanation is not an affordance.** "Connect SoundCloud first" was shown on
+a screen with nothing to press. A service that refuses now comes back as an
+empty list carrying `connect: <sid>`, and the empty state draws the button. It
+is typed rather than matched on the text of an error, because deciding to draw
+a button by reading a message is the kind of thing that quietly stops working
+when the wording changes.
+
+That path also covers a service whose catalog entry claims `Anonymous` and then
+demands a login anyway — SoundCloud does exactly this, and believing the
+catalog is what produced the dead end.
+
+**Spotify's Premium requirement is Spotify's.** Linking a third-party
+controller needs Premium, and nothing here can waive it. The Web API path
+(`SPOTIFY_CLIENT_ID`/`SECRET`) reads the public catalog with no user login and
+no Premium requirement, and playback still runs through the household's own
+linked account — so it remains the better option for Spotify specifically, and
+the only one that works on a free account.
+
 ---
 
 ## Sources

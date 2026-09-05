@@ -102,6 +102,16 @@ export class MusicServiceCatalog {
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
+  /**
+   * Everything Sonos offers, whether or not this household has it.
+   *
+   * Hundreds of entries, and never what `list()` returns — this is only for
+   * adding a service detection could not find.
+   */
+  all(): MusicService[] {
+    return [...this.#services.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }
+
   get(sid: number): MusicService | null {
     return this.#services.get(sid) ?? null;
   }
@@ -260,7 +270,12 @@ export class MusicServiceCatalog {
     const out = new Map<number, number>();
 
     await Promise.all(
-      ['FV:2', 'SQ:'].map(async (objectId) => {
+      /*
+       * `R:0/0` is here for the services that favourites miss: saved radio
+       * stations are where Sonos Radio and TuneIn appear, and somebody who
+       * listens to a station daily has never needed to favourite it.
+       */
+      ['FV:2', 'SQ:', 'R:0/0'].map(async (objectId) => {
         try {
           const response = await this.#client.call(host, 'ContentDirectory', 'Browse', {
             ObjectID: objectId,
@@ -375,13 +390,34 @@ export function accountsFromUris(text: string): Map<number, number> {
    * household appeared to have no music services at all.
    */
   const flat = text.replace(/&amp;/g, '&');
-  const re = /[?&]sid=(\d+)[^"'<\s\\]*?[?&]sn=(\d+)/g;
+
+  /*
+   * `sn` is OPTIONAL, and requiring it lost a whole class of service.
+   *
+   * A third-party service names the account it plays through — Spotify is
+   * `?sid=9&flags=8224&sn=3`. Sonos's OWN services have no separate account to
+   * name: Sonos Radio and TuneIn are `?sid=254&flags=32` with no `sn` at all.
+   * Insisting on the pair meant those were never discovered, so a household
+   * that plainly has Sonos Radio appeared not to.
+   *
+   * Account 0 is Sonos's own value for "no separate account", so that is what
+   * an absent `sn` means rather than a guess.
+   */
+  const re = /[?&]sid=(\d+)([^"'<\s\\]*)/g;
 
   let match: RegExpExecArray | null;
   while ((match = re.exec(flat)) !== null) {
     const sid = Number.parseInt(match[1] ?? '', 10);
-    const sn = Number.parseInt(match[2] ?? '', 10);
-    if (Number.isFinite(sid) && Number.isFinite(sn)) out.set(sid, sn);
+    if (!Number.isFinite(sid)) continue;
+
+    const serial = /[?&]sn=(\d+)/.exec(match[2] ?? '');
+    const sn = serial ? Number.parseInt(serial[1] ?? '', 10) : 0;
+    if (!Number.isFinite(sn)) continue;
+
+    // A URI that names a real account beats one that did not: two favourites
+    // from the same service, only one of which carried the serial.
+    const known = out.get(sid);
+    if (known === undefined || (known === 0 && sn > 0)) out.set(sid, sn);
   }
   return out;
 }
