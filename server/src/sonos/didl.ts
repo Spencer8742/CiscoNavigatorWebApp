@@ -53,6 +53,8 @@ export interface DidlEntry {
    * path, which is how a favourited playlist becomes UPnP 701.
    */
   resClass: string | null;
+  /** Object id inside `r:resMD`, used to open local favourites. */
+  resId: string | null;
   /** The playable URI, when the row has one. Containers often do. */
   res: string | null;
   /**
@@ -101,6 +103,7 @@ export function parseDidlList(xml: string | null): DidlEntry[] {
     const res = find(node, 'res');
     const resMD = textOf(node, 'resMD');
 
+    const metadata = metadataOf(resMD);
     out.push({
       id: node.attrs['id'] ?? '',
       title,
@@ -108,7 +111,8 @@ export function parseDidlList(xml: string | null): DidlEntry[] {
       album: textOf(node, 'album'),
       artUri: textOf(node, 'albumArtURI'),
       upnpClass: textOf(node, 'class') ?? '',
-      resClass: classOf(resMD),
+      resClass: metadata.className,
+      resId: metadata.id,
       res: res ? (res.text.trim() || null) : null,
       resMD,
       duration: hmsToSeconds(res?.attrs['duration']),
@@ -125,10 +129,18 @@ export function parseDidlList(xml: string | null): DidlEntry[] {
  * hundred bytes) and done per row, which is the price of knowing that
  * "Discover Weekly" is a playlist rather than a track.
  */
-function classOf(resMD: string | null): string | null {
-  if (!resMD || resMD.indexOf('class') === -1) return null;
+function metadataOf(resMD: string | null): { className: string | null; id: string | null } {
+  if (!resMD) return { className: null, id: null };
   const root = parseXml(resMD);
-  return root ? textOf(root, 'class') : null;
+  if (!root) return { className: null, id: null };
+  const record = root.children.find((node) => {
+    const local = node.name.slice(node.name.indexOf(':') + 1);
+    return local === 'item' || local === 'container';
+  });
+  return {
+    className: textOf(root, 'class'),
+    id: record?.attrs['id'] ?? null,
+  };
 }
 
 /**

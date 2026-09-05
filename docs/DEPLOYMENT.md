@@ -360,27 +360,6 @@ cross a bridge network either, so in a container it usually finds nothing —
 and that failure looks like an empty Media screen rather than an error. Name
 the address.
 
-### Searching Spotify
-
-Optional, and only for the Search tab. Everything you have **favourited in the
-Sonos app** already plays without it, and the local library is searchable
-without it too.
-
-Set `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` from a free app at
-[developer.spotify.com](https://developer.spotify.com/dashboard). Any redirect
-URI will do — this uses the client-credentials flow, which is server to server
-with no user login and no redirect.
-
-**Playback still runs through the Spotify account linked in your Sonos app.**
-These credentials read the public catalog and nothing else; they give no access
-to anybody's account.
-
-**You can skip this entirely.** Spotify items saved as Sonos Favourites or in
-Sonos Playlists already play through the Spotify account connected to Sonos.
-The Web API variables add public catalog search; they do not change playback.
-
----
-
 ## Music services — use the accounts already connected to Sonos
 
 Nothing to configure in this app. `Browse → My Sonos` shows Favourites, Sonos
@@ -392,9 +371,9 @@ stations, or other content you want on the panel as Sonos Favourites or Sonos
 Playlists. The panel reads those records directly from the household.
 
 Sonos does not expose provider credentials or arbitrary provider catalogs to
-third-party local controllers. Full Spotify search can be enabled with the
-optional Web API settings above. Other providers remain available through
-their content saved in Sonos.
+third-party local controllers. Search covers Sonos Favourites and an indexed
+local music library. Streaming providers remain available through content
+saved in Sonos.
 
 ---
 

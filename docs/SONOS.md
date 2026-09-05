@@ -17,6 +17,16 @@ many providers reject an unlicensed SMAPI client before returning a code. The
 SMAPI implementation remains in the backend for compatibility and diagnostics,
 but it is outside the supported panel flow.
 
+Streaming-service collections saved as favourites are playable records, but
+their provider track listings are not exposed through the local ContentDirectory.
+The panel therefore opens playback options when they are tapped instead of
+showing a chevron that leads to an empty folder. Local-library favourites still
+drill into their inner Sonos object id.
+
+Search covers favourite titles, artists, and albums, plus an indexed local
+library. The Music Library row is hidden when `A:` contains only Sonos's empty
+category shells and `A:TRACKS` contains no media.
+
 - AppLink requests use the documented client fields and read only the
   `authorizeAccount/deviceLink` response. Both linking modes return the private
   `linkDeviceId` to the service without exposing it to the panel.

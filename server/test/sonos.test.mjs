@@ -1237,6 +1237,9 @@ describe('browsing', () => {
     assert.equal(result.items[1].k, 'radio', 'a station, from one level down');
     assert.equal(result.items[2].k, 'playlist', 'a service playlist, from one level down');
     assert.equal(result.items[3].k, 'album', 'an album, from one level down');
+    assert.equal(playlist.b, false, 'a provider playlist plays but does not open an empty folder');
+    assert.equal(result.items[2].b, false, 'every provider collection avoids the dead drill-down');
+    assert.notEqual(result.items[3].b, false, 'a local album can still be opened');
 
     /*
      * The whole point of the registry. A URI here would let the panel name
@@ -1245,6 +1248,34 @@ describe('browsing', () => {
     assert.match(playlist.u, /^[0-9a-f]{16}$/, 'an opaque key, never a URI');
     assert.ok(!playlist.u.includes(':'), 'no scheme can appear in a key');
     assert.match(playlist.a, /^\/img\/art\?k=[0-9a-f]{16}$/, 'artwork is proxied too');
+
+    panel.close();
+  });
+
+  test('search includes content saved as Sonos favourites', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    const result = await panel.browse({ kind: 'search', text: 'coffee', source: 'library' });
+    assert.equal(result.kind, 'groups');
+    const saved = result.groups.find((group) => group.name === 'Saved in Sonos');
+    assert.deepEqual(saved.items.map((item) => item.n), ['Morning & Coffee']);
+
+    panel.close();
+  });
+
+  test('a local favourite opens its inner library object id', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    const favourites = await panel.browse({ kind: 'library', media: 'track', favorite: true });
+    const album = favourites.items.find((item) => item.n === 'Led Zeppelin IV');
+    const before = ctx.sonos.calls.length;
+    await panel.browse({ kind: 'item', uri: album.u });
+    const call = ctx.sonos.calls.slice(before).find((entry) => entry.action === 'Browse');
+    assert.equal(call.args.ObjectID, 'A:ALBUM/Led%20Zeppelin%20IV');
 
     panel.close();
   });
@@ -1997,6 +2028,17 @@ describe('connecting an AppLink service', () => {
 
 describe('a household with no music services', () => {
   const ctx = isolated({ services: true });
+
+  before(() => {
+    // A real speaker still exposes the A: category folders with no indexed
+    // files. The source list must use the track count rather than that shell.
+    ctx.sonos.containers['A:'] = [
+      { id: 'A:ARTIST', title: 'Artists', upnpClass: 'object.container' },
+      { id: 'A:ALBUM', title: 'Albums', upnpClass: 'object.container' },
+      { id: 'A:TRACKS', title: 'Tracks', upnpClass: 'object.container' },
+    ];
+    ctx.sonos.containers['A:TRACKS'] = [];
+  });
 
   test('loses the services and keeps the rest of the browser', async () => {
     const panel = new TestPanel(ctx.port);
