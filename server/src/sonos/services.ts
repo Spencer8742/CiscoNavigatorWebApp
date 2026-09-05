@@ -409,45 +409,16 @@ function message(err: unknown): string {
 export function accountsFromUris(text: string): Map<number, number> {
   const out = new Map<number, number>();
 
-  /*
-   * `&amp;` first, and this is the whole bug this function once had.
-   *
-   * Sonos escapes a URI's own `&` when it writes the DIDL, and escapes the
-   * DIDL again when it puts it in `<Result>`. One decode gets you the DIDL
-   * with the query string still reading `?sid=9&amp;flags=32&amp;sn=3` — so a
-   * pattern expecting a literal `&` before `sn=` matches NOTHING, at any
-   * nesting depth, on every real household.
-   *
-   * The symptom was total: no service ever got an account number, so the
-   * household appeared to have no music services at all.
-   */
-  const flat = text.replace(/&amp;/g, '&');
-
-  /*
-   * `sn` is OPTIONAL, and requiring it lost a whole class of service.
-   *
-   * A third-party service names the account it plays through — Spotify is
-   * `?sid=9&flags=8224&sn=3`. Sonos's OWN services have no separate account to
-   * name: Sonos Radio and TuneIn are `?sid=254&flags=32` with no `sn` at all.
-   * Insisting on the pair meant those were never discovered, so a household
-   * that plainly has Sonos Radio appeared not to.
-   *
-   * Account 0 is Sonos's own value for "no separate account", so that is what
-   * an absent `sn` means rather than a guess.
-   */
-  const re = /[?&]sid=(\d+)([^"'<\s\\]*)/g;
-
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(flat)) !== null) {
-    const sid = Number.parseInt(match[1] ?? '', 10);
-    if (!Number.isFinite(sid)) continue;
-
-    const serial = /[?&]sn=(\d+)/.exec(match[2] ?? '');
-    const sn = serial ? Number.parseInt(serial[1] ?? '', 10) : 0;
-    if (!Number.isFinite(sn)) continue;
-
-    // A URI that names a real account beats one that did not: two favourites
-    // from the same service, only one of which carried the serial.
+  // URI query order is not fixed; sn can precede sid. Decode nested XML
+  // ampersands without unescaping titles or splitting a URI's query fields.
+  const flat = text.replace(/&(?:amp;)+/g, '&');
+  for (const candidate of flat.split(/["'<\s\\]+/)) {
+    const sidMatch = /[?&]sid=(\d+)(?:&|$)/.exec(candidate);
+    if (!sidMatch) continue;
+    const sid = Number(sidMatch[1]);
+    const serial = /[?&]sn=(\d+)(?:&|$)/.exec(candidate);
+    const sn = serial ? Number(serial[1]) : 0;
+    if (!Number.isSafeInteger(sid) || !Number.isSafeInteger(sn)) continue;
     const known = out.get(sid);
     if (known === undefined || (known === 0 && sn > 0)) out.set(sid, sn);
   }

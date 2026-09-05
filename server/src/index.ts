@@ -158,25 +158,18 @@ async function main(): Promise<void> {
    */
   const musicSourceList = (): MusicSource[] =>
     musicServices.list().map((service) => {
-      const refused = musicServices.refused(service.sid);
       const lastError = musicServices.lastLinkError(service.sid);
       return {
         sid: service.sid,
         name: service.name,
         ready: service.auth === 'Anonymous' || musicServices.linked(service.sid),
         searchable: canSearch(service),
-        // A service wanting a username and password is not offered: a shared
-        // wall screen is the wrong place to type either. Nor is one that has
-        // already refused this app as a caller — that button cannot work.
-        linkable:
-          refused === null && (service.auth === 'DeviceLink' || service.auth === 'AppLink'),
-        ...(refused === null
-          ? {}
-          : {
-              blocked:
-                `${service.name} does not accept connections from this app. ` +
-                'Anything you favourite in the Sonos app still plays here.',
-            }),
+        linkable: service.auth === 'DeviceLink' || service.auth === 'AppLink',
+        ...(service.auth === 'UserId'
+          ? { blocked: `${service.name} requires a password sign-in that this panel does not support. Add favourites in the Sonos app to play them here.` }
+          : service.auth === 'Anonymous'
+            ? { blocked: `${service.name} does not offer account linking here. Try browsing again, or add favourites in the Sonos app to play them here.` }
+            : {}),
         ...(lastError === null ? {} : { lastError }),
       };
     });
