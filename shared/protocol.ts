@@ -765,7 +765,8 @@ export type ClientMessage =
    * (docs/ROOMOS.md §3), so a setting chosen at the panel would silently
    * revert overnight.
    */
-  | { t: 'pref'; id: number; key: 'homeSide'; value: string }
+  | { t: 'pref'; id: number; key: 'homeSide'; value: PanelPrefs['homeSide'] }
+  | { t: 'pref'; id: number; key: 'visiblePages'; value: PanelPage[] }
   /**
    * Rearrange the player list.
    *
@@ -785,6 +786,9 @@ export type ClientMessage =
  * real keyboard exists — the RoomOS soft keyboard has no numeric, date or
  * colour modes (docs/ROOMOS.md §6). These are things you pick by tapping.
  */
+export const PANEL_PAGES = ['home', 'rooms', 'controls', 'media', 'photos'] as const;
+export type PanelPage = (typeof PANEL_PAGES)[number];
+
 export interface PanelPrefs {
   /**
    * What fills the panel beside Favorites on the Home screen.
@@ -793,6 +797,8 @@ export interface PanelPrefs {
    * never empty — which is the entire reason it exists.
    */
   homeSide: 'media' | 'photos';
+  /** Pages shown in primary navigation. Settings always remains available. */
+  visiblePages: PanelPage[];
   /** How the player list is arranged. See `PlayerLayout`. */
   players: PlayerLayout;
 }
@@ -818,6 +824,7 @@ export interface PlayerLayout {
 
 export const DEFAULT_PREFS: PanelPrefs = {
   homeSide: 'media',
+  visiblePages: [...PANEL_PAGES],
   players: { sections: {}, hidden: [] },
 };
 

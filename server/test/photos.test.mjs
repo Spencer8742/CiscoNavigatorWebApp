@@ -571,6 +571,11 @@ describe('panel preferences', () => {
 
     assert.equal(t.panel.config.ui.title, 'Photos Test', 'sanity: config arrived');
     assert.equal(t.panel.prefs.homeSide, 'media', 'the default is Now Playing');
+    assert.deepEqual(
+      t.panel.prefs.visiblePages,
+      ['home', 'rooms', 'controls', 'media', 'photos'],
+      'every app page is visible by default',
+    );
 
     // A second panel must learn about a change made on the first, or two
     // panels on the same wall disagree about what they are showing.
@@ -581,6 +586,13 @@ describe('panel preferences', () => {
 
     await waitFor(() => observer.prefs.homeSide === 'photos', 'the other panel to be told');
     assert.equal(observer.prefs.homeSide, 'photos');
+
+    t.panel.send({ t: 'pref', id: 2, key: 'visiblePages', value: ['home', 'media'] });
+    await waitFor(
+      () => observer.prefs.visiblePages.length === 2,
+      'the visible page list to be broadcast',
+    );
+    assert.deepEqual(observer.prefs.visiblePages, ['home', 'media']);
     observer.close();
     await t.stop();
   });
@@ -589,6 +601,7 @@ describe('panel preferences', () => {
     rmSync(PREFS_FILE, { force: true });
     const first = await isolated();
     first.panel.send({ t: 'pref', id: 1, key: 'homeSide', value: 'photos' });
+    first.panel.send({ t: 'pref', id: 2, key: 'visiblePages', value: ['controls'] });
     await sleep(300);
     await first.stop();
 
@@ -596,6 +609,7 @@ describe('panel preferences', () => {
     // put the panel back to a setting the user changed away from.
     const second = await isolated();
     assert.equal(second.panel.prefs.homeSide, 'photos', 'the choice outlived the process');
+    assert.deepEqual(second.panel.prefs.visiblePages, ['controls'], 'visible pages also persisted');
     await second.stop();
   });
 
@@ -660,6 +674,9 @@ media:
     ]) {
       t.panel.send({ t: 'pref', id: 2, key, value });
     }
+    for (const value of [['home', 'home'], ['home', 'settings'], ['home', 42], 'home']) {
+      t.panel.send({ t: 'pref', id: 3, key: 'visiblePages', value });
+    }
     await sleep(400);
 
     assert.equal(t.panel.prefs.homeSide, 'media', 'nothing invalid was applied');
@@ -669,7 +686,7 @@ media:
     // happened when the player layout arrived.
     assert.deepEqual(
       Object.keys(t.panel.prefs).sort(),
-      ['homeSide', 'players'],
+      ['homeSide', 'players', 'visiblePages'],
       'no extra keys were introduced by a hostile payload',
     );
     await t.stop();

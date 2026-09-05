@@ -4,8 +4,10 @@ import { logger } from '~/lib/log.ts';
 import {
   DEFAULT_PREFS,
   LAYOUT_LIMITS,
+  PANEL_PAGES,
   PREF_VALUES,
   type PanelPrefs,
+  type PanelPage,
   type PlayerLayout,
 } from '@shared/protocol.ts';
 
@@ -57,6 +59,10 @@ export class PrefsStore {
             this.#prefs = { ...this.#prefs, [key]: value };
           }
         }
+        const visiblePages = sanitizeVisiblePages(
+          (raw as Record<string, unknown>)['visiblePages'],
+        );
+        if (visiblePages) this.#prefs = { ...this.#prefs, visiblePages };
         // The layout is shape-checked rather than enum-checked. Section names
         // are NOT validated here: the config may legitimately have changed
         // since this was written, and dropping a whole arrangement because a
@@ -83,10 +89,26 @@ export class PrefsStore {
    * fact that it can only reach a small enum is what keeps it uninteresting
    * to an attacker who has the panel token.
    */
-  set(key: string, value: string): string | null {
-    const allowed = (PREF_VALUES as Record<string, readonly string[]>)[key];
+  set(key: string, value: unknown): string | null {
+    if (key === 'visiblePages') {
+      const visiblePages = sanitizeVisiblePages(value);
+      if (!visiblePages) {
+        return `Invalid visiblePages (expected only ${PANEL_PAGES.join(', ')})`;
+      }
+      if (sameStrings(this.#prefs.visiblePages, visiblePages)) return null;
+
+      this.#prefs = { ...this.#prefs, visiblePages };
+      this.#save();
+      for (const fn of this.#listeners) fn(this.#prefs);
+      log.info(`Preference visiblePages = ${visiblePages.join(', ') || '(none)'}`);
+      return null;
+    }
+
+    const allowed = Object.prototype.hasOwnProperty.call(PREF_VALUES, key)
+      ? (PREF_VALUES as Record<string, readonly string[]>)[key]
+      : undefined;
     if (!allowed) return `Unknown preference "${key}"`;
-    if (!allowed.includes(value)) {
+    if (typeof value !== 'string' || !allowed.includes(value)) {
       return `"${value}" is not valid for ${key} (expected ${allowed.join(' or ')})`;
     }
 
@@ -130,6 +152,19 @@ export class PrefsStore {
       log.warn(`Could not persist preferences to ${this.#path}:`, err);
     }
   }
+}
+
+function sanitizeVisiblePages(raw: unknown): PanelPage[] | null {
+  if (!Array.isArray(raw) || raw.length > PANEL_PAGES.length) return null;
+  if (raw.some((page) => typeof page !== 'string' || !PANEL_PAGES.includes(page as PanelPage))) {
+    return null;
+  }
+  if (new Set(raw).size !== raw.length) return null;
+  return PANEL_PAGES.filter((page) => raw.includes(page));
+}
+
+function sameStrings(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
 /**

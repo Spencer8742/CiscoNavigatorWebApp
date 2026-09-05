@@ -749,9 +749,8 @@
 }
 
 /* ── Segmented control ────────────────────────────────────────────────────
-   The only editable control on the Settings screen. Two taps wide, no text
-   entry — the RoomOS soft keyboard is not somewhere to send anyone
-   (docs/ROOMOS.md §6). */
+   A compact tap-only setting. The RoomOS soft keyboard is not somewhere to
+   send anyone (docs/ROOMOS.md §6). */
 
 .segmented {
   display: flex;

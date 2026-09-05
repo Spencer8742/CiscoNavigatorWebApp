@@ -1,7 +1,7 @@
 import { Icon } from '~/components/Icon.tsx';
 import { Pressable } from '~/components/Pressable.tsx';
 import { ui } from '~/config/index.ts';
-import { linkStatus, navigate, route, ROUTES, type Route } from '~/state/ui.ts';
+import { linkStatus, navigate, route, visibleRoutes, type Route } from '~/state/ui.ts';
 
 /**
  * Primary navigation.
@@ -45,7 +45,7 @@ export function Nav() {
 
   return (
     <nav class="nav" data-pos={pos} aria-label="Primary">
-      {ROUTES.map((r) => (
+      {visibleRoutes.value.map((r) => (
         <Pressable
           key={r}
           class={r === active ? 'nav-item is-active' : 'nav-item'}
