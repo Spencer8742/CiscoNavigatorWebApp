@@ -1329,6 +1329,16 @@
   font-weight: 620;
 }
 
+/* A chip for a service nobody has connected yet: offered, not selected, and
+   carrying a + so the tap reads as "add this" rather than "search this". */
+.browse-source.is-offer {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  border-style: dashed;
+  color: var(--text-dim);
+}
+
 /* ── Speaker settings ─────────────────────────────────────────────────── */
 
 .tone-row {
