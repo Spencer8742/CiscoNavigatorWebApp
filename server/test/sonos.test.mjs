@@ -562,6 +562,16 @@ describe('live updates', () => {
     await panel.connect();
     await waitFor(() => panel.player('RINCON_BEDROOM')?.volume === 8, 'the starting volume');
 
+    /*
+     * Wait for push to be ESTABLISHED before measuring.
+     *
+     * Until the first event lands the backend does not yet know the callback
+     * path works, so its five-second tick polls — correctly. Taking the
+     * baseline inside that window makes this test measure the fallback and
+     * fail intermittently, which is what it did.
+     */
+    await waitFor(() => panel.health?.sonosUpdates === 'live', 'push to be established');
+
     const soapBefore = ctx.sonos.calls.length;
     await ctx.sonos.set('RINCON_BEDROOM', { volume: 42, mute: true });
 
@@ -650,6 +660,48 @@ describe('live updates', () => {
         (s) => s.method === 'UNSUBSCRIBE' && s.uuid === 'RINCON_STUDY',
       ),
       'the subscription must be torn down, not abandoned',
+    );
+
+    panel.close();
+  });
+
+  /*
+   * Grouping felt slow because the panel was published LAST — behind a
+   * subscription reconcile and a re-read of every zone, several times over,
+   * since one regroup emits a topology event per speaker involved.
+   *
+   * The topology event already carries the complete new grouping, so there is
+   * nothing to wait for. This pins that: the panel learns about it before the
+   * follow-up reads have happened.
+   */
+  test('a regroup reaches the panel before the follow-up reads', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+    await waitFor(() => ctx.sonos.liveSubscriptions.length >= 6, 'subscriptions');
+
+    await sleep(200);
+    const started = Date.now();
+    await ctx.sonos.regroup('RINCON_BEDROOM', 'RINCON_LIVING');
+
+    await waitFor(
+      () => panel.player('RINCON_BEDROOM')?.syncedTo === 'RINCON_LIVING',
+      'the new grouping to be pushed',
+      2000,
+    );
+
+    /*
+     * Asserted as LATENCY rather than as a request count.
+     *
+     * The reconcile is debounced by 600 ms, so arriving inside that window is
+     * proof the publish did not wait for it — and it stays true however fast
+     * or slow the machine is, where "fewer than N reads happened" races the
+     * debounce and fails on a loaded runner.
+     */
+    const elapsed = Date.now() - started;
+    assert.ok(
+      elapsed < 500,
+      `the panel should hear before the reconcile even starts (took ${elapsed}ms)`,
     );
 
     panel.close();

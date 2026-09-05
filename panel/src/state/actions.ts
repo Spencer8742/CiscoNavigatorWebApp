@@ -404,14 +404,53 @@ export function setRepeat(playerId: string, mode: 'off' | 'one' | 'all'): void {
    named, which is what makes removing one the same operation as adding one,
    and what stops two panels racing into a group neither asked for. */
 
-/** Set the group led by `leader` to exactly these members. */
+/**
+ * Set the group led by `leader` to exactly these members.
+ *
+ * Written optimistically, like every other control here. Grouping is the one
+ * that most needs it: the backend has to tell each speaker separately and then
+ * wait for the household to announce the result, so without this the sheet
+ * sits unchanged for a moment while somebody stands there wondering whether
+ * the tap registered. The real topology arrives a beat later and overwrites
+ * this — normally with the identical answer.
+ */
 export function setGroupMembers(leader: string, members: string[]): void {
-  music({ verb: 'group', player: leader, members });
+  const wanted = members.includes(leader) ? members : [leader, ...members];
+  regroup(leader, wanted);
+  music({ verb: 'group', player: leader, members: wanted });
 }
 
 /** Take one speaker out of whatever group it is in. */
 export function unjoinPlayer(playerId: string): void {
+  const current = player(playerId);
+  if (current) {
+    // Everyone else keeps playing together; this one stands alone.
+    const rest = current.members.filter((id) => id !== playerId);
+    const leader = current.syncedTo ?? rest[0];
+    if (leader) regroup(leader, rest);
+    regroup(playerId, []);
+  }
   music({ verb: 'ungroup', player: playerId });
+}
+
+/**
+ * Apply a grouping locally: `members` becomes exactly this set.
+ *
+ * A group of one is drawn as no group at all, which is why an empty result
+ * clears `members` rather than leaving the speaker listed as its own member.
+ */
+function regroup(leader: string, members: string[]): void {
+  const group = members.length > 1 ? members : [];
+
+  players.value = players.value.map((p) => {
+    if (!members.includes(p.id)) return p;
+    return {
+      ...p,
+      members: group,
+      syncedTo: p.id === leader ? null : leader,
+      queueId: leader,
+    };
+  });
 }
 
 /* ── The queue ────────────────────────────────────────────────────────────
