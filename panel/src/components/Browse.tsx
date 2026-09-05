@@ -126,6 +126,11 @@ function blockedReason(sid: number): string | null {
   return sources.value.find((s) => s.sid === sid)?.blocked ?? null;
 }
 
+/** What this service said the last time connecting it was tried. */
+function lastLinkError(sid: number): string | null {
+  return sources.value.find((s) => s.sid === sid)?.lastError ?? null;
+}
+
 /** What to call a service in its own search box. */
 function serviceName(sid: number): string {
   return sources.value.find((s) => s.sid === sid)?.name ?? 'this service';
@@ -544,6 +549,14 @@ function Results({
           ) : null}
           {needs !== undefined && blockedReason(needs) !== null ? (
             <p class="browse-state-hint">{blockedReason(needs)}</p>
+          ) : null}
+          {/*
+            What this service said last time, kept where it can be read after
+            the Connect sheet has closed. Services differ from one another, so
+            the answer to "will this one work" is the answer it gave.
+          */}
+          {needs !== undefined && blockedReason(needs) === null && lastLinkError(needs) !== null ? (
+            <p class="browse-state-hint">{lastLinkError(needs)}</p>
           ) : null}
         </div>
       );
