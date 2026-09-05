@@ -1642,6 +1642,46 @@ describe('music services', () => {
     panel.close();
   });
 
+  /*
+   * The answer a real household got from SoundCloud, and what it means.
+   *
+   * `Client.NOT_AUTHORIZED` to the FIRST call of a link — before anybody has
+   * been asked for anything — is the service rejecting this APP as a caller,
+   * not rejecting an account. SMAPI endpoints are contracted between Sonos and
+   * each service and several validate the caller; no parameter changes that.
+   *
+   * So the offer is withdrawn rather than repeated. A button that walks
+   * somebody into the same wall is worse than the reason it cannot work.
+   */
+  test('a service that rejects this app stops being offered a button', async () => {
+    ctx.smapi.refuseLink = 'Client.NOT_AUTHORIZED';
+
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+    await panel.browse({ kind: 'sources' });
+
+    await assert.rejects(
+      () => panel.link(200, 'begin'),
+      (err) => {
+        assert.match(err.message, /does not accept connections from this app/);
+        // And it says what still works, because most of it does.
+        assert.match(err.message, /favourite/i);
+        return true;
+      },
+    );
+
+    // Every panel learns, and the button goes away rather than failing again.
+    const blocked = await waitFor(
+      () => panel.sources.find((s) => s.sid === 200 && s.blocked),
+      'the refusal to reach the panel',
+    );
+    assert.equal(blocked.linkable, false, 'no button for a wall');
+
+    ctx.smapi.refuseLink = null;
+    panel.close();
+  });
+
   test('connecting is a code to type, not a redirect', async () => {
     ctx.smapi.pollsBeforeLink = 1;
 

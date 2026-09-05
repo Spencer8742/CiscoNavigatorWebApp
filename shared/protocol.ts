@@ -304,6 +304,16 @@ export interface MusicSource {
    * cannot be typed on a shared screen and is not asked for.
    */
   linkable: boolean;
+  /**
+   * Why this service cannot be connected here, when it has said so itself.
+   *
+   * A SMAPI endpoint is contracted between Sonos and the service, and several
+   * validate that the caller is a licensed Sonos client. One that answers
+   * `NOT_AUTHORIZED` to the first call of a link is rejecting this app rather
+   * than an account — no setting changes it, so the panel stops offering a
+   * button and says this instead.
+   */
+  blocked?: string;
 }
 
 /** Where a device link has got to. */
