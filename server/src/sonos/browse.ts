@@ -6,6 +6,8 @@ import type { SonosClient } from '~/sonos/client.ts';
 import type { SonosStore } from '~/sonos/store.ts';
 import type { UriRegistry } from '~/sonos/uris.ts';
 import type { SpotifySearch } from '~/sonos/spotify.ts';
+import type { MusicServices } from '~/sonos/music.ts';
+import type { SmapiItem } from '~/sonos/smapi.ts';
 import type { MediaArt } from '~/http/media-art.ts';
 import {
   BROWSE_PAGE,
@@ -75,6 +77,7 @@ export interface SonosBrowserDeps {
   uris: UriRegistry;
   art: MediaArt;
   spotify: SpotifySearch;
+  music: MusicServices;
 }
 
 export class SonosBrowser {
@@ -107,7 +110,106 @@ export class SonosBrowser {
         return this.#item(req.uri, clamp(req.offset));
       case 'queue':
         return this.#queue(req.queueId, clamp(req.offset));
+      case 'service':
+        return this.#service(req.sid, req.id ?? 'root', clamp(req.offset));
+      case 'sources':
+        return this.#sources();
     }
+  }
+
+  /**
+   * The household's music services, as rows.
+   *
+   * Each is registered as an unplayable container rooted at the service's own
+   * top level, so opening one goes through exactly the same drill-down as
+   * opening an album. A service that is not connected yet still gets a row —
+   * it says so, and tapping it is how somebody connects it.
+   */
+  async #sources(): Promise<BrowseResult> {
+    const music = this.#deps.music;
+    await music.ready();
+
+    const items = music.list().map((service): MediaItem => {
+      const ready = service.auth === 'Anonymous' || music.linked(service.sid);
+      const item: MediaItem = {
+        u: this.#deps.uris.register(null, 'root', '', 'object.container', service.sid) ?? '',
+        n: service.name,
+        k: 'playlist',
+        // The one place a row carries a service id, so the panel can tell
+        // "open this" from "connect this first" without reading the subtitle.
+        sid: service.sid,
+      };
+      if (!ready) item.s = 'Not connected';
+      return item;
+    });
+
+    return { kind: 'list', items, offset: 0, more: false };
+  }
+
+  /* ── Music services ────────────────────────────────────────────────────*/
+
+  /**
+   * One page of a service's own tree — Sonos Radio, Plex, SoundCloud.
+   *
+   * The rows come back as the service's own shape and are turned into exactly
+   * the same `MediaItem` a local browse produces, so the panel draws a Plex
+   * album and a NAS album with one component and neither knows the difference.
+   */
+  async #service(sid: number, id: string, offset: number): Promise<BrowseResult> {
+    const music = this.#deps.music;
+    await music.ready();
+
+    const service = music.get(sid);
+    if (!service) throw new Error('That service is not available here');
+
+    const rows = await music.browse(sid, id, offset);
+    return {
+      kind: 'list',
+      items: rows.map((row) => this.#shapeService(row, sid)),
+      offset,
+      /*
+       * A service reports a total that is often a guess, and several report
+       * none at all. A full page is the honest signal that there may be more —
+       * unlike the local library, where Sonos's own count is exact.
+       */
+      more: rows.length >= BROWSE_PAGE,
+    };
+  }
+
+  /** A service catalog row → the four fields a list row draws. */
+  #shapeService(row: SmapiItem, sid: number): MediaItem {
+    const playable = this.#deps.music.playable(sid, row);
+
+    const item: MediaItem = {
+      /*
+       * A container is registered under BOTH its playable URI and the
+       * service's own id: the first plays it, the second opens it. That is the
+       * same split as a favourite, for the same reason.
+       */
+      u:
+        row.canPlay && playable
+          ? (this.#deps.uris.register(
+              playable.uri,
+              row.id,
+              playable.metadata,
+              playable.upnpClass,
+              sid,
+            ) ?? '')
+          : (this.#deps.uris.register(null, row.id, '', 'object.container', sid) ?? ''),
+      n: row.title,
+      k: kindOf(playable?.upnpClass ?? 'object.container'),
+    };
+
+    const sub = [row.artist, row.album].filter((p): p is string => !!p);
+    const unique = [...new Set(sub)];
+    if (unique.length > 0) item.s = unique.join(' · ');
+
+    // Service artwork is a public URL rather than a path on a speaker, so it
+    // goes through the same proxy as everything else and no further.
+    const art = this.#deps.art.register(row.artUri);
+    if (art) item.a = art;
+
+    return item;
   }
 
   /* ── Library ───────────────────────────────────────────────────────────*/
@@ -132,7 +234,17 @@ export class SonosBrowser {
     const query = typeof req.text === 'string' ? req.text.trim().slice(0, MAX_SEARCH_TEXT) : '';
     if (query.length === 0) return { kind: 'groups', groups: [] };
 
-    if (req.source === 'spotify') return this.#deps.spotify.search(query);
+    if (typeof req.source === 'number') return this.#searchService(req.source, query);
+
+    /*
+     * Anything that is not `'library'` or a service id is refused rather than
+     * quietly treated as the library. Falling through would answer a search of
+     * a service the panel believes in with local results, which reads as "your
+     * Plex has three albums" rather than as the mismatch it is.
+     */
+    if (req.source !== undefined && req.source !== 'library') {
+      throw new Error('That is not a place this can search');
+    }
 
     /*
      * Three category searches rather than one, because Sonos has no "search
@@ -168,6 +280,34 @@ export class SonosBrowser {
     return { kind: 'groups', groups: results.filter((g) => g.items.length > 0) };
   }
 
+  /**
+   * Search one music service's catalog.
+   *
+   * Spotify has two possible backends and the better one wins: its Web API
+   * returns richer results than SMAPI, but only if credentials happen to be
+   * configured. When they are not — which is the common case, and needs no
+   * setup at all — the service's own SMAPI search answers instead. One tab
+   * either way; the panel is not told which was used.
+   */
+  async #searchService(sid: number, query: string): Promise<BrowseResult> {
+    const music = this.#deps.music;
+    await music.ready();
+
+    const service = music.get(sid);
+    if (this.#deps.spotify.enabled && service?.name === 'Spotify') {
+      return this.#deps.spotify.search(query);
+    }
+
+    const groups = await music.search(sid, query);
+    return {
+      kind: 'groups',
+      groups: groups.map((group) => ({
+        name: group.name,
+        items: group.items.map((row) => this.#shapeService(row, sid)),
+      })),
+    };
+  }
+
   /* ── Drilling in ───────────────────────────────────────────────────────*/
 
   /**
@@ -191,6 +331,11 @@ export class SonosBrowser {
      */
     const target = playable.objectId ?? playable.uri;
     if (!target) throw new Error('That item cannot be opened');
+
+    // A service's ids mean nothing to a speaker: they are addresses inside
+    // Plex or SoundCloud, and opening one is a call to that service.
+    if (playable.sid !== null) return this.#service(playable.sid, target, offset);
+
     return this.#page(target, offset);
   }
 

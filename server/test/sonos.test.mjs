@@ -5,6 +5,10 @@ import { createServer } from 'node:net';
 import { WebSocket } from 'ws';
 import { fileURLToPath, URL } from 'node:url';
 import { MockSonos, defaultZones } from './mock-sonos.mjs';
+import { MockSmapi } from './mock-smapi.mjs';
+import { mkdtemp, copyFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   decodeEntities,
   parseXml,
@@ -234,6 +238,7 @@ class TestPanel {
     this.players = [];
     this.queues = [];
     this.health = null;
+    this.sources = [];
     this.messages = [];
   }
 
@@ -249,6 +254,18 @@ class TestPanel {
       this.ws.send(JSON.stringify({ t: 'browse', id, req }));
       setTimeout(() => {
         if (this.#browsers.delete(id)) reject(new Error('browse timed out'));
+      }, 8000);
+    });
+  }
+
+  /** Connect or disconnect a music service, and wait for the answer. */
+  link(sid, op) {
+    const id = (this.#seq += 1);
+    return new Promise((resolve, reject) => {
+      this.#browsers.set(id, { resolve, reject });
+      this.ws.send(JSON.stringify({ t: 'link', id, sid, op }));
+      setTimeout(() => {
+        if (this.#browsers.delete(id)) reject(new Error('link timed out'));
       }, 8000);
     });
   }
@@ -287,16 +304,25 @@ class TestPanel {
         this.health = msg.health;
         this.players = msg.players;
         this.queues = msg.queues;
+        this.sources = msg.sources;
       } else if (msg.t === 'players') {
         this.players = msg.players;
         this.queues = msg.queues;
       } else if (msg.t === 'health') {
         this.health = msg.health;
+      } else if (msg.t === 'sources') {
+        this.sources = msg.sources;
       } else if (msg.t === 'browse') {
         const w = this.#browsers.get(msg.ref);
         if (w) {
           this.#browsers.delete(msg.ref);
           w.resolve(msg.result);
+        }
+      } else if (msg.t === 'link') {
+        const w = this.#browsers.get(msg.ref);
+        if (w) {
+          this.#browsers.delete(msg.ref);
+          w.resolve(msg.link);
         }
       } else if (msg.t === 'error') {
         const w = this.#browsers.get(msg.ref);
@@ -328,7 +354,7 @@ class TestPanel {
 }
 
 /** A backend with its own mock household. */
-function isolated({ host, zones, swallowEvents = false } = {}) {
+function isolated({ host, zones, swallowEvents = false, services = false } = {}) {
   const ctx = {};
 
   before(async () => {
@@ -336,6 +362,21 @@ function isolated({ host, zones, swallowEvents = false } = {}) {
     ctx.sonos = new MockSonos(zones ?? defaultZones());
     ctx.sonos.swallowEvents = swallowEvents;
     await ctx.sonos.start();
+
+    /*
+     * Music-service tokens are written next to the config, so a suite that
+     * links a service gets its own directory. Without it a link would survive
+     * into the next run and the second run would test a different program
+     * from the first.
+     */
+    let configPath = CONFIG;
+    if (services) {
+      ctx.smapi = new MockSmapi();
+      await ctx.smapi.start();
+      ctx.stateDir = await mkdtemp(join(tmpdir(), 'navigator-svc-'));
+      configPath = join(ctx.stateDir, 'dashboard.yaml');
+      await copyFile(CONFIG, configPath);
+    }
 
     // Point SONOS_HOST at ONE speaker. Everything else — including the other
     // four addresses — has to come out of the topology it answers with.
@@ -347,7 +388,7 @@ function isolated({ host, zones, swallowEvents = false } = {}) {
         PORT: String(ctx.port),
         HOST: '127.0.0.1',
         PANEL_TOKEN: TOKEN,
-        CONFIG_PATH: CONFIG,
+        CONFIG_PATH: configPath,
         HA_URL: '',
         HA_TOKEN: '',
         IMMICH_URL: '',
@@ -381,6 +422,8 @@ function isolated({ host, zones, swallowEvents = false } = {}) {
       });
     }
     await ctx.sonos?.stop();
+    await ctx.smapi?.stop();
+    if (ctx.stateDir) await rm(ctx.stateDir, { recursive: true, force: true });
   });
 
   return ctx;
@@ -1328,20 +1371,215 @@ describe('browsing', () => {
 
 /* ── Phase 5: Spotify ─────────────────────────────────────────────────────*/
 
-describe('Spotify search', () => {
+describe('searching somewhere that does not exist', () => {
   const ctx = isolated();
 
-  test('says what to do when it is not set up', async () => {
+  test('is refused rather than quietly answered from the library', async () => {
     const panel = new TestPanel(ctx.port);
     await panel.connect();
     await waitFor(() => panel.players.length > 0, 'players');
 
+    /*
+     * Falling through to the local library would answer a search of a service
+     * the panel believes in with local results — "your Plex has three albums"
+     * rather than the mismatch it actually is.
+     */
     await assert.rejects(
-      () => panel.browse({ kind: 'search', text: 'zeppelin', source: 'spotify' }),
-      // Names the two variables rather than reporting a failed search, because
-      // nobody reads container logs from a wall.
-      /SPOTIFY_CLIENT_ID/,
+      () => panel.browse({ kind: 'search', text: 'zeppelin', source: 'nowhere' }),
+      /cannot search|not a place/i,
     );
+
+    panel.close();
+  });
+});
+
+/* ── Music services ───────────────────────────────────────────────────────*/
+
+/**
+ * The half of the integration that leaves the house.
+ *
+ * Favourites already play anything from any service with no login here at all
+ * — that is what `FV:2` is for. What needs a service's own API is SEARCHING
+ * it, and browsing a catalog nobody has favourited yet.
+ */
+describe('music services', () => {
+  const ctx = isolated({ services: true });
+
+  /*
+   * The household HAS this service — somebody added it in the Sonos app.
+   *
+   * That is a different question from whether THIS app is connected to it,
+   * and the difference is the whole shape of the feature: Sonos knows about
+   * hundreds of services and a household has a handful, so the account list
+   * is what separates "offer this" from "do not mention this". Whether we
+   * hold a token decides only whether the row says "Not connected".
+   *
+   * Set once, because the catalog is cached for an hour — as it should be,
+   * and as it would be in a house.
+   */
+  before(() => {
+    ctx.sonos.services = [
+      { sid: 200, name: 'Testify', uri: ctx.smapi.url, auth: 'DeviceLink', capabilities: 563 },
+    ];
+    // serviceType = sid * 256 + 7.
+    ctx.sonos.accounts = [{ type: 200 * 256 + 7, sn: 4 }];
+  });
+
+  test('a service this app is not connected to is listed, and says so', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    const list = await panel.browse({ kind: 'sources' });
+    const row = list.items.find((i) => i.n === 'Testify');
+    assert.ok(row, 'the service is offered');
+    assert.equal(row.s, 'Not connected');
+
+    // A key, not a URI: the same rule as everywhere else in this browser.
+    assert.match(row.u, /^[0-9a-f]{16}$/);
+
+    // And browsing it says what to do rather than reporting a fault code.
+    ctx.smapi.anonymous = false;
+    await assert.rejects(() => panel.browse({ kind: 'item', uri: row.u }), /connect/i);
+
+    panel.close();
+  });
+
+  test('connecting is a code to type, not a redirect', async () => {
+    ctx.smapi.pollsBeforeLink = 1;
+
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    // Discovery is lazy; asking for the list is what triggers it.
+    await panel.browse({ kind: 'sources' });
+
+    const started = await panel.link(200, 'begin');
+    assert.equal(started.state, 'prompt');
+    assert.equal(started.url, 'https://example.invalid/link');
+    assert.equal(started.code, 'ABCD-1234');
+
+    /*
+     * The first poll is REFUSED, and that refusal is a SOAP fault. A client
+     * that treats every fault as an error can never finish a device link —
+     * which is the single most likely way to get this flow wrong.
+     */
+    const first = await panel.link(200, 'poll');
+    assert.equal(first.state, 'waiting');
+
+    const second = await panel.link(200, 'poll');
+    assert.equal(second.state, 'linked');
+
+    // Every panel learns, not just the one that did it.
+    await waitFor(
+      () => panel.sources.find((s) => s.sid === 200)?.ready === true,
+      'the connection to be announced',
+    );
+
+    panel.close();
+  });
+
+  test('a linked service browses, and plays through the household account', async () => {
+
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    const list = await panel.browse({ kind: 'sources' });
+    const row = list.items.find((i) => i.n === 'Testify');
+
+    const top = await panel.browse({ kind: 'item', uri: row.u });
+    assert.deepEqual(top.items.map((i) => i.n), ['Stations', 'My Playlists']);
+
+    // Drill in. The service's own ids are addresses inside the service, and
+    // opening one must be a call to it rather than a Browse to a speaker.
+    const stations = await panel.browse({ kind: 'item', uri: top.items[0].u });
+    const station = stations.items[0];
+    assert.equal(station.n, 'Ambient Sleeping Pill');
+    assert.equal(station.k, 'radio', 'a stream is a station, not a track');
+
+    const before = ctx.sonos.calls.length;
+    panel.music({ verb: 'playItem', player: 'RINCON_LIVING', item: station.u, enqueue: 'replace' });
+
+    const set = await waitFor(
+      () => ctx.sonos.calls.slice(before).find((c) => c.action === 'SetAVTransportURI'),
+      'the station to be set',
+    );
+
+    // `sn=4` is the household's account for this service, learned from
+    // `/status/accounts` — not a guess, and playing with the wrong one is
+    // silence rather than an error.
+    assert.match(set.args.CurrentURI, /^x-sonosapi-stream:st-1\?sid=200&sn=4/);
+    assert.match(set.args.CurrentURIMetaData, /SA_RINCON51207_/, 'sid * 256 + 7');
+
+    panel.close();
+  });
+
+  test('a track drills down to its artist and album', async () => {
+
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    const list = await panel.browse({ kind: 'sources' });
+    const row = list.items.find((i) => i.n === 'Testify');
+    const top = await panel.browse({ kind: 'item', uri: row.u });
+    const playlists = await panel.browse({ kind: 'item', uri: top.items[1].u });
+    const tracks = await panel.browse({ kind: 'item', uri: playlists.items[0].u });
+
+    const track = tracks.items[0];
+    assert.equal(track.n, 'Nightswimming');
+    // Artist and duration live inside `trackMetadata`, one level down. Missing
+    // that nesting leaves every row with a blank second line.
+    assert.equal(track.s, 'R.E.M. · Automatic for the People');
+    assert.equal(track.k, 'track');
+
+    panel.close();
+  });
+
+  test('searching a service returns its own catalog, grouped', async () => {
+
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+    await panel.browse({ kind: 'sources' });
+
+    const result = await panel.browse({ kind: 'search', text: 'radiohead', source: 200 });
+    assert.equal(result.kind, 'groups');
+
+    const albums = result.groups.find((g) => g.name === 'Albums');
+    assert.equal(albums.items[0].n, 'Kid A');
+
+    // Categories the service does not know answer with a fault, which is not
+    // a failed search — only every category failing is.
+    assert.ok(!result.groups.some((g) => g.name === 'Artists'));
+
+    panel.close();
+  });
+
+});
+
+/*
+ * The floor this whole feature stands on. Favourites never needed a service
+ * login, so a household whose speakers report no services at all must lose the
+ * service list and nothing else.
+ */
+describe('a household with no music services', () => {
+  const ctx = isolated({ services: true });
+
+  test('loses the service list and keeps everything else', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.players.length > 0, 'players');
+
+    const list = await panel.browse({ kind: 'sources' });
+    assert.equal(list.items.length, 0, 'no services, and no error');
+
+    // The point of the assertion: favourites are unaffected, because they
+    // never needed a service login in the first place.
+    const favourites = await panel.browse({ kind: 'library', media: 'track', favorite: true });
+    assert.equal(favourites.items.length, 3);
 
     panel.close();
   });

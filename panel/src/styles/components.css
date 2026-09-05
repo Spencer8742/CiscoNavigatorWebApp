@@ -1329,6 +1329,59 @@
   font-weight: 620;
 }
 
+/* ── Connecting a music service ───────────────────────────────────────── */
+
+.link-body {
+  text-align: center;
+  padding: var(--s-4) var(--s-4) var(--s-5);
+}
+
+.link-step {
+  margin: 0 0 var(--s-2);
+  color: var(--text-dim);
+  font-size: 1rem;
+}
+
+/*
+ * The URL and the code are read off the screen and typed on a phone, so they
+ * are sized to be legible from standing distance and set in a face where a
+ * zero cannot be mistaken for an O.
+ */
+.link-url,
+.link-code {
+  margin: 0 0 var(--s-4);
+  padding: var(--s-3);
+  border-radius: var(--r-lg);
+  background: var(--surface-1);
+  border: 1px solid var(--border-subtle);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* Long enough to wrap on a narrow panel rather than overflow it. */
+  overflow-wrap: anywhere;
+}
+
+.link-url { font-size: 1.0625rem; }
+
+.link-code {
+  font-size: 1.75rem;
+  font-weight: 620;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent-dim);
+}
+
+.link-hint {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.9375rem;
+}
+
+.link-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 1rem;
+}
+
 /* ── Up next ──────────────────────────────────────────────────────────── */
 
 .up-next {

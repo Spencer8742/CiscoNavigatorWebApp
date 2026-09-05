@@ -64,6 +64,15 @@ export interface Playable {
   /** DIDL-Lite describing it, or '' when Sonos does not need any. */
   metadata: string;
   style: PlayStyle;
+  /**
+   * The music service this came from, when it came from one.
+   *
+   * What makes `objectId` mean two different things. A local container's id is
+   * an address in a speaker's ContentDirectory; a Plex container's id is an
+   * address in Plex, and opening it means a SMAPI call to Plex rather than a
+   * Browse to a speaker. Without this the two are indistinguishable strings.
+   */
+  sid: number | null;
 }
 
 /**
@@ -138,21 +147,26 @@ export class UriRegistry {
     objectId: string | null,
     metadata: unknown,
     upnpClass = '',
+    sid: number | null = null,
   ): string | null {
     const playUri = usable(uri);
     const id = usable(objectId);
     if (!playUri && !id) return null;
 
     /*
-     * Keyed on BOTH halves, separated by a character neither can contain.
+     * Keyed on all three parts, separated by a character none can contain.
      *
-     * A local album carries only an object id, and a favourite pointing at
-     * the same album carries only a URI; they are different rows and must not
+     * A local album carries only an object id, and a favourite pointing at the
+     * same album carries only a URI; they are different rows and must not
      * collide. Joining them without a separator would let one row's URI plus
      * an empty id hash identically to an empty URI plus another row's id.
+     *
+     * The service matters for the same reason and more sharply: every
+     * service's tree is rooted at the id `root`, so without it Plex's root and
+     * SoundCloud's would be the same key and one would evict the other.
      */
     const key = createHash('sha256')
-      .update(`${playUri ?? ''}\u0000${id ?? ''}`)
+      .update(`${playUri ?? ''}\u0000${id ?? ''}\u0000${sid ?? ''}`)
       .digest('hex')
       .slice(0, 16);
 
@@ -165,6 +179,7 @@ export class UriRegistry {
       objectId: id,
       metadata: typeof metadata === 'string' ? metadata : '',
       style: playStyleOf(playUri, upnpClass),
+      sid,
     });
 
     while (this.#items.size > MAX_ENTRIES) {

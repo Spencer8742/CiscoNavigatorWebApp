@@ -1,5 +1,5 @@
 import { signal } from '@preact/signals';
-import type { Player, PlayerQueue } from '@shared/protocol.ts';
+import type { MusicSource, Player, PlayerQueue } from '@shared/protocol.ts';
 
 /**
  * The speakers and queues, as the backend last described them.
@@ -16,6 +16,15 @@ import type { Player, PlayerQueue } from '@shared/protocol.ts';
 
 export const players = signal<Player[]>([]);
 export const queues = signal<PlayerQueue[]>([]);
+
+/**
+ * Music services the household has — Sonos Radio, Plex, SoundCloud, Spotify.
+ *
+ * Given by the backend rather than discovered here: which services exist and
+ * whether each is connected are facts about the household and about stored
+ * credentials, and a wall panel should be told them rather than work them out.
+ */
+export const sources = signal<MusicSource[]>([]);
 
 export function setPlayers(next: Player[], nextQueues: PlayerQueue[]): void {
   players.value = next;

@@ -1,7 +1,7 @@
 import { Backoff } from '@shared/backoff.ts';
 import { socketUrl } from '~/net/auth.ts';
 import { applyPatch, applySnapshot } from '~/state/entities.ts';
-import { setPlayers } from '~/state/players.ts';
+import { setPlayers, sources } from '~/state/players.ts';
 import { clearPressed, keyLights, markPressed, tvs } from '~/state/controls.ts';
 import { setConfig } from '~/config/index.ts';
 import { connectionProblem, health, prefs, ready, showToast, socketState } from '~/state/ui.ts';
@@ -12,6 +12,7 @@ import {
   HEARTBEAT_TIMEOUT_MS,
   type BrowseRequest,
   type BrowseResult,
+  type ServiceLink,
   type ClientMessage,
   type MusicCommand,
   type PanelPrefs,
@@ -49,8 +50,8 @@ const nextId = (): number => (seq += 1);
 /** Resolvers for in-flight photo requests, keyed by message id. */
 const photoWaiters = new Map<number, (photos: PhotoRef[]) => void>();
 
-interface BrowseWaiter {
-  resolve(result: BrowseResult): void;
+interface Waiter<T> {
+  resolve(result: T): void;
   reject(error: Error): void;
   timer: ReturnType<typeof setTimeout>;
 }
@@ -63,7 +64,16 @@ interface BrowseWaiter {
  * three requests before the first replies, and the answers can arrive in any
  * order.
  */
-const browseWaiters = new Map<number, BrowseWaiter>();
+const browseWaiters = new Map<number, Waiter<BrowseResult>>();
+
+/**
+ * In-flight service-link requests, keyed the same way.
+ *
+ * Separate from the browse map only so the two resolve with their own types.
+ * They share the error path below, which is what matters: a refused link and
+ * a refused browse both arrive as `t: 'error'` carrying the same `ref`.
+ */
+const linkWaiters = new Map<number, Waiter<ServiceLink>>();
 
 export function connect(): void {
   closed = false;
@@ -183,6 +193,7 @@ function handle(msg: ServerMessage): void {
       setPlayers(msg.players, msg.queues);
       keyLights.value = msg.keylights;
       tvs.value = msg.tvs;
+      sources.value = msg.sources;
       socketState.value = 'connected';
       ready.value = true;
       // Clear any diagnosis: whatever was wrong is now demonstrably fixed.
@@ -205,6 +216,10 @@ function handle(msg: ServerMessage): void {
 
     case 'keylights':
       keyLights.value = msg.lights;
+      break;
+
+    case 'sources':
+      sources.value = msg.sources;
       break;
 
     case 'tvs':
@@ -247,6 +262,16 @@ function handle(msg: ServerMessage): void {
       break;
     }
 
+    case 'link': {
+      const waiter = linkWaiters.get(msg.ref);
+      if (waiter) {
+        linkWaiters.delete(msg.ref);
+        clearTimeout(waiter.timer);
+        waiter.resolve(msg.link);
+      }
+      break;
+    }
+
     case 'pong':
       clearTimeout(pongTimer);
       pongTimer = undefined;
@@ -256,9 +281,13 @@ function handle(msg: ServerMessage): void {
       // A failed browse is shown in the browser itself, where the user is
       // looking and where a Retry button can live. Toasting it as well would
       // put the same sentence on screen twice.
-      const waiter = msg.ref === undefined ? undefined : browseWaiters.get(msg.ref);
+      const waiter =
+        msg.ref === undefined
+          ? undefined
+          : (browseWaiters.get(msg.ref) ?? linkWaiters.get(msg.ref));
       if (waiter && msg.ref !== undefined) {
         browseWaiters.delete(msg.ref);
+        linkWaiters.delete(msg.ref);
         clearTimeout(waiter.timer);
         waiter.reject(new Error(msg.message));
         break;
@@ -299,10 +328,12 @@ function startHeartbeat(): void {
 }
 
 function failBrowseWaiters(): void {
-  for (const [id, waiter] of browseWaiters) {
-    browseWaiters.delete(id);
-    clearTimeout(waiter.timer);
-    waiter.reject(new Error('Connection lost'));
+  for (const map of [browseWaiters, linkWaiters]) {
+    for (const [id, waiter] of map) {
+      map.delete(id);
+      clearTimeout(waiter.timer);
+      waiter.reject(new Error('Connection lost'));
+    }
   }
 }
 
@@ -452,6 +483,27 @@ export function browse(req: BrowseRequest): Promise<BrowseResult> {
       if (browseWaiters.delete(id)) reject(new Error('Sonos did not respond'));
     }, 30_000);
     browseWaiters.set(id, { resolve, reject, timer });
+  });
+}
+
+/**
+ * Connect or disconnect a music service.
+ *
+ * Long-lived by nature — `poll` is answered only once the person has confirmed
+ * on their phone — but each call is its own short request. Holding one open
+ * would mean a dropped socket lost the whole flow instead of one tap.
+ */
+export function link(sid: number, op: 'begin' | 'poll' | 'forget'): Promise<ServiceLink> {
+  return new Promise((resolve, reject) => {
+    const id = nextId();
+    if (!send({ t: 'link', id, sid, op })) {
+      reject(new Error('Not connected'));
+      return;
+    }
+    const timer = setTimeout(() => {
+      if (linkWaiters.delete(id)) reject(new Error('The service did not respond'));
+    }, 30_000);
+    linkWaiters.set(id, { resolve, reject, timer });
   });
 }
 

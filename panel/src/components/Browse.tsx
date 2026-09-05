@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { Icon } from '~/components/Icon.tsx';
 import { Pressable } from '~/components/Pressable.tsx';
-import { browse } from '~/net/socket.ts';
+import { browse, link } from '~/net/socket.ts';
 import { Artwork } from '~/components/Artwork.tsx';
 import { speakers } from '~/state/selectors.ts';
+import { sources } from '~/state/players.ts';
 import * as act from '~/state/actions.ts';
 import { BROWSE_PAGE } from '@shared/protocol.ts';
 import type {
@@ -11,6 +12,8 @@ import type {
   BrowseResult,
   MediaItem,
   MediaKind,
+  MusicSource,
+  ServiceLink,
 } from '@shared/protocol.ts';
 
 /**
@@ -45,7 +48,10 @@ import type {
  */
 
 /** A tab is a library view or a search — never a queue lookup. */
-type TabRequest = Extract<BrowseRequest, { kind: 'library' } | { kind: 'search' }>;
+type TabRequest = Extract<
+  BrowseRequest,
+  { kind: 'library' } | { kind: 'search' } | { kind: 'sources' }
+>;
 
 interface Tab {
   id: string;
@@ -76,6 +82,20 @@ const TABS: Tab[] = [
   { id: 'albums', label: 'Albums', icon: 'disc', request: { kind: 'library', media: 'album' } },
   { id: 'artists', label: 'Artists', icon: 'media', request: { kind: 'library', media: 'artist' } },
   { id: 'radio', label: 'Radio', icon: 'radio', request: { kind: 'library', media: 'radio' } },
+  {
+    /*
+     * Every music service behind ONE tab, listed as rows.
+     *
+     * A household with Plex, SoundCloud, YouTube Music, Sonos Radio and
+     * Spotify would otherwise put eleven tabs across the top of a wall panel.
+     * As rows they also reuse the drill-down that albums already use, so
+     * opening Plex costs no new navigation code at all.
+     */
+    id: 'services',
+    label: 'Services',
+    icon: 'media',
+    request: { kind: 'sources' },
+  },
   { id: 'search', label: 'Search', icon: 'search', request: { kind: 'search', text: '' } },
 ];
 
@@ -87,10 +107,16 @@ const TABS: Tab[] = [
  * API. Naming the source is two taps instead of one, and it is the honest
  * shape of the system rather than a guess that silently misses half of it.
  */
-const SOURCES: { id: 'library' | 'spotify'; label: string }[] = [
-  { id: 'library', label: 'Library' },
-  { id: 'spotify', label: 'Spotify' },
-];
+function searchSources(): { id: 'library' | number; label: string }[] {
+  return [
+    { id: 'library' as const, label: 'Library' },
+    // Only services that can actually answer: one that is not connected, or
+    // that offers no catalog search, would be a button that always fails.
+    ...sources.value
+      .filter((s) => s.ready && s.searchable)
+      .map((s) => ({ id: s.sid, label: s.name })),
+  ];
+}
 
 /** One level of the drill-down: what we opened, and what it was called. */
 interface Crumb {
@@ -100,13 +126,15 @@ interface Crumb {
 
 export function Browse({ playerId, onClose }: { playerId: string; onClose: () => void }) {
   const [tab, setTab] = useState('favorites');
-  const [source, setSource] = useState<'library' | 'spotify'>('library');
+  const [source, setSource] = useState<'library' | number>('library');
   const [offset, setOffset] = useState(0);
   const [query, setQuery] = useState('');
   const [result, setResult] = useState<BrowseResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [chosen, setChosen] = useState<MediaItem | null>(null);
+  /** The service being connected, if somebody is part-way through that. */
+  const [linking, setLinking] = useState<MusicSource | null>(null);
   /**
    * The drill-down stack.
    *
@@ -136,7 +164,10 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
       ? { kind: 'item', uri: here.uri, offset }
       : current.request.kind === 'search'
         ? { kind: 'search', text: query, source }
-        : { ...current.request, offset };
+        : current.request.kind === 'sources'
+          ? // The service list is short by construction and does not page.
+            { kind: 'sources' }
+          : { ...current.request, offset };
 
     // An empty search box is not a request; it is the state before one.
     if (req.kind === 'search' && req.text.trim().length === 0) {
@@ -175,6 +206,19 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
 
   /** Open an item's contents — an album's tracks, an artist's albums. */
   const open = (item: MediaItem): void => {
+    /*
+     * A music service that has not been connected yet opens the pairing
+     * prompt rather than a folder. Browsing it would only produce "connect
+     * Plex first", which is true and is not something you can act on from a
+     * list of albums that failed to load.
+     */
+    const source = item.sid === undefined ? null : sources.value.find((s) => s.sid === item.sid);
+    if (source && !source.ready) {
+      setLinking(source.linkable ? source : null);
+      if (!source.linkable) setError(`${source.name} cannot be connected from here`);
+      return;
+    }
+
     setPath((p) => [...p, { uri: item.u, name: item.n }]);
     setOffset(0);
   };
@@ -236,7 +280,7 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
         {tab === 'search' && !here ? (
           <>
             <div class="browse-sources" role="group" aria-label="Where to search">
-              {SOURCES.map((s) => (
+              {searchSources().map((s) => (
                 <Pressable
                   key={s.id}
                   class={s.id === source ? 'browse-source is-active' : 'browse-source'}
@@ -303,6 +347,8 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
           onCancel={() => setChosen(null)}
         />
       ) : null}
+
+      {linking ? <ConnectService source={linking} onDone={() => setLinking(null)} /> : null}
     </div>
   );
 }
@@ -497,6 +543,129 @@ function SearchBox({ value, onSearch }: { value: string; onSearch: (text: string
         Search
       </Pressable>
     </form>
+  );
+}
+
+/* ── Connecting a service ─────────────────────────────────────────────────*/
+
+/**
+ * Pair this app with a music service.
+ *
+ * **There is no redirect**, and that is the point rather than a limitation.
+ * RoomOS gives the panel one tab, so `window.open` replaces the page it was
+ * called from — an OAuth round trip would navigate away from the dashboard and
+ * never come back. Sonos's own device-link flow happens to be exactly right
+ * for that: a URL and a short code, typed on whatever phone is in the room,
+ * while the panel waits.
+ *
+ * The waiting is polled rather than pushed, because the confirmation happens
+ * somewhere this backend has no connection to.
+ */
+function ConnectService({ source, onDone }: { source: MusicSource; onDone: () => void }) {
+  const [prompt, setPrompt] = useState<ServiceLink | null>(null);
+  const [state, setState] = useState<'starting' | 'waiting' | 'linked' | 'failed'>('starting');
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let stale = false;
+
+    link(source.sid, 'begin')
+      .then((r) => {
+        if (stale) return;
+        setPrompt(r);
+        setState('waiting');
+      })
+      .catch((err: unknown) => {
+        if (stale) return;
+        setError(err instanceof Error ? err.message : 'Could not start');
+        setState('failed');
+      });
+
+    return () => {
+      stale = true;
+    };
+  }, [source.sid]);
+
+  /*
+   * Poll while the sheet is open.
+   *
+   * Every three seconds, and only while waiting. A service is entitled to
+   * take as long as somebody takes to find their phone, so this is paced for
+   * a person rather than for a machine.
+   */
+  useEffect(() => {
+    if (state !== 'waiting') return;
+    let stale = false;
+
+    const timer = setInterval(() => {
+      link(source.sid, 'poll')
+        .then((r) => {
+          if (stale || r.state !== 'linked') return;
+          setState('linked');
+        })
+        .catch((err: unknown) => {
+          if (stale) return;
+          setError(err instanceof Error ? err.message : 'That did not work');
+          setState('failed');
+        });
+    }, 3000);
+
+    return () => {
+      stale = true;
+      clearInterval(timer);
+    };
+  }, [state, source.sid]);
+
+  return (
+    <div class="sheet-layer is-nested">
+      <div class="sheet-scrim" onPointerDown={onDone} />
+      <div class="sheet play-sheet" role="dialog" aria-label={`Connect ${source.name}`} aria-modal="true">
+        <div class="sheet-head">
+          <div class="sheet-titles">
+            <h2 class="sheet-title truncate">Connect {source.name}</h2>
+            <div class="sheet-subtitle truncate">
+              {state === 'linked' ? 'Connected' : 'On your phone or computer'}
+            </div>
+          </div>
+          <Pressable class="sheet-close p-sm" onPress={onDone} ariaLabel="Close">
+            <Icon name="close" size="1.4rem" weight={2} />
+          </Pressable>
+        </div>
+
+        <div class="sheet-body link-body">
+          {state === 'starting' ? <p class="link-step">Asking {source.name}…</p> : null}
+
+          {state === 'failed' ? <p class="link-error">{error}</p> : null}
+
+          {state === 'linked' ? (
+            <p class="link-step">
+              {source.name} is connected. It is now in Services and in Search.
+            </p>
+          ) : null}
+
+          {state === 'waiting' && prompt ? (
+            <>
+              <p class="link-step">Go to</p>
+              {/* Selectable text, not a link: there is nowhere for it to open. */}
+              <p class="link-url">{prompt.url}</p>
+              {prompt.code ? (
+                <>
+                  <p class="link-step">and enter</p>
+                  <p class="link-code">{prompt.code}</p>
+                </>
+              ) : null}
+              <p class="link-hint">This screen will notice when you are done.</p>
+            </>
+          ) : null}
+        </div>
+
+        {state === 'linked' || state === 'failed' ? (
+          <Pressable class="play-option is-primary" onPress={onDone} ariaLabel="Done">
+            <span>Done</span>
+          </Pressable>
+        ) : null}
+      </div>
+    </div>
   );
 }
 

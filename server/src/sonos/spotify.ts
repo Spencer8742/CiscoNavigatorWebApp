@@ -1,5 +1,5 @@
 import { logger } from '~/lib/log.ts';
-import { escapeXml } from '~/sonos/xml.ts';
+import { escapeXml, textOf } from '~/sonos/xml.ts';
 import type { SonosClient } from '~/sonos/client.ts';
 import type { UriRegistry } from '~/sonos/uris.ts';
 import type { MediaArt } from '~/http/media-art.ts';
@@ -295,8 +295,18 @@ export class SpotifySearch {
 
     try {
       const response = await this.#client.call(host, 'MusicServices', 'ListAvailableServices');
-      const xml = JSON.stringify(response);
-      const match = /"Name"\s*:\s*"Spotify"[\s\S]{0,400}?"Id"\s*:\s*"(\d+)"/.exec(xml);
+
+      /*
+       * The service list is a `<Service Id="9" Name="Spotify" …/>` attribute,
+       * and the id comes BEFORE the name on a real speaker.
+       *
+       * This used to stringify the parsed node to JSON and look for
+       * `"Name": "Spotify"` followed by `"Id"` — a pattern that cannot occur
+       * in either the XML or its JSON form, in either order. It never matched,
+       * so this fallback has never once returned an account.
+       */
+      const list = textOf(response, 'AvailableServiceDescriptorList') ?? '';
+      const match = /<Service\b[^>]*\bId="(\d+)"[^>]*\bName="Spotify"/.exec(list);
       const sid = match?.[1] ? Number.parseInt(match[1], 10) : NaN;
       if (!Number.isFinite(sid)) return null;
 

@@ -316,6 +316,18 @@ export class MockSonos {
    */
   enqueueRefusals = ['x-rincon-cpcontainer:'];
 
+  /**
+   * The music services this household's speakers know about.
+   *
+   * Null makes `ListAvailableServices` answer as an older firmware does —
+   * with nothing — which must leave favourites and the local library working.
+   * Set by a test to `[{ sid, name, uri, auth }]`.
+   */
+  services = null;
+
+  /** Linked accounts, as `/status/accounts` reports them: `{ type, sn }`. */
+  accounts = null;
+
   /** Set to make every speaker answer 500 with a UPnP fault. */
   failing = false;
 
@@ -401,6 +413,28 @@ export class MockSonos {
   #handle(zone, req, res) {
     if (req.method === 'SUBSCRIBE' || req.method === 'UNSUBSCRIBE') {
       this.#subscription(zone, req, res);
+      return;
+    }
+
+    /*
+     * `/status/accounts` is a plain GET rather than SOAP, and it is how a
+     * speaker says which music services this household has LINKED — the
+     * catalog says only which exist.
+     */
+    if (req.method === 'GET' && (req.url ?? '').startsWith('/status/accounts')) {
+      req.resume();
+      if (!this.accounts) {
+        res.writeHead(404).end();
+        return;
+      }
+      const rows = this.accounts
+        .map(
+          (a) =>
+            `<Account Type="${a.type}" SerialNum="${a.sn}" Deleted="0" UN="someone@example.com"/>`,
+        )
+        .join('');
+      res.writeHead(200, { 'content-type': 'text/xml' });
+      res.end(`<ZPSupportInfo><Accounts SerialNum="1">${rows}</Accounts></ZPSupportInfo>`);
       return;
     }
 
@@ -711,17 +745,41 @@ export class MockSonos {
         );
       }
 
-      case 'ListAvailableServices':
-        return (
-          '<u:ListAvailableServicesResponse xmlns:u="urn:schemas-upnp-org:service:MusicServices:1">' +
-          `<AvailableServiceDescriptorList>${esc(
-            '<Services><Service Id="9" Name="Spotify"/></Services>',
-          )}</AvailableServiceDescriptorList>` +
-          '</u:ListAvailableServicesResponse>'
-        );
     }
 
     switch (action) {
+      case 'GetHouseholdID':
+        return (
+          '<u:GetHouseholdIDResponse xmlns:u="urn:schemas-upnp-org:service:DeviceProperties:1">' +
+          '<CurrentHouseholdID>Sonos_mockhousehold</CurrentHouseholdID>' +
+          '</u:GetHouseholdIDResponse>'
+        );
+
+      case 'ListAvailableServices': {
+        /*
+         * The catalog: every service Sonos offers, whether or not this
+         * household uses it. Which are actually LINKED comes from
+         * `/status/accounts`, and the two together are what makes a tab
+         * appear.
+         */
+        if (!this.services) return null;
+        const rows = this.services
+          .map(
+            (s) =>
+              `<Service Id="${s.sid}" Name="${s.name}" Version="1.1" ` +
+              `Uri="${s.uri}" SecureUri="${s.uri}" ContainerType="MService" ` +
+              `Capabilities="${s.capabilities ?? 563}">` +
+              `<Policy Auth="${s.auth}" PollInterval="60"/></Service>`,
+          )
+          .join('');
+        return (
+          '<u:ListAvailableServicesResponse xmlns:u="urn:schemas-upnp-org:service:MusicServices:1">' +
+          `<AvailableServiceDescriptorList>${esc(`<Services>${rows}</Services>`)}` +
+          '</AvailableServiceDescriptorList>' +
+          '</u:ListAvailableServicesResponse>'
+        );
+      }
+
       case 'GetZoneGroupState':
         return (
           '<u:GetZoneGroupStateResponse xmlns:u="urn:schemas-upnp-org:service:ZoneGroupTopology:1">' +
