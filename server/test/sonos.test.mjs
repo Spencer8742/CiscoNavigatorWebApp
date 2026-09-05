@@ -354,7 +354,7 @@ class TestPanel {
 }
 
 /** A backend with its own mock household. */
-function isolated({ host, zones, swallowEvents = false, services = false } = {}) {
+function isolated({ host, zones, swallowEvents = false, services = false, spotify = false } = {}) {
   const ctx = {};
 
   before(async () => {
@@ -393,6 +393,8 @@ function isolated({ host, zones, swallowEvents = false, services = false } = {})
         IMMICH_URL: '',
         IMMICH_API_KEY: '',
         SONOS_HOST: seed,
+        SPOTIFY_CLIENT_ID: spotify ? 'test-client-id' : '',
+        SPOTIFY_CLIENT_SECRET: spotify ? 'test-client-secret' : '',
         LOG_LEVEL: 'warn',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -1936,6 +1938,28 @@ describe('music services', () => {
     panel.close();
   });
 
+});
+
+describe('Spotify catalog search', () => {
+  const ctx = isolated({ spotify: true });
+
+  before(() => {
+    ctx.sonos.services = [
+      { sid: 9, name: 'Spotify', uri: 'https://spotify.invalid/smapi', auth: 'DeviceLink', capabilities: 0 },
+    ];
+    ctx.sonos.accounts = [{ type: 9 * 256 + 7, sn: 1 }];
+  });
+
+  test('developer credentials make the linked Sonos source searchable without a SMAPI token', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await panel.browse({ kind: 'sources' });
+
+    const spotify = await waitFor(() => panel.sources.find((source) => source.sid === 9), 'Spotify source');
+    assert.equal(spotify.ready, true);
+    assert.equal(spotify.searchable, true);
+    panel.close();
+  });
 });
 
 /*
