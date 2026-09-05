@@ -349,29 +349,52 @@ export class SonosCommands {
     const leaving = [...current].filter((id) => !wanted.has(id));
 
     /*
+     * All of it at once.
+     *
+     * Every speaker here is told something about ITSELF — a joiner is pointed
+     * at the coordinator, a leaver is told to stand alone — so there is no
+     * ordering between them. Doing it sequentially made regrouping four
+     * speakers four round trips deep, which is felt as a slow button.
+     *
      * Joining is `SetAVTransportURI` with the coordinator's own `x-rincon:`
-     * URI — the speaker stops being its own source and starts following. It
-     * is not an obvious API and it is the only way to do it locally.
+     * URI: the speaker stops being its own source and starts following. It is
+     * not an obvious API and it is the only way to do it locally.
      */
+    const work: Promise<unknown>[] = [];
+
     for (const id of joining) {
       const zone = zones.get(id);
       if (!zone) continue;
-      await this.#client.call(zone.host, 'AVTransport', 'SetAVTransportURI', {
-        InstanceID: 0,
-        CurrentURI: `x-rincon:${leader.uuid}`,
-        CurrentURIMetaData: '',
-      });
+      work.push(
+        this.#client.call(zone.host, 'AVTransport', 'SetAVTransportURI', {
+          InstanceID: 0,
+          CurrentURI: `x-rincon:${leader.uuid}`,
+          CurrentURIMetaData: '',
+        }),
+      );
     }
 
     for (const id of leaving) {
       const zone = zones.get(id);
       if (!zone) continue;
-      await this.#client.call(zone.host, 'AVTransport', 'BecomeCoordinatorOfStandaloneGroup', {
-        InstanceID: 0,
-      });
+      work.push(
+        this.#client.call(zone.host, 'AVTransport', 'BecomeCoordinatorOfStandaloneGroup', {
+          InstanceID: 0,
+        }),
+      );
     }
 
-    return null;
+    /*
+     * `allSettled`, not `all`: one speaker that is asleep or unplugged must
+     * not abandon the rest halfway, leaving a group nobody asked for. The
+     * topology event that follows is the authority on what actually happened.
+     */
+    const results = await Promise.allSettled(work);
+    const failed = results.filter((r) => r.status === 'rejected').length;
+
+    if (failed === 0) return null;
+    log.warn(`Grouping: ${failed} of ${work.length} speakers did not accept the change`);
+    return failed === work.length ? 'The speakers did not accept that' : null;
   }
 
   /** The zone a transport command must actually be sent to. */

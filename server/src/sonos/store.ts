@@ -13,25 +13,29 @@ import type { NowPlaying, Player, PlayerQueue } from '@shared/protocol.ts';
 const log = logger('sonos-store');
 
 /**
- * Every Sonos zone, shaped into the protocol the panel already speaks.
- *
- * The types are still called `Mass*` because `docs/SONOS.md` phase 6 does the
- * rename as part of the cut-over, when Music Assistant is deleted and there is
- * one music source again.
+ * Every Sonos zone, shaped into the protocol the panel speaks.
  *
  * ## Events, not polling
  *
- * Phase 1 polled every five seconds because it had nothing else. Phase 2
- * subscribes (`events.ts`) and the speakers push instead — a volume knob
- * turned in the Sonos app now reaches the panel in milliseconds rather than up
- * to five seconds later, and an idle household costs nothing at all.
+ * The speakers push (`events.ts`), so a volume knob turned in the Sonos app
+ * reaches the panel in milliseconds and an idle household costs nothing at
+ * all. When those pushes cannot reach us — almost always Docker bridge
+ * networking — `#tick` falls back to polling rather than letting the screen
+ * go quietly stale.
  *
- * What remains on a timer is **reconciliation**, every five minutes and only
- * while a panel is connected. That is not the poll wearing a hat: subscription
- * renewal already detects a dead subscription, but a single dropped `NOTIFY`
- * on a busy Wi-Fi network leaves one value wrong with nothing to correct it.
- * Five minutes is slow enough to be free and fast enough that nobody lives
- * with a stale number for long.
+ * What remains on a timer while events work is **reconciliation**, every five
+ * minutes and only while a panel is connected. That is not the poll wearing a
+ * hat: subscription renewal already detects a dead subscription, but a single
+ * dropped `NOTIFY` on a busy Wi-Fi network leaves one value wrong with
+ * nothing to correct it.
+ *
+ * ## Anything user-visible is published before anything else
+ *
+ * An event is folded in and published; reconciling subscriptions and
+ * re-reading state happen afterwards, coalesced. Doing it the other way round
+ * is what made grouping feel slow — a seven-zone re-read is ~40 requests, one
+ * regroup emits several topology events, and the screen was waiting behind
+ * all of it for something it had already been told.
  *
  * ## One thing events do not carry
  *
@@ -72,6 +76,15 @@ const PUBLISH_DEBOUNCE_MS = 120;
 
 /** A track change arrives as several events; anchor the position once. */
 const POSITION_DEBOUNCE_MS = 400;
+
+/**
+ * One grouping change produces a topology event per speaker involved.
+ *
+ * Long enough to let a whole regroup settle, short enough that the follow-up
+ * read is not noticeably behind. Nothing user-visible waits on this — the
+ * panel is given the new topology the moment the first event lands.
+ */
+const TOPOLOGY_DEBOUNCE_MS = 600;
 
 /**
  * Concurrent SOAP calls during a full read.
@@ -134,6 +147,7 @@ export class SonosStore {
   #publishTimer: ReturnType<typeof setTimeout> | undefined;
   #reconcileTimer: ReturnType<typeof setInterval> | undefined;
   #positionTimer: ReturnType<typeof setTimeout> | undefined;
+  #topologyTimer: ReturnType<typeof setTimeout> | undefined;
   #positionWanted = new Set<string>();
   #refreshing = false;
   /** When the last full read finished, so `#tick` can pace itself. */
@@ -228,9 +242,11 @@ export class SonosStore {
     clearInterval(this.#reconcileTimer);
     clearTimeout(this.#publishTimer);
     clearTimeout(this.#positionTimer);
+    clearTimeout(this.#topologyTimer);
     this.#reconcileTimer = undefined;
     this.#publishTimer = undefined;
     this.#positionTimer = undefined;
+    this.#topologyTimer = undefined;
   }
 
   clear(): void {
@@ -262,11 +278,19 @@ export class SonosStore {
         if (!this.#client.adoptTopology(xml)) return;
 
         log.debug('Topology changed');
-        await this.#resubscribe();
-        // Grouping moves which speaker owns the transport, so the affected
-        // groups have to be re-read rather than waiting for their next event.
-        await this.#readAll();
+
+        /*
+         * Publish IMMEDIATELY, before doing anything else.
+         *
+         * The event already carries the complete new topology — every zone,
+         * every group, every coordinator — so the panel can draw the new
+         * grouping right now. Everything below is reconciliation, and putting
+         * it first is what made grouping feel slow: a full re-read of a
+         * seven-zone household is ~40 requests, grouping emits several
+         * topology events, and the screen was waiting behind all of it.
+         */
         this.#publishNow();
+        this.#scheduleTopologyWork();
         return;
       }
 
@@ -371,6 +395,66 @@ export class SonosStore {
       elapsed: sameTrack ? previous.elapsed : null,
       elapsedAt: sameTrack ? previous.elapsedAt : null,
     };
+  }
+
+  /**
+   * Reconcile subscriptions and state after the topology moved.
+   *
+   * Coalesced, because one grouping change produces a topology event per
+   * speaker involved and each would otherwise re-subscribe and re-read the
+   * whole household. Nothing here is user-visible — the panel already has the
+   * new grouping — so it can afford to wait for the burst to finish.
+   */
+  #scheduleTopologyWork(): void {
+    if (this.#topologyTimer) return;
+
+    this.#topologyTimer = setTimeout(() => {
+      this.#topologyTimer = undefined;
+      void this.#reconcileTopology();
+    }, TOPOLOGY_DEBOUNCE_MS);
+    this.#topologyTimer.unref();
+  }
+
+  async #reconcileTopology(): Promise<void> {
+    if (this.#refreshing) return;
+    this.#refreshing = true;
+    try {
+      // Subscriptions first: grouping moves which speaker owns the transport,
+      // and the new subscription delivers that speaker's current state
+      // unprompted — which is most of what the read below would have fetched.
+      await this.#resubscribe();
+      await this.#readGroups();
+      this.#publishNow();
+    } catch (err) {
+      log.debug('Reconciling after a topology change failed:', err);
+    } finally {
+      this.#refreshing = false;
+    }
+  }
+
+  /**
+   * Re-read the coordinators only.
+   *
+   * Grouping cannot change a speaker's volume or mute, so re-reading every
+   * zone after it is two requests per speaker spent confirming what we
+   * already knew. Transport genuinely does move, so that half is kept.
+   */
+  async #readGroups(): Promise<void> {
+    const zones = [...this.#client.household.zones.values()];
+    const coordinators = zones.filter((z) => z.coordinator === z.uuid);
+
+    const live = new Set(zones.map((z) => z.uuid));
+    for (const uuid of [...this.#groups.keys()]) {
+      if (!live.has(uuid)) this.#groups.delete(uuid);
+    }
+    for (const uuid of [...this.#zones.keys()]) {
+      if (!live.has(uuid)) this.#zones.delete(uuid);
+    }
+
+    await mapLimit(
+      coordinators.map((zone) => () => this.#readGroup(zone)),
+      CONCURRENCY,
+    );
   }
 
   /** Coalesce position reads: a track change arrives as several events. */
