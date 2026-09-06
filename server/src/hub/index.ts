@@ -6,6 +6,8 @@ import type { PanelAuth } from '~/http/auth.ts';
 import type { ConfigStore } from '~/config/load.ts';
 import type {
   BackendHealth,
+  AppleTvCommand,
+  AppleTvState,
   BrowseRequest,
   BrowseResult,
   KeyLightState,
@@ -76,6 +78,9 @@ export interface HubDeps {
   /** Current Elgato Key Light states, sent in `hello`. */
   getKeyLights: () => KeyLightState[];
   getTvs: () => TvState[];
+  getAppleTvs: () => AppleTvState[];
+  onAppleTv?: (device: string, op: AppleTvCommand) => Promise<string | null>;
+  onAppleTvPair?: (device: string, op: 'begin' | 'pin' | 'cancel', pin?: string) => Promise<string | null>;
   /** Music services the household has, sent in `hello`. */
   getSources: () => MusicSource[];
   /**
@@ -179,6 +184,7 @@ export class Hub {
       queues: music.queues,
       keylights: this.#deps.getKeyLights(),
       tvs: this.#deps.getTvs(),
+      appleTvs: this.#deps.getAppleTvs(),
       sources: this.#deps.getSources(),
     });
   }
@@ -233,6 +239,20 @@ export class Hub {
         if (problem) {
           this.#send(panel, { t: 'error', ref: msg.id, code: 'music_failed', message: problem });
         }
+        break;
+      }
+
+      case 'apple-tv': {
+        if (!this.#deps.onAppleTv) return;
+        const problem = await this.#deps.onAppleTv(msg.appleTv, msg.op);
+        if (problem) this.#send(panel, { t: 'error', ref: msg.id, code: 'apple_tv_failed', message: problem });
+        break;
+      }
+
+      case 'apple-tv-pair': {
+        if (!this.#deps.onAppleTvPair) return;
+        const problem = await this.#deps.onAppleTvPair(msg.appleTv, msg.op, msg.pin);
+        if (problem) this.#send(panel, { t: 'error', ref: msg.id, code: 'apple_tv_pair_failed', message: problem });
         break;
       }
 
@@ -382,6 +402,10 @@ export class Hub {
 
   broadcastTvs(tvs: TvState[]): void {
     this.broadcast({ t: 'tvs', tvs });
+  }
+
+  broadcastAppleTvs(appleTvs: AppleTvState[]): void {
+    this.broadcast({ t: 'apple-tvs', appleTvs });
   }
 
   #send(panel: Panel, msg: ServerMessage): void {

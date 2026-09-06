@@ -1,5 +1,5 @@
 import { signal, computed } from '@preact/signals';
-import type { KeyLightState, TvState } from '@shared/protocol.ts';
+import type { AppleTvState, KeyLightState, TvState } from '@shared/protocol.ts';
 
 /**
  * Macro-page state: the Elgato Key Lights, and which button is mid-press.
@@ -59,6 +59,8 @@ export const allKeyLights = computed<KeyLightState | null>(() => {
  * off, or on something that is not an input.
  */
 export const tvs = signal<TvState[]>([]);
+export const appleTvs = signal<AppleTvState[]>([]);
+export const appleTvsById = computed(() => new Map(appleTvs.value.map((tv) => [tv.id, tv])));
 
 export const tvsById = computed(() => new Map(tvs.value.map((t) => [t.id, t])));
 

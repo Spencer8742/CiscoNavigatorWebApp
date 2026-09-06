@@ -508,6 +508,16 @@ controls:
   #       - { companion: 1/2/4 }
   #       - { tv: office_lg, action: on }
 
+  # Apple TVs appear as full remote cards at the top of the Controls screen.
+  # Give each one a fixed DHCP lease. The first Pair tap displays a PIN on the
+  # television; enter it on the panel once. Credentials are encrypted by the
+  # Apple protocol and persisted in /config/apple-tv.json.
+  appleTvs: []
+  #  - id: living_room_apple_tv
+  #    name: Living Room Apple TV
+  #    host: 192.168.1.80
+  #    # identifier: optional; normally the address is enough
+
   # Seconds between key light state polls. 0 stops polling.
   #
   # Elgato lights push nothing, so this is the only way to notice one that was

@@ -663,10 +663,21 @@ export interface TvConfig {
   inputs: SourceRef[];
 }
 
+/** An Apple TV controlled locally with Apple's Companion/MRP protocols. */
+export interface AppleTvConfig {
+  id: string;
+  name: string;
+  /** A bare LAN address. A fixed DHCP lease is strongly recommended. */
+  host: string;
+  /** Optional pyatv identifier when more than one device answers at this address. */
+  identifier?: string;
+}
+
 export interface ControlsConfig {
   pages: ControlPage[];
   keylights: KeyLightConfig[];
   tvs: TvConfig[];
+  appleTvs: AppleTvConfig[];
   /**
    * Seconds between key light state polls. 0 stops polling.
    *

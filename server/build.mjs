@@ -1,4 +1,5 @@
 import { build, context } from 'esbuild';
+import { copyFile } from 'node:fs/promises';
 import { fileURLToPath, URL } from 'node:url';
 
 /**
@@ -57,8 +58,10 @@ if (process.argv.includes('--run')) {
   // process when dist/server.js is rewritten.
   const ctx = await context(options);
   await ctx.rebuild();
+  await copyFile('src/apple-tv/bridge.py', 'dist/apple-tv-bridge.py');
   await ctx.watch();
   await import('./dist/server.js');
 } else {
   await Promise.all([build(options), build(testkit)]);
+  await copyFile('src/apple-tv/bridge.py', 'dist/apple-tv-bridge.py');
 }
