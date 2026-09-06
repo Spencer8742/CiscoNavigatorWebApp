@@ -23,6 +23,14 @@
  * clean again on a phone whose navigation labels were overlapping. Take a
  * screenshot at the extremes as well; this catches the regressions, your eyes
  * catch the design.
+ *
+ * **And it only sees what the backend gives it.** The first run of this found
+ * nothing wrong with the Media screen or the Home now-playing card, because
+ * the harness had no music configured and neither screen rendered anything.
+ * A real phone showed six controls running off the right edge and an album
+ * cover squashed to a strip. Point it at a backend with speakers, photos and
+ * a device tile actually present, or it will confidently pass the screens it
+ * never drew.
  */
 
 import { WebSocket } from 'ws';
