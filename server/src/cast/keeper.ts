@@ -197,6 +197,11 @@ export class CastKeeper {
     const params = new URLSearchParams();
     params.set('cast', '1');
     if (display.pane) params.set('pane', display.pane);
+    // Which panel this display counts as, for the per-panel settings. Same
+    // parameter the Navigators carry — a Hub showing the real dashboard is a
+    // panel, and there is no reason for it to share the kitchen's settings
+    // with the bedroom.
+    if (display.panel) params.set('panel', display.panel);
     if (this.#deps.token) params.set('t', this.#deps.token);
     return `${cast.baseUrl.trim().replace(/\/+$/, '')}/?${params.toString()}`;
   }

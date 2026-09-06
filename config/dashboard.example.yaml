@@ -351,10 +351,22 @@ cast:
   #  - host: 192.168.1.42
   #    name: Kitchen
   #    pane: dashboard
+  #    panel: kitchen        # its own settings; see below
   #  - host: 192.168.1.43
   #    name: Hallway
   #    pane: clock
   #  - 192.168.1.44          # bare address: uses the rotation below
+  #
+  # `panel:` is what makes two displays different from each other. It names
+  # which panel the display counts as for the settings held per panel — the
+  # Home side card, which pages appear, whether the clock, date and weather
+  # are drawn — the same id a Room Navigator carries in `?panel=` in its URL.
+  # Without one, every display shares a single block and changing the kitchen
+  # changes the bedroom.
+  #
+  # It only reaches anything on a `pane: dashboard` display. The rotating
+  # panes below draw their own layout and read no preferences, so an id on one
+  # of those is accepted and does nothing.
 
   # Seconds between checks. 0 turns the keeper off without deleting the list.
   #

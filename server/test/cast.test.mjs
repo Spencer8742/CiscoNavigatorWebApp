@@ -384,6 +384,19 @@ describe('the keeper', () => {
       );
     });
 
+    test('carries the display\'s panel id, so two Hubs differ', () => {
+      // Without this every display resolves to the same settings block, and
+      // changing the kitchen changes the bedroom.
+      assert.equal(
+        url({}, { host: 'x', pane: 'dashboard', panel: 'kitchen' }),
+        'http://192.168.1.71:8099/?cast=1&pane=dashboard&panel=kitchen',
+      );
+    });
+
+    test('omits it entirely when a display has none', () => {
+      assert.equal(url({}, { host: 'x', pane: 'dashboard' }), 'http://192.168.1.71:8099/?cast=1&pane=dashboard');
+    });
+
     test('tolerates a trailing slash on the base URL', () => {
       assert.equal(
         url({ baseUrl: 'http://192.168.1.71:8099///' }, { host: 'x' }),
@@ -420,6 +433,7 @@ describe('the keeper', () => {
         `    - host: ${address}`,
         '      name: Kitchen',
         '      pane: dashboard',
+        '      panel: kitchen',
       ].join('\n'),
     );
 
@@ -448,7 +462,7 @@ describe('the keeper', () => {
       }, 'the backend to serve its config');
 
       assert.deepEqual(config.cast.displays, [
-        { host: address, name: 'Kitchen', pane: 'dashboard' },
+        { host: address, name: 'Kitchen', panel: 'kitchen', pane: 'dashboard' },
       ]);
       assert.equal(config.cast.baseUrl, `http://127.0.0.1:${port}`);
       // Unwritten in the YAML above: a cast dashboard screensaves by default,
