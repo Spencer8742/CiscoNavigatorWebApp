@@ -51,3 +51,4 @@ export { seconds, flag, integer } from '~/sonos/soap.ts';
 
 export { SmapiClient, SmapiError } from '~/sonos/smapi.ts';
 export { accountsFromUris } from '~/sonos/services.ts';
+export { sonosUri } from '~/sonos/spotify.ts';
