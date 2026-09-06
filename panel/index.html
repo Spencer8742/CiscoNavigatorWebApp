@@ -25,6 +25,33 @@
     <link rel="apple-touch-icon" href="/icon-192.png" />
     <link rel="icon" href="/icon-192.png" type="image/png" />
 
+    <!--
+      Running on an iPad as a wall panel.
+
+      Without these, "Add to Home Screen" produces a bookmark that opens in
+      Safari with the address bar and tab strip around it — which is not a
+      panel, and which Guided Access then locks you into. With them, the icon
+      launches a standalone full-screen app.
+
+      `black` rather than `black-translucent`: translucent draws the page
+      UNDER the status bar, which needs safe-area padding throughout to stop
+      the clock and battery sitting on top of the panel's own top row. `black`
+      reserves that strip instead, so nothing is ever hidden. RoomOS ignores
+      all three.
+
+      The manifest deliberately has NO `start_url`. The panel's token and its
+      `?panel=` id live in the URL — that is the whole design, because RoomOS
+      erases storage nightly — and a `start_url` would replace that URL with a
+      bare `/` every time the icon was tapped, launching a panel with no token
+      and no identity. Omitting it makes the added URL the launch URL, query
+      string and all.
+    -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <meta name="apple-mobile-web-app-title" content="Home" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+
     <title>Home</title>
 
     <!--

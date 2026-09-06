@@ -31,6 +31,10 @@ const MIME: Record<string, string> = {
   '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
+  // Its own type, not application/json: iOS is the fussiest consumer of this
+  // file and the one that matters here, since a home-screen web app is the
+  // only way to run this on an iPad without Safari's chrome around it.
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
