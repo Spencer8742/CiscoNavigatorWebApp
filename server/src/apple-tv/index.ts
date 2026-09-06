@@ -13,6 +13,18 @@ interface BridgeState { t: 'state'; state: AppleTvState }
 interface BridgeArtwork { t: 'artwork'; device: string; version: string | null; mimetype: string | null; data: string | null }
 interface CachedArtwork { version: string; mimetype: string; bytes: Buffer }
 
+export function swipeBridgeRequest(device: string, gesture: AppleTvSwipe): Record<string, unknown> {
+  return {
+    t: 'swipe',
+    device,
+    startX: gesture.startX,
+    startY: gesture.startY,
+    endX: gesture.endX,
+    endY: gesture.endY,
+    durationMs: gesture.durationMs,
+  };
+}
+
 export class AppleTvBridge {
   readonly #storageFile: string;
   readonly #onState: (states: AppleTvState[]) => void;
@@ -66,7 +78,7 @@ export class AppleTvBridge {
     if (!Number.isInteger(gesture.durationMs) || gesture.durationMs < 100 || gesture.durationMs > 2000) {
       return Promise.resolve('Apple TV swipe duration is invalid');
     }
-    return this.#request({ t: 'swipe', device, ...gesture });
+    return this.#request(swipeBridgeRequest(device, gesture));
   }
 
   launchApp(device: string, bundleId: string): Promise<string | null> {
