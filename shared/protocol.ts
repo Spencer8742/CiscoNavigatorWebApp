@@ -832,6 +832,9 @@ export type ClientMessage =
    */
   | { t: 'pref'; id: number; key: 'homeSide'; value: PanelPrefs['homeSide'] }
   | { t: 'pref'; id: number; key: 'visiblePages'; value: PanelPage[] }
+  | { t: 'pref'; id: number; key: 'homeTime'; value: boolean }
+  | { t: 'pref'; id: number; key: 'photoScreensaverTime'; value: boolean }
+  | { t: 'pref'; id: number; key: 'nowPlayingScreensaverTime'; value: boolean }
   /**
    * Rearrange the player list.
    *
@@ -864,6 +867,12 @@ export interface PanelPrefs {
   homeSide: 'media' | 'photos';
   /** Pages shown in primary navigation. Settings always remains available. */
   visiblePages: PanelPage[];
+  /** Show the clock on the Home screen. */
+  homeTime: boolean;
+  /** Show the clock over the photo screensaver. */
+  photoScreensaverTime: boolean;
+  /** Show the clock on the full-screen Now Playing view. */
+  nowPlayingScreensaverTime: boolean;
   /** How the player list is arranged. See `PlayerLayout`. */
   players: PlayerLayout;
 }
@@ -890,6 +899,9 @@ export interface PlayerLayout {
 export const DEFAULT_PREFS: PanelPrefs = {
   homeSide: 'media',
   visiblePages: [...PANEL_PAGES],
+  homeTime: true,
+  photoScreensaverTime: true,
+  nowPlayingScreensaverTime: true,
   players: { sections: {}, hidden: [] },
 };
 
@@ -906,6 +918,9 @@ export const LAYOUT_LIMITS = { sections: 12, playersPerSection: 100, hidden: 200
 export const PREF_VALUES: Record<string, readonly string[]> = {
   homeSide: ['media', 'photos'],
 };
+
+/** Boolean preferences accepted from a panel and persisted by the backend. */
+export const BOOLEAN_PREFS = ['homeTime', 'photoScreensaverTime', 'nowPlayingScreensaverTime'] as const;
 
 /** Application-level heartbeat interval. A Wi-Fi roam can leave a socket
  *  half-open for minutes before TCP notices; this catches it in seconds. */

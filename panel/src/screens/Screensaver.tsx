@@ -29,6 +29,7 @@ import {
 import { Icon } from '~/components/Icon.tsx';
 import { Progress } from '~/components/Progress.tsx';
 import { getToken } from '~/net/auth.ts';
+import { prefs } from '~/state/ui.ts';
 import type { PhotoRef } from '@shared/protocol.ts';
 
 /**
@@ -102,12 +103,14 @@ function PlayingScreensaver({ player }: { player: SpeakerInfo }) {
         </div>
 
         <div class="saver-np-info">
-          <div class="saver-np-clock tnum">
-            {formatTime(d, t)}
-            {ui.value.clock === '12h' ? (
-              <span class="saver-np-meridiem">{formatMeridiem(d, t)}</span>
-            ) : null}
-          </div>
+          {prefs.value.nowPlayingScreensaverTime ? (
+            <div class="saver-np-clock tnum">
+              {formatTime(d, t)}
+              {ui.value.clock === '12h' ? (
+                <span class="saver-np-meridiem">{formatMeridiem(d, t)}</span>
+              ) : null}
+            </div>
+          ) : null}
           <div class="saver-np-date">{formatDate(d, t)}</div>
 
           <div class="saver-np-track">
@@ -274,7 +277,7 @@ function SaverClock({
 
   return (
     <div class={big ? 'saver-info saver-info-big' : 'saver-info'} data-corner={corner}>
-      {cfg.overlays.clock ? (
+      {cfg.overlays.clock && prefs.value.photoScreensaverTime ? (
         <div class="saver-time tnum">
           {formatTime(d, t)}
           {ui.value.clock === '12h' ? (
