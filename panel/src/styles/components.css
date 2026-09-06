@@ -1528,6 +1528,25 @@
 
 .np-time:last-child { text-align: right; }
 
+.np-progress-track {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 0.35rem;
+  overflow: hidden;
+  border-radius: var(--r-full);
+  background: var(--surface-4);
+}
+
+.np-progress-fill {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--accent);
+  transform-origin: left center;
+  transition: transform 1s linear;
+}
+
 /* ── Queue ────────────────────────────────────────────────────────────── */
 
 .queue-bar {

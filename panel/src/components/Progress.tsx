@@ -25,12 +25,14 @@ export function Progress({
   duration,
   running,
   onSeek,
+  class: cls = '',
 }: {
   elapsed: number | null;
   elapsedAt: number | null;
   duration: number;
   running: boolean;
-  onSeek: (seconds: number) => void;
+  onSeek?: (seconds: number) => void;
+  class?: string;
 }) {
   const [now, setNow] = useState(() => Date.now());
   /** Set while a finger is on the bar, so ticks cannot fight the drag. */
@@ -47,24 +49,40 @@ export function Progress({
   const position = scrubbing ?? Math.min(duration, base + drift);
 
   return (
-    <div class="np-progress">
+    <div class={`np-progress ${cls}`}>
       <span class="np-time">{formatDuration(Math.round(position))}</span>
-      <Slider
-        value={Math.round(position)}
-        min={0}
-        max={Math.round(duration)}
-        step={1}
-        ariaLabel="Track position"
-        readout={formatDuration(Math.round(position))}
-        onChange={(v, final) => {
-          if (final) {
-            setScrubbing(null);
-            onSeek(v);
-          } else {
-            setScrubbing(v);
-          }
-        }}
-      />
+      {onSeek ? (
+        <Slider
+          value={Math.round(position)}
+          min={0}
+          max={Math.round(duration)}
+          step={1}
+          ariaLabel="Track position"
+          readout={formatDuration(Math.round(position))}
+          onChange={(v, final) => {
+            if (final) {
+              setScrubbing(null);
+              onSeek(v);
+            } else {
+              setScrubbing(v);
+            }
+          }}
+        />
+      ) : (
+        <div
+          class="np-progress-track"
+          role="progressbar"
+          aria-label="Track position"
+          aria-valuemin={0}
+          aria-valuemax={Math.round(duration)}
+          aria-valuenow={Math.round(position)}
+        >
+          <div
+            class="np-progress-fill"
+            style={{ transform: `scaleX(${duration > 0 ? position / duration : 0})` }}
+          />
+        </div>
+      )}
       <span class="np-time">{formatDuration(Math.round(duration))}</span>
     </div>
   );
