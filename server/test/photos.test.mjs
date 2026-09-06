@@ -573,7 +573,7 @@ describe('panel preferences', () => {
     assert.equal(t.panel.prefs.homeSide, 'media', 'the default is Now Playing');
     assert.deepEqual(
       t.panel.prefs.visiblePages,
-      ['home', 'rooms', 'controls', 'media', 'photos'],
+      ['home', 'rooms', 'controls', 'apple-tv', 'media', 'photos'],
       'every app page is visible by default',
     );
 

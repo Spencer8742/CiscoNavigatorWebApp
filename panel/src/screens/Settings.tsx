@@ -188,6 +188,7 @@ const PAGE_LABELS: Record<PanelPage, string> = {
   home: 'Home',
   rooms: 'Rooms',
   controls: 'Controls',
+  'apple-tv': 'Apple TV',
   media: 'Media',
   photos: 'Photos',
 };
