@@ -178,6 +178,17 @@
     Mask="true"/>
 
   <Config
+    Name="Spotify Market"
+    Target="SPOTIFY_MARKET"
+    Default="US"
+    Mode=""
+    Description="Two-letter country code used for Spotify availability and podcast search, for example US, CA, GB or AU."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false"/>
+
+  <Config
     Name="Companion URL"
     Target="COMPANION_URL"
     Default=""

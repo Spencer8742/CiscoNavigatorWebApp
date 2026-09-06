@@ -148,6 +148,7 @@ export class UriRegistry {
     metadata: unknown,
     upnpClass = '',
     sid: number | null = null,
+    style?: PlayStyle,
   ): string | null {
     const playUri = usable(uri);
     const id = usable(objectId);
@@ -178,7 +179,7 @@ export class UriRegistry {
       uri: playUri,
       objectId: id,
       metadata: typeof metadata === 'string' ? metadata : '',
-      style: playStyleOf(playUri, upnpClass),
+      style: style ?? playStyleOf(playUri, upnpClass),
       sid,
     });
 
@@ -203,6 +204,7 @@ export class UriRegistry {
           ? 'object.container'
           : 'object.item.audioItem.musicTrack',
       playable.sid,
+      playable.style,
     );
     return key;
   }
