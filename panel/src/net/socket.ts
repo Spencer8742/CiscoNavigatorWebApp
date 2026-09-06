@@ -2,7 +2,7 @@ import { Backoff } from '@shared/backoff.ts';
 import { socketUrl } from '~/net/auth.ts';
 import { applyPatch, applySnapshot } from '~/state/entities.ts';
 import { setPlayers, sources } from '~/state/players.ts';
-import { clearPressed, keyLights, markPressed, tvs } from '~/state/controls.ts';
+import { appleTvs, clearPressed, keyLights, markPressed, tvs } from '~/state/controls.ts';
 import { setConfig } from '~/config/index.ts';
 import { connectionProblem, health, prefs, ready, showToast, socketState } from '~/state/ui.ts';
 import { diagnose } from '~/net/diagnose.ts';
@@ -193,6 +193,7 @@ function handle(msg: ServerMessage): void {
       setPlayers(msg.players, msg.queues);
       keyLights.value = msg.keylights;
       tvs.value = msg.tvs;
+      appleTvs.value = msg.appleTvs;
       sources.value = msg.sources;
       socketState.value = 'connected';
       ready.value = true;
@@ -224,6 +225,10 @@ function handle(msg: ServerMessage): void {
 
     case 'tvs':
       tvs.value = msg.tvs;
+      break;
+
+    case 'apple-tvs':
+      appleTvs.value = msg.appleTvs;
       break;
 
     case 'config':
@@ -423,6 +428,14 @@ export function pressControl(button: string): boolean {
  */
 export function setKeyLight(light: string, op: KeyLightOp, value?: number): boolean {
   return send({ t: 'keylight', id: nextId(), light, op, value });
+}
+
+export function appleTvCommand(appleTv: string, op: import('@shared/protocol.ts').AppleTvCommand): boolean {
+  return send({ t: 'apple-tv', id: nextId(), appleTv, op });
+}
+
+export function pairAppleTv(appleTv: string, op: 'begin' | 'pin' | 'cancel', pin?: string): boolean {
+  return send({ t: 'apple-tv-pair', id: nextId(), appleTv, op, ...(pin ? { pin } : {}) });
 }
 
 /**

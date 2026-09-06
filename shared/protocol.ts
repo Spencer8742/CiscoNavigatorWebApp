@@ -620,6 +620,34 @@ export interface TvState {
   confirmed: boolean;
 }
 
+export type AppleTvPairingState = 'idle' | 'starting' | 'pin' | 'paired' | 'error';
+
+/** Live state from a configured Apple TV. Credentials never leave the backend. */
+export interface AppleTvState {
+  id: string;
+  name: string;
+  reachable: boolean;
+  paired: boolean;
+  pairing: AppleTvPairingState;
+  power: 'on' | 'off' | 'unknown';
+  playback: 'idle' | 'loading' | 'paused' | 'playing' | 'stopped' | 'seeking';
+  mediaType: 'unknown' | 'video' | 'music' | 'tv';
+  title: string | null;
+  artist: string | null;
+  album: string | null;
+  app: string | null;
+  elapsed: number | null;
+  duration: number | null;
+  elapsedAt: number | null;
+  error: string | null;
+}
+
+export type AppleTvCommand =
+  | 'up' | 'down' | 'left' | 'right' | 'select' | 'menu' | 'home'
+  | 'play_pause' | 'play' | 'pause' | 'stop' | 'next' | 'previous'
+  | 'skip_forward' | 'skip_backward' | 'volume_up' | 'volume_down'
+  | 'power_on' | 'power_off' | 'screensaver';
+
 export interface KeyLightState {
   id: string;
   name: string;
@@ -653,6 +681,7 @@ export type ServerMessage =
       /** Every Elgato Key Light named in `controls.keylights`. */
       keylights: KeyLightState[];
       tvs: TvState[];
+      appleTvs: AppleTvState[];
       /** Music services this household has. Empty until they are discovered. */
       sources: MusicSource[];
     }
@@ -684,6 +713,7 @@ export type ServerMessage =
   /** Where a device link has got to, in answer to a `link` request. */
   | { t: 'link'; ref: number; link: ServiceLink }
   | { t: 'tvs'; tvs: TvState[] }
+  | { t: 'apple-tvs'; appleTvs: AppleTvState[] }
   /** Config file changed on disk and revalidated. */
   | { t: 'config'; config: DashboardConfig }
   /** Backend link health changed. */
@@ -725,6 +755,9 @@ export type ClientMessage =
    * upstream command name.
    */
   | { t: 'music'; id: number; cmd: MusicCommand }
+  /** Drive or pair a configured Apple TV. */
+  | { t: 'apple-tv'; id: number; appleTv: string; op: AppleTvCommand }
+  | { t: 'apple-tv-pair'; id: number; appleTv: string; op: 'begin' | 'pin' | 'cancel'; pin?: string }
   /** Ask for the next N slideshow photos. */
   | { t: 'photos'; id: number; count: number }
   /**

@@ -170,6 +170,9 @@ controls:
     - { id: key_left,  name: Key Left,  host: 192.168.1.201 }
     - { id: key_right, name: Key Right, host: 192.168.1.148 }
 
+  appleTvs:
+    - { id: living_room_apple_tv, name: Living Room Apple TV, host: 192.168.1.80 }
+
   pages:
     - id: deskpro
       name: Desk Pro
@@ -186,6 +189,11 @@ A button reaches Companion (`POST /api/location/<page>/<row>/<column>/press`),
 a Home Assistant webhook, an ordinary service call, or an Elgato Key Light. A
 bare `light:` item is not a button at all — it is the full light control, with
 live state.
+
+Configured Apple TVs appear as complete remote cards with pairing, power,
+directional navigation, Home/Back, playback, skipping, volume and live media
+metadata. Pairing credentials are stored in `/config/apple-tv.json` and never
+sent to the panel.
 
 Two properties are worth stating explicitly:
 

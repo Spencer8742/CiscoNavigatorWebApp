@@ -18,6 +18,7 @@ import type {
   ControlAction,
   ControlButton,
   ControlItem,
+  AppleTvConfig,
   TvConfig,
   ControlPage,
   DashboardConfig,
@@ -97,7 +98,7 @@ export const FALLBACK_CONFIG: DashboardConfig = {
     followMusic: true,
     audioKeepAlive: false,
   },
-  controls: { pages: [], keylights: [], tvs: [], pollSeconds: 15 },
+  controls: { pages: [], keylights: [], tvs: [], appleTvs: [], pollSeconds: 15 },
 };
 
 /* ── Coercion helpers ──────────────────────────────────────────────────────
@@ -355,6 +356,7 @@ function validate(raw: unknown): DashboardConfig {
     controls: {
       keylights: keyLightList(controlsRaw['keylights']),
       tvs: tvsParsed,
+      appleTvs: appleTvList(controlsRaw['appleTvs']),
       pages: controlPages(controlsRaw['pages']),
       // 15s is a compromise: fast enough that turning a light off at the
       // light is reflected before anyone reaches the panel, slow enough that
@@ -515,6 +517,40 @@ function tvList(v: unknown): TvConfig[] {
     out.push(cfg);
   });
 
+  return out;
+}
+
+function appleTvList(v: unknown): AppleTvConfig[] {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v)) {
+    warn('controls.appleTvs', 'list', v);
+    return [];
+  }
+  const seen = new Set<string>();
+  const out: AppleTvConfig[] = [];
+  v.forEach((item, i) => {
+    const path = `controls.appleTvs[${i}]`;
+    const raw = typeof item === 'string' ? { host: item } : obj(item);
+    const host = str(raw['host'] ?? raw['ip'], '', `${path}.host`);
+    if (!host || host.includes('/') || /\s/.test(host)) {
+      warn(`${path}.host`, 'a bare address like 192.168.1.80', host || item);
+      return;
+    }
+    const id = str(raw['id'], `apple_tv${i + 1}`, `${path}.id`);
+    if (seen.has(id)) {
+      log.warn(`${path}: duplicate id "${id}" — skipping`);
+      return;
+    }
+    seen.add(id);
+    const cfg: AppleTvConfig = {
+      id,
+      name: str(raw['name'], id, `${path}.name`),
+      host,
+    };
+    const identifier = str(raw['identifier'], '', `${path}.identifier`);
+    if (identifier) cfg.identifier = identifier;
+    out.push(cfg);
+  });
   return out;
 }
 

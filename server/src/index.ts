@@ -26,6 +26,7 @@ import { MusicServices } from '~/sonos/music.ts';
 import { canSearch } from '~/sonos/services.ts';
 import { CastKeeper } from '~/cast/keeper.ts';
 import { Controls } from '~/controls/index.ts';
+import { AppleTvBridge } from '~/apple-tv/index.ts';
 import { PrefsStore } from '~/config/prefs.ts';
 import { ImmichClient } from '~/immich/client.ts';
 import { ImmichImages } from '~/immich/images.ts';
@@ -383,7 +384,13 @@ async function main(): Promise<void> {
     return [players, queues];
   };
 
-  const hub: Hub = new Hub(server, {
+  let hub!: Hub;
+  const appleTv = new AppleTvBridge(
+    join(dirname(env.configPath), 'apple-tv.json'),
+    (states) => hub?.broadcastAppleTvs(states),
+  );
+
+  hub = new Hub(server, {
     auth,
     config,
     getStates: () => store.snapshot(),
@@ -422,6 +429,9 @@ async function main(): Promise<void> {
 
     getKeyLights: () => controls.snapshot(),
     getTvs: () => controls.tvSnapshot(),
+    getAppleTvs: () => appleTv.snapshot,
+    onAppleTv: (device, op) => appleTv.command(device, op),
+    onAppleTvPair: (device, op, pin) => appleTv.pair(device, op, pin),
     onControl: (button) => controls.press(button),
     onKeyLight: (light, op, value) => controls.keyLight(light, op, value),
     onSource: (item, value) => controls.selectSource(item, value),
@@ -462,6 +472,8 @@ async function main(): Promise<void> {
     // the one thing a deployment is expected to persist.
     tvKeyFile: join(dirname(env.configPath), 'tv-keys.json'),
   });
+  appleTv.configure(config.current.controls.appleTvs);
+  config.onChange((next) => appleTv.configure(next.controls.appleTvs));
 
   /* ── Google Nest Hubs ────────────────────────────────────────────────────
      Optional, and inert unless `cast.displays` names something. A Hub loses
@@ -704,6 +716,7 @@ async function main(): Promise<void> {
     void sonosEvents.stop();
     castKeeper.stop();
     controls.stop();
+    appleTv.stop();
     hub.close();
     config.close();
     server.close(() => process.exit(0));

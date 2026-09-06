@@ -54,7 +54,7 @@ const DEFAULTS: DashboardConfig = {
     audioKeepAlive: false },
   // keylights/pollSeconds drive the backend's key light poll and are never
   // read by the panel; they are here to satisfy the shared type.
-  controls: { pages: [], keylights: [], tvs: [], pollSeconds: 15 },
+  controls: { pages: [], keylights: [], tvs: [], appleTvs: [], pollSeconds: 15 },
 };
 
 export const config = signal<DashboardConfig>(DEFAULTS);
