@@ -2797,6 +2797,62 @@
   padding: 0 var(--s-2);
 }
 
+/*
+ * Narrow: the tile stacks.
+ *
+ * Two columns of a device tile inside 390px gives each about 190, and the
+ * result on a real phone was every label truncated to a syllable — "Shar…",
+ * "1…" — "Hang up" wrapping onto two lines, and the controls column
+ * overflowing its grid row to land ON TOP of the footer, so the alert count
+ * sat across the Answer and Hang up buttons.
+ *
+ * One column each fixes all of it at once. The screen already scrolls, and a
+ * phone scrolling is the agreed trade: this tile is dense by design, and
+ * squeezing it is worse than making it longer.
+ */
+@media (max-width: 34rem) {
+  /* The head wraps rather than shrinking the device's own name to "De…".
+     Four things share that row — name, state, a people count, expand and
+     power — and the name is the one that identifies the tile. */
+  .devtile-head {
+    flex-wrap: wrap;
+    gap: var(--s-2) var(--s-3);
+  }
+
+  .devtile-head-right {
+    margin-left: auto;
+  }
+
+  .devtile-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* The meetings panel sized itself to the controls beside it and became a
+     tall empty box with one booking in the top of it. Stacked it takes the
+     room it needs. */
+  .devtile-meetings {
+    min-height: auto;
+  }
+
+  /* Share and the source picker each get the full width rather than
+     splitting 190px between them. */
+  .devtile-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* The stat row wraps instead of truncating "192.168.1.19" to "192.16…"
+     and an uptime to "1.". The alert count stops being pushed to the far
+     right, which is what put it over the call buttons. */
+  .devtile-foot {
+    flex-wrap: wrap;
+    gap: var(--s-2) var(--s-4);
+  }
+
+  .devtile-alerts {
+    margin-left: 0;
+  }
+}
+
 /* ── Device alerts sheet ──────────────────────────────────────────────────*/
 
 .devalerts {
