@@ -1,4 +1,5 @@
 import { Nav } from '~/components/Nav.tsx';
+import { RevealCorner } from '~/components/RevealCorner.tsx';
 import { Toast } from '~/components/Toast.tsx';
 import { ErrorBoundary } from '~/components/ErrorBoundary.tsx';
 import { Home } from '~/screens/Home.tsx';
@@ -16,7 +17,15 @@ import { SourcesSheet } from '~/components/SourcesSheet.tsx';
 import { DeviceSourceSheet } from '~/components/DeviceSourceSheet.tsx';
 import { DeviceAlertsSheet } from '~/components/DeviceAlertsSheet.tsx';
 import { castConfig, ui } from '~/config/index.ts';
-import { connectionProblem, kiosk, ready, route, screensaverActive } from '~/state/ui.ts';
+import {
+  connectionProblem,
+  kiosk,
+  navHidden,
+  prefs,
+  ready,
+  route,
+  screensaverActive,
+} from '~/state/ui.ts';
 import { isCastDashboard, isCastMode, startCastReceiver } from '~/lib/cast.ts';
 
 /**
@@ -104,10 +113,14 @@ export function App() {
            inside it — a hidden bar would leave its row in the grid and a
            strip of dead space along the bottom of the screen. */
         data-kiosk={kiosk.value ? '' : undefined}
+        /* Same collapse, different reason: nowhere else to go. Kept apart
+           from `data-kiosk` because that also makes a device tile take the
+           screen, which is not what "one visible page" should mean. */
+        data-nonav={navHidden.value ? '' : undefined}
         data-cast={CAST_DASHBOARD ? '' : undefined}
         data-hidden={showScreensaver ? '' : undefined}
       >
-        {kiosk.value ? null : (
+        {kiosk.value || navHidden.value ? null : (
           <div class="shell-nav">
             <Nav />
           </div>
@@ -119,6 +132,10 @@ export function App() {
       {/* One sheet for the whole app, driven by the `openEntity` signal.
           Mounted here so any screen can open one by writing a value, and so
           only one can ever be open. */}
+      {/* Only while something is actually hidden: a panel with its nav and
+          Settings on screen has no dead corner. */}
+      {!showScreensaver && (navHidden.value || !prefs.value.showSettings) ? <RevealCorner /> : null}
+
       <EntitySheet />
       {/* Same reasoning as the entity sheet, and the same reason it is HERE:
           `.shell-main` is `position: relative; overflow: hidden`, so a sheet
