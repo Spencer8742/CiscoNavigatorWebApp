@@ -35,7 +35,7 @@ export function Media() {
   const [chosen, setChosen] = useState<string | null>(null);
   const [grouping, setGrouping] = useState(false);
   const [picking, setPicking] = useState(false);
-  const [browsing, setBrowsing] = useState(false);
+  const [browseView, setBrowseView] = useState<'search' | 'library' | null>(null);
   const [queueOpen, setQueueOpen] = useState(false);
   const [tuning, setTuning] = useState(false);
   const [handoffOpen, setHandoffOpen] = useState(false);
@@ -72,9 +72,18 @@ export function Media() {
           <Icon name="chevronDown" size="1rem" weight={2.2} />
         </Pressable>
 
-        <Pressable class="browse-button" onPress={() => setBrowsing(true)} ariaLabel="Browse music">
+        <Pressable class="browse-button" onPress={() => setBrowseView('search')} ariaLabel="Search music">
           <Icon name="search" size="1.1rem" weight={1.9} />
-          <span>Browse</span>
+          <span>Search</span>
+        </Pressable>
+
+        <Pressable
+          class="browse-button"
+          onPress={() => setBrowseView('library')}
+          ariaLabel="Recently played music"
+        >
+          <Icon name="clock" size="1.1rem" weight={1.9} />
+          <span>Recent</span>
         </Pressable>
 
         <Pressable class="browse-button" onPress={() => setHandoffOpen(true)} ariaLabel="Move playback">
@@ -160,7 +169,13 @@ export function Media() {
         />
       ) : null}
 
-      {browsing ? <Browse playerId={activeId} onClose={() => setBrowsing(false)} /> : null}
+      {browseView ? (
+        <Browse
+          playerId={activeId}
+          view={browseView}
+          onClose={() => setBrowseView(null)}
+        />
+      ) : null}
 
       {tuning ? (
         <SpeakerSheet
