@@ -1,0 +1,11 @@
+{
+  "name": "Home",
+  "short_name": "Home",
+  "description": "Room control panel",
+  "display": "fullscreen",
+  "background_color": "#08090C",
+  "theme_color": "#08090C",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" }
+  ]
+}
