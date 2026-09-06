@@ -5,7 +5,7 @@ import { Empty } from '~/components/Empty.tsx';
 import { Icon } from '~/components/Icon.tsx';
 import { EntityTile } from '~/components/EntityTile.tsx';
 import { favorites, houseAlerts, sceneButtons, statusItems, weather } from '~/state/selectors.ts';
-import { openEntity, markActivity } from '~/state/ui.ts';
+import { openEntity, markActivity, prefs } from '~/state/ui.ts';
 import { Pressable } from '~/components/Pressable.tsx';
 import { activate } from '~/state/actions.ts';
 import { HomeSide } from '~/components/HomeSide.tsx';
@@ -41,12 +41,14 @@ export function Home() {
     <div class="screen screen-enter">
       <div class="home-hero">
         <div class="home-hero-main">
-          <div class="home-time tnum">
-            {formatTime(d, t)}
-            {ui.value.clock === '12h' ? (
-              <span class="home-meridiem">{formatMeridiem(d, t)}</span>
-            ) : null}
-          </div>
+          {prefs.value.homeTime ? (
+            <div class="home-time tnum">
+              {formatTime(d, t)}
+              {ui.value.clock === '12h' ? (
+                <span class="home-meridiem">{formatMeridiem(d, t)}</span>
+              ) : null}
+            </div>
+          ) : null}
           <div class="home-date">{formatDate(d, t)}</div>
         </div>
 

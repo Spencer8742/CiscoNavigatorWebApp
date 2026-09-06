@@ -470,14 +470,21 @@ export function selectControlSource(item: string, value: string): boolean {
 export function setPref(key: 'homeSide', value: PanelPrefs['homeSide']): boolean;
 export function setPref(key: 'visiblePages', value: PanelPrefs['visiblePages']): boolean;
 export function setPref(
-  key: 'homeSide' | 'visiblePages',
-  value: PanelPrefs['homeSide'] | PanelPrefs['visiblePages'],
+  key: 'homeTime' | 'photoScreensaverTime' | 'nowPlayingScreensaverTime',
+  value: boolean,
+): boolean;
+export function setPref(
+  key: 'homeSide' | 'visiblePages' | 'homeTime' | 'photoScreensaverTime' | 'nowPlayingScreensaverTime',
+  value: PanelPrefs['homeSide'] | PanelPrefs['visiblePages'] | boolean,
 ): boolean {
   prefs.value = { ...prefs.value, [key]: value };
   if (key === 'homeSide') {
     return send({ t: 'pref', id: nextId(), key, value: value as PanelPrefs['homeSide'] });
   }
-  return send({ t: 'pref', id: nextId(), key, value: value as PanelPrefs['visiblePages'] });
+  if (key === 'visiblePages') {
+    return send({ t: 'pref', id: nextId(), key, value: value as PanelPrefs['visiblePages'] });
+  }
+  return send({ t: 'pref', id: nextId(), key, value: value as boolean });
 }
 
 /**

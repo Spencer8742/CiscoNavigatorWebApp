@@ -576,6 +576,9 @@ describe('panel preferences', () => {
       ['home', 'rooms', 'controls', 'apple-tv', 'media', 'photos'],
       'every app page is visible by default',
     );
+    assert.equal(t.panel.prefs.homeTime, true);
+    assert.equal(t.panel.prefs.nowPlayingScreensaverTime, true);
+    assert.equal(t.panel.prefs.photoScreensaverTime, true);
 
     // A second panel must learn about a change made on the first, or two
     // panels on the same wall disagree about what they are showing.
@@ -593,6 +596,12 @@ describe('panel preferences', () => {
       'the visible page list to be broadcast',
     );
     assert.deepEqual(observer.prefs.visiblePages, ['home', 'media']);
+
+    t.panel.send({ t: 'pref', id: 3, key: 'nowPlayingScreensaverTime', value: false });
+    await waitFor(
+      () => observer.prefs.nowPlayingScreensaverTime === false,
+      'the clock choice to be broadcast',
+    );
     observer.close();
     await t.stop();
   });
@@ -602,6 +611,8 @@ describe('panel preferences', () => {
     const first = await isolated();
     first.panel.send({ t: 'pref', id: 1, key: 'homeSide', value: 'photos' });
     first.panel.send({ t: 'pref', id: 2, key: 'visiblePages', value: ['controls'] });
+    first.panel.send({ t: 'pref', id: 3, key: 'homeTime', value: false });
+    first.panel.send({ t: 'pref', id: 4, key: 'photoScreensaverTime', value: false });
     await sleep(300);
     await first.stop();
 
@@ -610,6 +621,8 @@ describe('panel preferences', () => {
     const second = await isolated();
     assert.equal(second.panel.prefs.homeSide, 'photos', 'the choice outlived the process');
     assert.deepEqual(second.panel.prefs.visiblePages, ['controls'], 'visible pages also persisted');
+    assert.equal(second.panel.prefs.homeTime, false, 'the Home clock choice persisted');
+    assert.equal(second.panel.prefs.photoScreensaverTime, false, 'the photo clock choice persisted');
     await second.stop();
   });
 
@@ -669,6 +682,9 @@ media:
       ['homeSide', 'rm -rf'],
       ['homeSide', '../../etc/passwd'],
       ['homeSide', ''],
+      ['homeTime', 'false'],
+      ['photoScreensaverTime', 0],
+      ['nowPlayingScreensaverTime', null],
       ['__proto__', 'polluted'],
       ['haToken', 'stolen'],
     ]) {
@@ -686,7 +702,14 @@ media:
     // happened when the player layout arrived.
     assert.deepEqual(
       Object.keys(t.panel.prefs).sort(),
-      ['homeSide', 'players', 'visiblePages'],
+      [
+        'homeSide',
+        'homeTime',
+        'nowPlayingScreensaverTime',
+        'photoScreensaverTime',
+        'players',
+        'visiblePages',
+      ],
       'no extra keys were introduced by a hostile payload',
     );
     await t.stop();

@@ -71,6 +71,19 @@ export function Settings() {
         </p>
 
         <div class="section-head">
+          <h2 class="section-title">Clock visibility</h2>
+        </div>
+        <div class="settings-page-grid" role="group" aria-label="Clock visibility">
+          <ClockToggle pref="homeTime" label="Home" />
+          <ClockToggle pref="nowPlayingScreensaverTime" label="Now Playing" />
+          <ClockToggle pref="photoScreensaverTime" label="Photo screensaver" />
+        </div>
+        <p class="settings-note">
+          Hide the time independently on each full-screen view. Dates and other
+          information remain visible.
+        </p>
+
+        <div class="section-head">
           <h2 class="section-title">Visible pages</h2>
         </div>
         <div class="settings-page-grid" role="group" aria-label="Visible pages">
@@ -210,6 +223,23 @@ function PageToggle({ page }: { page: PanelPage }) {
       ariaLabel={`${PAGE_LABELS[page]} ${active ? 'visible' : 'hidden'}`}
     >
       <span>{PAGE_LABELS[page]}</span>
+      <span class="settings-page-state">{active ? 'On' : 'Off'}</span>
+    </Pressable>
+  );
+}
+
+type ClockPref = 'homeTime' | 'photoScreensaverTime' | 'nowPlayingScreensaverTime';
+
+function ClockToggle({ pref, label }: { pref: ClockPref; label: string }) {
+  const active = prefs.value[pref];
+  return (
+    <Pressable
+      class={active ? 'settings-page is-active' : 'settings-page'}
+      onPress={() => setPref(pref, !active)}
+      ariaPressed={active}
+      ariaLabel={`${label} time ${active ? 'visible' : 'hidden'}`}
+    >
+      <span>{label}</span>
       <span class="settings-page-state">{active ? 'On' : 'Off'}</span>
     </Pressable>
   );

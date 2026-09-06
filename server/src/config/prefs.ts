@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { logger } from '~/lib/log.ts';
 import {
+  BOOLEAN_PREFS,
   DEFAULT_PREFS,
   LAYOUT_LIMITS,
   PANEL_PAGES,
@@ -62,6 +63,11 @@ export class PrefsStore {
             this.#prefs = { ...this.#prefs, [key]: value };
           }
         }
+        for (const key of BOOLEAN_PREFS) {
+          if (typeof stored[key] === 'boolean') {
+            this.#prefs = { ...this.#prefs, [key]: stored[key] };
+          }
+        }
         let visiblePages = sanitizeVisiblePages(stored['visiblePages']);
         if (visiblePages && Number(stored['version'] ?? 1) < PREFS_SCHEMA) {
           // Apple TV became a first-class page in schema 2. Existing panels
@@ -110,6 +116,19 @@ export class PrefsStore {
       this.#save();
       for (const fn of this.#listeners) fn(this.#prefs);
       log.info(`Preference visiblePages = ${visiblePages.join(', ') || '(none)'}`);
+      return null;
+    }
+
+    if ((BOOLEAN_PREFS as readonly string[]).includes(key)) {
+      if (typeof value !== 'boolean') {
+        return `"${value}" is not valid for ${key} (expected true or false)`;
+      }
+      if ((this.#prefs as unknown as Record<string, unknown>)[key] === value) return null;
+
+      this.#prefs = { ...this.#prefs, [key]: value };
+      this.#save();
+      for (const fn of this.#listeners) fn(this.#prefs);
+      log.info(`Preference ${key} = ${value}`);
       return null;
     }
 
