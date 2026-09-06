@@ -753,6 +753,26 @@ describe('panel preferences', () => {
     await t.stop();
   });
 
+  test('the date and weather hide independently of the clock', async () => {
+    /*
+     * Three lines on the Home hero and the two screensavers, each with its own
+     * switch: hiding the clock must not take the date with it, and neither
+     * must touch the weather.
+     */
+    rmSync(PREFS_FILE, { force: true });
+    const t = await isolated();
+
+    t.panel.send({ t: 'pref', id: 1, key: 'homeDate', value: false });
+    t.panel.send({ t: 'pref', id: 2, key: 'homeWeather', value: false });
+    await waitFor(() => t.panel.prefs.homeDate === false, 'the date to hide');
+    await waitFor(() => t.panel.prefs.homeWeather === false, 'the weather to hide');
+
+    assert.equal(t.panel.prefs.homeTime, true, 'the clock was left alone');
+    assert.equal(t.panel.prefs.photoScreensaverDate, true, 'and so was the other view');
+
+    await t.stop();
+  });
+
   test('a panel keeps its own clock and page choices too', async () => {
     /*
      * The scoping is per preference, not per kind of preference: the booleans
@@ -866,6 +886,9 @@ media:
       ['homeTime', 'false'],
       ['photoScreensaverTime', 0],
       ['nowPlayingScreensaverTime', null],
+      ['homeDate', 'false'],
+      ['homeWeather', 1],
+      ['photoScreensaverWeather', {}],
       ['__proto__', 'polluted'],
       ['haToken', 'stolen'],
     ]) {
@@ -884,10 +907,15 @@ media:
     assert.deepEqual(
       Object.keys(t.panel.prefs).sort(),
       [
+        'homeDate',
         'homeSide',
         'homeTime',
+        'homeWeather',
+        'nowPlayingScreensaverDate',
         'nowPlayingScreensaverTime',
+        'photoScreensaverDate',
         'photoScreensaverTime',
+        'photoScreensaverWeather',
         'players',
         'visiblePages',
       ],

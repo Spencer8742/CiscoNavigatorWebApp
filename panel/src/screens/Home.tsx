@@ -49,10 +49,10 @@ export function Home() {
               ) : null}
             </div>
           ) : null}
-          <div class="home-date">{formatDate(d, t)}</div>
+          {prefs.value.homeDate ? <div class="home-date">{formatDate(d, t)}</div> : null}
         </div>
 
-        {wx && !wx.unavailable ? (
+        {prefs.value.homeWeather && wx && !wx.unavailable ? (
           <div class="home-weather">
             <Icon name={wx.icon} size="2rem" weight={1.5} />
             <div class="home-weather-temp tnum">{wx.value}</div>

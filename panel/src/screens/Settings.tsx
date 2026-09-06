@@ -4,7 +4,7 @@ import { health, linkStatus, prefs, socketState } from '~/state/ui.ts';
 import { Pressable } from '~/components/Pressable.tsx';
 import { setPref } from '~/net/socket.ts';
 import { getPanelId } from '~/net/auth.ts';
-import { PANEL_PAGES, type PanelPage, type PanelPrefs } from '@shared/protocol.ts';
+import { BOOLEAN_PREFS, PANEL_PAGES, type PanelPage, type PanelPrefs } from '@shared/protocol.ts';
 import { entityCount } from '~/state/entities.ts';
 import { speakers } from '~/state/selectors.ts';
 import { formatRelative } from '~/lib/format.ts';
@@ -75,13 +75,41 @@ export function Settings() {
           <h2 class="section-title">Clock visibility</h2>
         </div>
         <div class="settings-page-grid" role="group" aria-label="Clock visibility">
-          <ClockToggle pref="homeTime" label="Home" />
-          <ClockToggle pref="nowPlayingScreensaverTime" label="Now Playing" />
-          <ClockToggle pref="photoScreensaverTime" label="Photo screensaver" />
+          <OverlayToggle pref="homeTime" what="time" label="Home" />
+          <OverlayToggle pref="nowPlayingScreensaverTime" what="time" label="Now Playing" />
+          <OverlayToggle pref="photoScreensaverTime" what="time" label="Photo screensaver" />
         </div>
         <p class="settings-note">
-          Hide the time independently on each full-screen view. Dates and other
-          information remain visible.
+          Hide the time independently on each full-screen view.
+        </p>
+
+        <div class="section-head">
+          <h2 class="section-title">Date visibility</h2>
+        </div>
+        <div class="settings-page-grid" role="group" aria-label="Date visibility">
+          <OverlayToggle pref="homeDate" what="date" label="Home" />
+          <OverlayToggle pref="nowPlayingScreensaverDate" what="date" label="Now Playing" />
+          <OverlayToggle pref="photoScreensaverDate" what="date" label="Photo screensaver" />
+        </div>
+        <p class="settings-note">
+          The same, for the date under the clock.
+        </p>
+
+        <div class="section-head">
+          <h2 class="section-title">Weather visibility</h2>
+        </div>
+        <div class="settings-page-grid" role="group" aria-label="Weather visibility">
+          <OverlayToggle pref="homeWeather" what="weather" label="Home" />
+          <OverlayToggle pref="photoScreensaverWeather" what="weather" label="Photo screensaver" />
+        </div>
+        {/* No Now Playing entry: that view has never drawn weather, and a
+            switch for something nothing renders is worse than a missing one
+            because it looks like it works. */}
+        <p class="settings-note">
+          Needs a <code>weather:</code> entity in dashboard.yaml to show anything
+          in the first place. The photo screensaver also honours its own{' '}
+          <code>overlays:</code> settings, so a line turned off there stays off
+          whatever is chosen here.
         </p>
 
         <div class="section-head">
@@ -234,16 +262,32 @@ function PageToggle({ page }: { page: PanelPage }) {
   );
 }
 
-type ClockPref = 'homeTime' | 'photoScreensaverTime' | 'nowPlayingScreensaverTime';
+/**
+ * One overlay switch: this line, on this view.
+ *
+ * Taken from the shared list rather than spelled out, so a preference added
+ * to the protocol and forgotten here is a type error rather than a switch
+ * that quietly does not exist.
+ */
+type OverlayPref = (typeof BOOLEAN_PREFS)[number];
 
-function ClockToggle({ pref, label }: { pref: ClockPref; label: string }) {
+function OverlayToggle({
+  pref,
+  what,
+  label,
+}: {
+  pref: OverlayPref;
+  /** Named for the screen reader: "Home time hidden" says more than "Home". */
+  what: string;
+  label: string;
+}) {
   const active = prefs.value[pref];
   return (
     <Pressable
       class={active ? 'settings-page is-active' : 'settings-page'}
       onPress={() => setPref(pref, !active)}
       ariaPressed={active}
-      ariaLabel={`${label} time ${active ? 'visible' : 'hidden'}`}
+      ariaLabel={`${label} ${what} ${active ? 'visible' : 'hidden'}`}
     >
       <span>{label}</span>
       <span class="settings-page-state">{active ? 'On' : 'Off'}</span>

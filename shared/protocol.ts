@@ -835,6 +835,11 @@ export type ClientMessage =
   | { t: 'pref'; id: number; key: 'homeTime'; value: boolean }
   | { t: 'pref'; id: number; key: 'photoScreensaverTime'; value: boolean }
   | { t: 'pref'; id: number; key: 'nowPlayingScreensaverTime'; value: boolean }
+  | { t: 'pref'; id: number; key: 'homeDate'; value: boolean }
+  | { t: 'pref'; id: number; key: 'photoScreensaverDate'; value: boolean }
+  | { t: 'pref'; id: number; key: 'nowPlayingScreensaverDate'; value: boolean }
+  | { t: 'pref'; id: number; key: 'homeWeather'; value: boolean }
+  | { t: 'pref'; id: number; key: 'photoScreensaverWeather'; value: boolean }
   /**
    * Rearrange the player list.
    *
@@ -873,6 +878,22 @@ export interface PanelPrefs {
   photoScreensaverTime: boolean;
   /** Show the clock on the full-screen Now Playing view. */
   nowPlayingScreensaverTime: boolean;
+  /** Show the date on the Home screen. */
+  homeDate: boolean;
+  /** Show the date over the photo screensaver. */
+  photoScreensaverDate: boolean;
+  /** Show the date on the full-screen Now Playing view. */
+  nowPlayingScreensaverDate: boolean;
+  /** Show the weather on the Home screen. */
+  homeWeather: boolean;
+  /**
+   * Show the weather over the photo screensaver.
+   *
+   * There is no Now Playing equivalent: that view has never drawn weather,
+   * and a preference for something nothing renders is a switch that does
+   * nothing — worse than a missing one, because it looks like it works.
+   */
+  photoScreensaverWeather: boolean;
   /** How the player list is arranged. See `PlayerLayout`. */
   players: PlayerLayout;
 }
@@ -929,6 +950,11 @@ export const DEFAULT_PREFS: PanelPrefs = {
   homeTime: true,
   photoScreensaverTime: true,
   nowPlayingScreensaverTime: true,
+  homeDate: true,
+  photoScreensaverDate: true,
+  nowPlayingScreensaverDate: true,
+  homeWeather: true,
+  photoScreensaverWeather: true,
   players: { sections: {}, hidden: [] },
 };
 
@@ -947,7 +973,16 @@ export const PREF_VALUES: Record<string, readonly string[]> = {
 };
 
 /** Boolean preferences accepted from a panel and persisted by the backend. */
-export const BOOLEAN_PREFS = ['homeTime', 'photoScreensaverTime', 'nowPlayingScreensaverTime'] as const;
+export const BOOLEAN_PREFS = [
+  'homeTime',
+  'photoScreensaverTime',
+  'nowPlayingScreensaverTime',
+  'homeDate',
+  'photoScreensaverDate',
+  'nowPlayingScreensaverDate',
+  'homeWeather',
+  'photoScreensaverWeather',
+] as const;
 
 /** Application-level heartbeat interval. A Wi-Fi roam can leave a socket
  *  half-open for minutes before TCP notices; this catches it in seconds. */
