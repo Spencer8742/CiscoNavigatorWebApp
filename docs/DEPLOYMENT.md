@@ -530,8 +530,8 @@ xConfiguration Standby Control: On
 ```
 
 With `idle.timeoutSeconds: 180` (3 minutes) in `dashboard.yaml`, the panel
-shows photos from 3 minutes of inactivity and the display sleeps at 120
-minutes.
+enters its screensaver after 3 minutes. It shows Now Playing while Sonos is
+active and photos otherwise. The display itself sleeps at 120 minutes.
 
 ---
 

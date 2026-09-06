@@ -845,6 +845,156 @@
   background: var(--bg);
 }
 
+/* ── Now playing screensaver ──────────────────────────────────────────────
+   Music replaces the photo slideshow while a Sonos group is playing. The
+   blurred cover supplies colour without competing with the readable cover
+   and metadata in front. */
+
+.saver-now-playing {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(2rem, 5vw, 5rem);
+  background: #090b10;
+  color: #fff;
+}
+
+.saver-np-backdrop {
+  position: absolute;
+  inset: -5%;
+  width: 110%;
+  height: 110%;
+  object-fit: cover;
+  opacity: 0.32;
+  filter: blur(42px) saturate(1.15);
+  transform: scale(1.08);
+}
+
+.saver-np-shade {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgba(4, 5, 8, 0.2), rgba(4, 5, 8, 0.76)),
+    linear-gradient(0deg, rgba(4, 5, 8, 0.55), transparent 55%);
+}
+
+.saver-np-layout {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(15rem, min(42vw, 32rem)) minmax(18rem, 1fr);
+  align-items: center;
+  gap: clamp(2.5rem, 6vw, 6rem);
+  width: min(100%, 78rem);
+  animation: saver-np-drift 120s ease-in-out infinite alternate;
+}
+
+.saver-np-art {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+  border-radius: var(--r-xl);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.46);
+  box-shadow: 0 1.5rem 4rem rgba(0, 0, 0, 0.38);
+}
+
+.saver-np-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  animation: art-in var(--t-base) var(--ease) both;
+}
+
+.saver-np-info {
+  min-width: 0;
+  text-shadow: 0 1px 16px rgba(0, 0, 0, 0.5);
+}
+
+.saver-np-clock {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  font-size: clamp(4rem, 8vw, 7.5rem);
+  font-weight: 280;
+  line-height: 0.9;
+  letter-spacing: -0.055em;
+}
+
+.saver-np-meridiem {
+  font-size: clamp(1.25rem, 2.5vw, 2rem);
+  font-weight: 500;
+  letter-spacing: 0;
+  opacity: 0.76;
+}
+
+.saver-np-date {
+  margin-top: var(--s-3);
+  font-size: clamp(1rem, 1.8vw, 1.35rem);
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.saver-np-track {
+  margin-top: clamp(2rem, 6vh, 4rem);
+}
+
+.saver-np-title {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: clamp(2rem, 4.5vw, 4.25rem);
+  font-weight: 650;
+  line-height: 1.04;
+  letter-spacing: -0.04em;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.saver-np-artist {
+  margin-top: var(--s-3);
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: clamp(1.3rem, 2.8vw, 2.2rem);
+  font-weight: 480;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.saver-np-album {
+  margin-top: var(--s-2);
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.58);
+  font-size: clamp(0.95rem, 1.6vw, 1.2rem);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.saver-np-room {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  max-width: 24rem;
+  margin-top: clamp(1.5rem, 4vh, 3rem);
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 0.9375rem;
+}
+
+@keyframes saver-np-drift {
+  from { transform: translate3d(-0.4rem, -0.25rem, 0); }
+  to { transform: translate3d(0.8rem, 0.5rem, 0); }
+}
+
+@media (max-width: 48rem) {
+  .saver-now-playing { padding: var(--s-6); }
+
+  .saver-np-layout {
+    grid-template-columns: minmax(12rem, 42vh) minmax(0, 1fr);
+    gap: var(--s-6);
+  }
+}
+
 /* The shell stays mounted underneath in the DOM only when the screensaver is
    absent; when present it is removed entirely (see app.tsx). This guard is
    belt-and-braces for the frame in between. */
