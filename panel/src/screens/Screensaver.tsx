@@ -116,7 +116,7 @@ function PlayingScreensaver({ player }: { player: SpeakerInfo }) {
             {media?.album ? <div class="saver-np-album">{media.album}</div> : null}
           </div>
 
-          {media?.duration ? (
+          {media && (media.duration !== null || media.elapsed !== null) ? (
             <Progress
               class="saver-np-progress"
               elapsed={media.elapsed}

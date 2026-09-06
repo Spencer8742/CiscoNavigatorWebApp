@@ -1065,6 +1065,9 @@ function didl(track) {
   if (track.streamContent) {
     item += `<r:streamContent>${esc(track.streamContent)}</r:streamContent>`;
   }
+  if (track.duration) {
+    item += `<res duration="${esc(track.duration)}">x-sonos-http:track.mp3</res>`;
+  }
 
   return (
     '<DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" ' +

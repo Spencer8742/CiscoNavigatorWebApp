@@ -29,7 +29,7 @@ export function Progress({
 }: {
   elapsed: number | null;
   elapsedAt: number | null;
-  duration: number;
+  duration: number | null;
   running: boolean;
   onSeek?: (seconds: number) => void;
   class?: string;
@@ -46,12 +46,13 @@ export function Progress({
 
   const base = elapsed ?? 0;
   const drift = running && elapsedAt ? Math.max(0, (now - elapsedAt) / 1000) : 0;
-  const position = scrubbing ?? Math.min(duration, base + drift);
+  const knownDuration = duration !== null && duration > 0;
+  const position = scrubbing ?? (knownDuration ? Math.min(duration, base + drift) : base + drift);
 
   return (
     <div class={`np-progress ${cls}`}>
       <span class="np-time">{formatDuration(Math.round(position))}</span>
-      {onSeek ? (
+      {onSeek && knownDuration ? (
         <Slider
           value={Math.round(position)}
           min={0}
@@ -74,16 +75,17 @@ export function Progress({
           role="progressbar"
           aria-label="Track position"
           aria-valuemin={0}
-          aria-valuemax={Math.round(duration)}
-          aria-valuenow={Math.round(position)}
+          aria-valuemax={knownDuration ? Math.round(duration) : undefined}
+          aria-valuenow={knownDuration ? Math.round(position) : undefined}
+          data-indeterminate={knownDuration ? undefined : ''}
         >
           <div
             class="np-progress-fill"
-            style={{ transform: `scaleX(${duration > 0 ? position / duration : 0})` }}
+            style={knownDuration ? { transform: `scaleX(${position / duration})` } : undefined}
           />
         </div>
       )}
-      <span class="np-time">{formatDuration(Math.round(duration))}</span>
+      <span class="np-time">{knownDuration ? formatDuration(Math.round(duration)) : '--:--'}</span>
     </div>
   );
 }

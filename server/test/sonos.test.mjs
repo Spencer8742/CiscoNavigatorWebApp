@@ -535,6 +535,34 @@ describe('speakers from Sonos', () => {
     panel.close();
   });
 
+  test('uses the metadata duration when a service omits TrackDuration', async () => {
+    const panel = new TestPanel(ctx.port);
+    await panel.connect();
+    await waitFor(() => panel.player('RINCON_LIVING')?.media !== null, 'media');
+
+    await ctx.sonos.set('RINCON_LIVING', {
+      duration: 'NOT_IMPLEMENTED',
+      relTime: '0:00:42',
+      track: {
+        title: 'Service track',
+        creator: 'Service artist',
+        duration: '0:03:18.000',
+      },
+    });
+
+    await waitFor(
+      () => panel.player('RINCON_LIVING')?.media?.title === 'Service track',
+      'the service track to be pushed',
+    );
+    await waitFor(
+      () => panel.player('RINCON_LIVING')?.media?.elapsed === 42,
+      'the service position to be anchored',
+    );
+    assert.equal(panel.player('RINCON_LIVING').media.duration, 198);
+
+    panel.close();
+  });
+
   test('one queue per group, owned by the coordinator', async () => {
     const panel = new TestPanel(ctx.port);
     await panel.connect();

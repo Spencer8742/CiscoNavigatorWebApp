@@ -265,7 +265,7 @@ function NowPlaying({ player, queue }: { player: SpeakerInfo; queue: PlayerQueue
         {/* Position, extrapolated locally. The backend sends elapsed time
             with the moment it was measured, so the bar moves smoothly between
             updates instead of stepping. */}
-        {media?.duration ? (
+        {media && (media.duration !== null || media.elapsed !== null) ? (
           <Progress
             elapsed={media.elapsed}
             elapsedAt={media.elapsedAt}

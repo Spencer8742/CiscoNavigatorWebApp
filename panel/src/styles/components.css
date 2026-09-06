@@ -1547,6 +1547,25 @@
   transition: transform 1s linear;
 }
 
+.np-progress-track[data-indeterminate] .np-progress-fill {
+  inset-inline: 0 auto;
+  width: 32%;
+  animation: np-progress-wait 1.6s ease-in-out infinite;
+}
+
+@keyframes np-progress-wait {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(325%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .np-progress-track[data-indeterminate] .np-progress-fill {
+    animation: none;
+    opacity: 0.55;
+    transform: none;
+  }
+}
+
 /* ── Queue ────────────────────────────────────────────────────────────── */
 
 .queue-bar {
