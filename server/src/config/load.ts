@@ -10,6 +10,7 @@ import {
   CONTROL_TONES,
   KEY_LIGHT_OPS,
 } from '@shared/config.ts';
+import { panelIdOf } from '@shared/protocol.ts';
 import type {
   AlertRule,
   CastDisplay,
@@ -457,6 +458,14 @@ function displayList(v: unknown): CastDisplay[] {
 
     const name = str(raw['name'], '', `${path}.name`);
     if (name) display.name = name;
+
+    // Validated with the same rule the panel and the hub use, so an id that
+    // is refused here is refused everywhere rather than half-working.
+    const panel = panelIdOf(raw['panel']);
+    if (panel) display.panel = panel;
+    else if (raw['panel'] !== undefined && raw['panel'] !== null) {
+      warn(`${path}.panel`, 'a panel id (letters, digits, - and _)', raw['panel']);
+    }
 
     const pane = raw['pane'];
     if (pane !== undefined && pane !== null) {

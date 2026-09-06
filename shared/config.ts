@@ -285,6 +285,18 @@ export interface CastDisplay {
    * What this display shows. Omit for the rotation configured in `panes`.
    */
   pane?: CastTarget;
+  /**
+   * Which panel this display counts as, for the settings held per panel —
+   * the Home side card, which pages appear, whether the clock and date and
+   * weather are drawn. Without one, every Hub shares the same block, and
+   * changing the kitchen changes the bedroom.
+   *
+   * Only reaches anything on a `pane: dashboard` display. The rotating panes
+   * draw their own layout and read no preferences at all, so an id on one of
+   * those is accepted and does nothing — which is worth knowing before
+   * wondering why a setting had no effect.
+   */
+  panel?: string;
 }
 
 /* ── Controls ──────────────────────────────────────────────────────────────
