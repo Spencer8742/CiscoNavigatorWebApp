@@ -119,15 +119,26 @@ export function Settings() {
           {PANEL_PAGES.map((page) => (
             <PageToggle key={page} page={page} />
           ))}
-          <div class="settings-page is-active" aria-label="Settings, always visible">
-            <span>Settings</span>
-            <span class="settings-page-state">Always on</span>
-          </div>
         </div>
         <p class="settings-note">
-          Choose which pages appear in the navigation bar. Settings stays visible so
-          you can restore a page later. This choice applies to every panel using this app.
+          Choose which pages appear in the navigation bar. Leaving one page visible
+          hides the bar entirely and gives its space back to the screen.
         </p>
+
+        <div class="section-head">
+          <h2 class="section-title">Finish this panel</h2>
+        </div>
+        <div class="settings-page-grid" role="group" aria-label="Settings visibility">
+          <OverlayToggle pref="showSettings" what="settings menu" label="Show Settings" />
+        </div>
+        <p class="settings-note">
+          Turn this off once the panel is set up the way you want it, and Settings
+          leaves the navigation — so nobody walking past can change it.{' '}
+          <strong>To get back in, press and hold the top-right corner of the screen
+          for two seconds.</strong> That gesture cannot be turned off, and it is the
+          only way back, so it is worth trying once before you rely on it.
+        </p>
+
 
         <div class="section-head">
           <h2 class="section-title">Connection</h2>

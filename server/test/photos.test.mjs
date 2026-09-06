@@ -812,6 +812,34 @@ media: { players: [] }
     await t.stop();
   });
 
+  test('hiding Settings is a per-panel choice like the rest', async () => {
+    /*
+     * The panel-side half of this — the nav collapsing, and the corner press
+     * that brings it back — is in the panel. What the backend has to get
+     * right is that it is per panel: finishing the office wall must not lock
+     * somebody out of the kitchen one.
+     */
+    rmSync(PREFS_FILE, { force: true });
+    const t = await isolated();
+
+    const office = new PhotoPanel(t.panel.port, 'office');
+    const kitchen = new PhotoPanel(t.panel.port, 'kitchen');
+    await office.connect();
+    await kitchen.connect();
+
+    assert.equal(office.prefs.showSettings, true, 'a fresh panel shows Settings');
+
+    office.send({ t: 'pref', id: 1, key: 'showSettings', value: false });
+    await waitFor(() => office.prefs.showSettings === false, 'the office panel to finish');
+
+    await sleep(200);
+    assert.equal(kitchen.prefs.showSettings, true, 'the kitchen panel is untouched');
+
+    office.close();
+    kitchen.close();
+    await t.stop();
+  });
+
   test('a panel keeps its own clock and page choices too', async () => {
     /*
      * The scoping is per preference, not per kind of preference: the booleans
@@ -956,6 +984,7 @@ media:
         'photoScreensaverTime',
         'photoScreensaverWeather',
         'players',
+        'showSettings',
         'visiblePages',
       ],
       'no extra keys were introduced by a hostile payload',

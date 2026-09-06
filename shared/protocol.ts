@@ -840,6 +840,7 @@ export type ClientMessage =
   | { t: 'pref'; id: number; key: 'nowPlayingScreensaverDate'; value: boolean }
   | { t: 'pref'; id: number; key: 'homeWeather'; value: boolean }
   | { t: 'pref'; id: number; key: 'photoScreensaverWeather'; value: boolean }
+  | { t: 'pref'; id: number; key: 'showSettings'; value: boolean }
   /**
    * Rearrange the player list.
    *
@@ -870,8 +871,18 @@ export interface PanelPrefs {
    * never empty — which is the entire reason it exists.
    */
   homeSide: 'media' | 'photos';
-  /** Pages shown in primary navigation. Settings always remains available. */
+  /** Pages shown in primary navigation. */
   visiblePages: PanelPage[];
+  /**
+   * Whether Settings appears in the navigation at all.
+   *
+   * Off is how a panel is finished: the pages are chosen, the overlays are
+   * set, and nobody walking past should be able to change any of it. The way
+   * back is a long press in the top-right corner — see `revealed` in
+   * state/ui.ts, and say so on the screen that turns this off, because a
+   * setting that hides its own way back is a brick.
+   */
+  showSettings: boolean;
   /** Show the clock on the Home screen. */
   homeTime: boolean;
   /** Show the clock over the photo screensaver. */
@@ -955,6 +966,7 @@ export const DEFAULT_PREFS: PanelPrefs = {
   nowPlayingScreensaverDate: true,
   homeWeather: true,
   photoScreensaverWeather: true,
+  showSettings: true,
   players: { sections: {}, hidden: [] },
 };
 
@@ -982,6 +994,7 @@ export const BOOLEAN_PREFS = [
   'nowPlayingScreensaverDate',
   'homeWeather',
   'photoScreensaverWeather',
+  'showSettings',
 ] as const;
 
 /** Application-level heartbeat interval. A Wi-Fi roam can leave a socket

@@ -109,12 +109,60 @@ img {
   grid-template-areas: 'main' 'nav';
 }
 
-/* Kiosk lock: one full-bleed screen, no nav. Overrides both nav positions,
-   so it does not matter which one the config asks for. */
-.shell[data-kiosk] {
+/* One full-bleed screen, no nav. Overrides both nav positions, so it does not
+   matter which one the config asks for.
+
+   Two reasons reach this: the kiosk lock, and a panel with only one place to
+   go. The TRACK is dropped rather than the bar inside it — hiding the bar
+   would leave its row or column in the grid and a strip of dead space along
+   the edge, which is the thing this is for. */
+.shell[data-kiosk],
+.shell[data-nonav] {
   grid-template-columns: 1fr;
   grid-template-rows: 1fr;
   grid-template-areas: 'main';
+}
+
+/* The way back into a finished panel: hold the corner for two seconds.
+
+   Invisible until touched, and mounted only while something is hidden — see
+   components/RevealCorner.tsx for why it is this corner and why it is worth a
+   dead zone. The ring is the only feedback there is, so it has to appear
+   promptly and fill visibly. */
+.reveal-corner {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 44px;
+  height: 44px;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* No highlight, no text selection, no context menu on a long press —
+     all three are what a long press normally does on a touch device. */
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  user-select: none;
+  touch-action: none;
+}
+
+.reveal-ring {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--r-full);
+  border: 2px solid rgba(255, 255, 255, 0.5);
+  opacity: 0;
+  transform: scale(0.4);
+  /* Only transform and opacity: the two properties Chromium 102 on this
+     device composites without touching the main thread. */
+  transition-property: opacity, transform;
+  transition-timing-function: linear;
+}
+
+.reveal-ring[data-filling] {
+  opacity: 0.85;
+  transform: scale(1);
 }
 
 .shell-nav {

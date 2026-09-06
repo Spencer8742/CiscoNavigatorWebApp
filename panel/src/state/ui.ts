@@ -131,19 +131,47 @@ export const health = signal<BackendHealth | null>(null);
  */
 export const prefs = signal<PanelPrefs>({ ...DEFAULT_PREFS });
 
-export const visibleRoutes = computed<readonly Route[]>(() => [
-  ...PANEL_PAGES.filter((page) => prefs.value.visiblePages.includes(page)),
-  'settings',
-]);
+/**
+ * Settings and the nav, brought back temporarily on a finished panel.
+ *
+ * Set by a long press in the corner (components/RevealCorner.tsx). NOT
+ * persisted and never written to the server: it is the way back in, and a way
+ * back in that can itself be turned off is not one.
+ */
+export const revealed = signal(false);
+
+export const visibleRoutes = computed<readonly Route[]>(() => {
+  const pages = PANEL_PAGES.filter((page) => prefs.value.visiblePages.includes(page));
+  const routes: Route[] =
+    prefs.value.showSettings || revealed.value ? [...pages, 'settings'] : [...pages];
+
+  /*
+   * Never nothing. Hiding every page AND Settings would leave a panel with no
+   * destination and no control that could give it one — recoverable only by
+   * editing a JSON file inside the container. Settings comes back instead.
+   */
+  return routes.length > 0 ? routes : ['settings'];
+});
+
+/**
+ * The nav track collapses when there is nowhere else to go.
+ *
+ * One destination means the bar or rail is a label for the screen you are
+ * already looking at, costing ~7% of the width or ~12% of the height to say
+ * so. The shell drops the whole grid track rather than hiding the bar inside
+ * it, so the screen actually gets the space.
+ */
+export const navHidden = computed(() => visibleRoutes.value.length <= 1);
 
 export function isRouteVisible(value: Route): boolean {
-  return value === 'settings' || prefs.value.visiblePages.includes(value);
+  return visibleRoutes.value.includes(value);
 }
 
 // A preference can arrive from another connected panel while this one is on
-// the page being hidden. Move it somewhere usable immediately.
+// the page being hidden. Move it somewhere usable immediately — to the first
+// destination that still exists, which is only Settings when nothing else is.
 effect(() => {
-  if (!isRouteVisible(route.value)) route.value = 'settings';
+  if (!isRouteVisible(route.value)) route.value = visibleRoutes.value[0] ?? 'settings';
 });
 
 /**
