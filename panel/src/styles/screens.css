@@ -1648,7 +1648,13 @@
 .apple-tv-status { color: var(--text-dim); font-size: 0.85rem; }
 .apple-tv-status[data-live] { color: var(--ok); }
 
-.apple-tv-content { align-items: stretch; flex-direction: column; gap: var(--s-6); }
+.apple-tv-content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(18rem, 26rem);
+  align-items: center;
+  gap: clamp(var(--s-5), 4vw, var(--s-8));
+  min-height: 24rem;
+}
 .apple-tv-media {
   display: grid;
   grid-template-columns: minmax(10rem, 15rem) minmax(0, 1fr);
@@ -1675,7 +1681,14 @@
 .apple-tv-now .np-progress { margin-top: var(--s-4); }
 .apple-tv-transport { gap: var(--s-3); margin-top: var(--s-4); }
 
-.apple-tv-remote { width: 100%; max-width: 24rem; margin: 0 auto; }
+.apple-tv-remote {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 26rem;
+  margin: 0 auto;
+  padding-left: clamp(var(--s-4), 3vw, var(--s-7));
+  border-left: 1px solid var(--border-subtle);
+}
 .apple-tv-pad {
   display: grid;
   grid-template: repeat(3, 3.5rem) / repeat(3, 3.5rem);
@@ -1764,8 +1777,17 @@
 }
 .apple-tv-switch .status-dot { flex: 0 0 auto; }
 
+@media (max-width: 900px) {
+  .apple-tv-content { grid-template-columns: 1fr; min-height: 0; }
+  .apple-tv-remote {
+    min-width: 0;
+    padding: var(--s-5) 0 0;
+    border-left: 0;
+    border-top: 1px solid var(--border-subtle);
+  }
+}
+
 @media (max-width: 700px) {
-  .apple-tv-remote { flex-basis: auto; min-width: 0; }
   .apple-tv-media { grid-template-columns: 1fr; }
   .apple-tv-art { width: min(15rem, 70vw); margin: 0 auto; }
 }
