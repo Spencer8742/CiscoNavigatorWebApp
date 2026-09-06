@@ -508,7 +508,7 @@ controls:
   #       - { companion: 1/2/4 }
   #       - { tv: office_lg, action: on }
 
-  # Apple TVs appear as full remote cards at the top of the Controls screen.
+  # Apple TVs appear on their own page in the bottom navigation.
   # Give each one a fixed DHCP lease. The first Pair tap displays a PIN on the
   # television; enter it on the panel once. Credentials are encrypted by the
   # Apple protocol and persisted in /config/apple-tv.json.
@@ -517,6 +517,12 @@ controls:
   #    name: Living Room Apple TV
   #    host: 192.168.1.80
   #    # identifier: optional; normally the address is enough
+  #    # Shortcuts appear below Back, Home and volume. Only these bundle ids
+  #    # can be launched by the panel.
+  #    shortcuts:
+  #      - { name: Plex,    app: com.plexapp.plex }
+  #      - { name: YouTube, app: com.google.ios.youtube }
+  #      - { name: Music,   app: com.apple.TVMusic }
 
   # Seconds between key light state polls. 0 stops polling.
   #

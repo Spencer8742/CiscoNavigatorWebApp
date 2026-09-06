@@ -33,6 +33,7 @@ export type { VisitResult } from '~/cast/keeper.ts';
 export { WebosClient } from '~/tv/webos.ts';
 export { endpointsFor, failureOf, inputOfAppId, inputsOf } from '~/tv/protocol.ts';
 export { magicPacket, parseMac } from '~/tv/wol.ts';
+export { ConfigStore } from '~/config/load.ts';
 
 /*
  * Sonos XML, for the same reason again — with one addition that matters more

@@ -434,6 +434,10 @@ export function appleTvCommand(appleTv: string, op: import('@shared/protocol.ts'
   return send({ t: 'apple-tv', id: nextId(), appleTv, op });
 }
 
+export function launchAppleTvApp(appleTv: string, app: string): boolean {
+  return send({ t: 'apple-tv-app', id: nextId(), appleTv, app });
+}
+
 export function pairAppleTv(appleTv: string, op: 'begin' | 'pin' | 'cancel', pin?: string): boolean {
   return send({ t: 'apple-tv-pair', id: nextId(), appleTv, op, ...(pin ? { pin } : {}) });
 }

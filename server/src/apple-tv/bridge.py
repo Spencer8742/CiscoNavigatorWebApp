@@ -224,6 +224,17 @@ class Bridge:
             await getattr(device.atv.remote_control, op)()
         await self.publish(device)
 
+    async def launch_app(self, device: Device, bundle_id: str, name: str) -> None:
+        if device.atv is None:
+            await self.connect(device)
+        if device.atv is None:
+            raise RuntimeError(device.error or "Apple TV is not connected")
+        apps = await device.atv.apps.app_list()
+        if not any(app.identifier == bundle_id for app in apps):
+            raise RuntimeError(f"{name or bundle_id} is not installed on this Apple TV")
+        await device.atv.apps.launch_app(bundle_id)
+        await self.publish(device)
+
     async def pair_begin(self, device: Device) -> None:
         await self.close_device(device)
         device.pairing_state = "starting"
@@ -315,6 +326,12 @@ class Bridge:
                     raise RuntimeError("Apple TV is not configured")
                 if kind == "command":
                     await self.command(device, str(message.get("op")))
+                elif kind == "launch-app":
+                    await self.launch_app(
+                        device,
+                        str(message.get("app") or ""),
+                        str(message.get("name") or message.get("app") or "App"),
+                    )
                 elif kind == "pair-begin":
                     await self.pair_begin(device)
                 elif kind == "pair-pin":

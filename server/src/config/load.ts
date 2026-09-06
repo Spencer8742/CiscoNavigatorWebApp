@@ -19,6 +19,7 @@ import type {
   ControlButton,
   ControlItem,
   AppleTvConfig,
+  AppleTvShortcutConfig,
   TvConfig,
   ControlPage,
   DashboardConfig,
@@ -546,10 +547,40 @@ function appleTvList(v: unknown): AppleTvConfig[] {
       id,
       name: str(raw['name'], id, `${path}.name`),
       host,
+      shortcuts: appleTvShortcutList(raw['shortcuts'], `${path}.shortcuts`),
     };
     const identifier = str(raw['identifier'], '', `${path}.identifier`);
     if (identifier) cfg.identifier = identifier;
     out.push(cfg);
+  });
+  return out;
+}
+
+function appleTvShortcutList(v: unknown, path: string): AppleTvShortcutConfig[] {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v)) {
+    warn(path, 'list', v);
+    return [];
+  }
+  const seen = new Set<string>();
+  const out: AppleTvShortcutConfig[] = [];
+  v.forEach((item, i) => {
+    const itemPath = `${path}[${i}]`;
+    const raw = obj(item);
+    const bundleId = str(raw['bundleId'] ?? raw['app'], '', `${itemPath}.bundleId`);
+    if (!bundleId || bundleId.length > 200 || !/^[A-Za-z0-9._-]+$/.test(bundleId)) {
+      warn(`${itemPath}.bundleId`, 'an app bundle id like com.plexapp.plex', bundleId || item);
+      return;
+    }
+    if (seen.has(bundleId)) {
+      log.warn(`${itemPath}: duplicate app "${bundleId}" — skipping`);
+      return;
+    }
+    seen.add(bundleId);
+    out.push({
+      name: str(raw['name'], bundleId.split('.').pop() ?? bundleId, `${itemPath}.name`),
+      bundleId,
+    });
   });
   return out;
 }
