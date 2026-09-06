@@ -217,7 +217,7 @@ after(async () => {
 });
 
 /** Start an isolated backend + Immich pair. Returns both, plus a stop(). */
-async function isolated(configure = () => {}, configPath = CONFIG) {
+async function isolated(configure = () => {}, configPath = CONFIG, onLog = null) {
   const [immichPort, panelPort] = [await freePort(), await freePort()];
 
   const server = new MockImmich(immichPort);
@@ -236,11 +236,15 @@ async function isolated(configure = () => {}, configPath = CONFIG) {
       HA_TOKEN: '',
       IMMICH_URL: `http://127.0.0.1:${immichPort}`,
       IMMICH_API_KEY: 'mock-immich-key',
-      LOG_LEVEL: 'error',
+      // A caller watching for a specific warning needs warnings emitted.
+      LOG_LEVEL: onLog ? 'warn' : 'error',
     },
     stdio: ['ignore', 'ignore', 'pipe'],
   });
-  child.stderr.on('data', (d) => process.stderr.write(`[isolated] ${d}`));
+  child.stderr.on('data', (d) => {
+    if (onLog) onLog(String(d));
+    else process.stderr.write(`[isolated] ${d}`);
+  });
 
   await waitFor(async () => {
     try {
@@ -750,6 +754,41 @@ describe('panel preferences', () => {
     assert.equal(named.prefs.homeSide, 'photos', 'and a named panel inherits it');
 
     named.close();
+    await t.stop();
+  });
+
+  test('a retired overlays key is named rather than ignored', async () => {
+    /*
+     * `idle.overlays.clock`, `.date` and `.weather` moved to the panel. Left
+     * silent, somebody sets `clock: false`, watches the clock stay, and has
+     * nothing anywhere telling them why — the exact failure the move was
+     * meant to end.
+     */
+    const cfgPath = join(tmpdir(), 'navigator-moved-overlays.yaml');
+    writeFileSync(
+      cfgPath,
+      `
+version: 1
+ui: { title: Moved, timezone: UTC }
+idle:
+  overlays:
+    clock: false
+    weather: false
+    photoInfo: true
+media: { players: [] }
+`,
+    );
+
+    const warnings = [];
+    const t = await isolated(() => {}, cfgPath, (line) => warnings.push(line));
+    await sleep(300);
+
+    const said = warnings.join('\n');
+    assert.match(said, /idle\.overlays\.clock/, 'the retired key is named');
+    assert.match(said, /idle\.overlays\.weather/, 'and so is the other one');
+    assert.doesNotMatch(said, /idle\.overlays\.photoInfo/, 'but a live key is not');
+    assert.match(said, /Settings screen/, 'and it says where the setting went');
+
     await t.stop();
   });
 

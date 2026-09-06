@@ -279,7 +279,7 @@ function SaverClock({
 
   return (
     <div class={big ? 'saver-info saver-info-big' : 'saver-info'} data-corner={corner}>
-      {cfg.overlays.clock && prefs.value.photoScreensaverTime ? (
+      {prefs.value.photoScreensaverTime ? (
         <div class="saver-time tnum">
           {formatTime(d, t)}
           {ui.value.clock === '12h' ? (
@@ -288,12 +288,10 @@ function SaverClock({
         </div>
       ) : null}
 
-      {cfg.overlays.date && prefs.value.photoScreensaverDate ? (
-        <div class="saver-date">{formatDate(d, t)}</div>
-      ) : null}
+      {prefs.value.photoScreensaverDate ? <div class="saver-date">{formatDate(d, t)}</div> : null}
 
       <div class="saver-row">
-        {cfg.overlays.weather && prefs.value.photoScreensaverWeather && wx && !wx.unavailable ? (
+        {prefs.value.photoScreensaverWeather && wx && !wx.unavailable ? (
           <span class="saver-chip">
             <Icon name={wx.icon} size="1.1rem" weight={1.6} />
             {wx.value}

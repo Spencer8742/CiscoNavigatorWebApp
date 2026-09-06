@@ -23,10 +23,18 @@ export interface UiConfig {
   accent: string;
 }
 
+/**
+ * What the photo screensaver draws over the picture.
+ *
+ * The clock, the date and the weather are NOT here: each is a per-panel
+ * switch on the Settings screen instead. They were config once, and a line
+ * with two switches — one in a file, one on the wall — is a line that
+ * mysteriously will not come back on. The panel wins; see
+ * `PanelPrefs.photoScreensaverTime` and its siblings.
+ *
+ * These two remain config because nothing on the panel toggles them.
+ */
 export interface IdleOverlays {
-  clock: boolean;
-  date: boolean;
-  weather: boolean;
   nowPlaying: boolean;
   photoInfo: boolean;
 }

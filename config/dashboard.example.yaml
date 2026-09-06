@@ -84,10 +84,13 @@ idle:
   controlsHoldSeconds: 1800
 
   # What the screensaver shows overlaid on the photos.
+  #
+  # The clock, the date and the weather used to be here and are not any more:
+  # each is a switch on the panel's own Settings screen, per panel, so one
+  # wall can be bare while another still shows the time. Setting them here
+  # does nothing — the backend says so in the log if it finds them, and the
+  # lines can be deleted.
   overlays:
-    clock: true
-    date: true
-    weather: true
     nowPlaying: true
     # Photo date and location from EXIF.
     photoInfo: true

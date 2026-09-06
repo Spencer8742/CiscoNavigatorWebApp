@@ -74,7 +74,7 @@ export const FALLBACK_CONFIG: DashboardConfig = {
     timeoutSeconds: 180,
     returnHomeSeconds: 90,
     controlsHoldSeconds: 1800,
-    overlays: { clock: true, date: true, weather: true, nowPlaying: true, photoInfo: true },
+    overlays: { nowPlaying: true, photoInfo: true },
     burnInProtection: true,
   },
   immich: {
@@ -241,6 +241,24 @@ function warn(path: string, expected: string, got: unknown): void {
   log.warn(`${path}: expected ${expected}, got ${JSON.stringify(got)} — using default`);
 }
 
+/**
+ * The clock, date and weather overlays moved to the panel.
+ *
+ * They are now per-panel switches on the Settings screen, so the key here no
+ * longer does anything. Left silent, somebody would set `clock: false`, watch
+ * the clock stay, and have nothing anywhere to tell them why — which is the
+ * exact failure the move was meant to end.
+ */
+function noteMovedOverlays(overlays: Raw): void {
+  const moved = ['clock', 'date', 'weather'].filter((key) => overlays[key] !== undefined);
+  if (moved.length === 0) return;
+  log.warn(
+    `idle.overlays.${moved.join(', idle.overlays.')} no longer ${moved.length > 1 ? 'do' : 'does'} anything — ` +
+      'the clock, date and weather are now switched per panel on the Settings screen. ' +
+      'You can delete these lines.',
+  );
+}
+
 /* ── Section validators ───────────────────────────────────────────────────*/
 
 function validate(raw: unknown): DashboardConfig {
@@ -250,6 +268,7 @@ function validate(raw: unknown): DashboardConfig {
   const uiRaw = obj(root['ui']);
   const idleRaw = obj(root['idle']);
   const overlaysRaw = obj(idleRaw['overlays']);
+  noteMovedOverlays(overlaysRaw);
   const immichRaw = obj(root['immich']);
   const homeRaw = obj(root['home']);
   const mediaRaw = obj(root['media']);
@@ -295,9 +314,6 @@ function validate(raw: unknown): DashboardConfig {
         86_400,
       ),
       overlays: {
-        clock: bool(overlaysRaw['clock'], true, 'idle.overlays.clock'),
-        date: bool(overlaysRaw['date'], true, 'idle.overlays.date'),
-        weather: bool(overlaysRaw['weather'], true, 'idle.overlays.weather'),
         nowPlaying: bool(overlaysRaw['nowPlaying'], true, 'idle.overlays.nowPlaying'),
         photoInfo: bool(overlaysRaw['photoInfo'], true, 'idle.overlays.photoInfo'),
       },
