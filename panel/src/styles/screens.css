@@ -697,7 +697,10 @@
 
 .np-volume {
   display: flex;
-  align-items: center;
+  /* The slider's percentage sits above its track. Aligning the whole slider
+     by its center pulled the mute button upward; the controls themselves
+     share the bottom edge and therefore the same centerline. */
+  align-items: flex-end;
   gap: var(--s-2);
   margin-top: var(--s-5);
 }
@@ -709,8 +712,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 4rem;
-  height: 4rem;
+  width: 4.25rem;
+  height: 4.25rem;
   border-radius: var(--r-full);
   background: var(--surface-2);
   color: var(--text-dim);
