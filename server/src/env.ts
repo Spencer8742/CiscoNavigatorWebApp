@@ -73,6 +73,8 @@ export interface Env {
   spotify: {
     clientId: string;
     clientSecret: string;
+    /** ISO country used for availability-filtered podcast results. */
+    market: string;
     enabled: boolean;
   };
 
@@ -178,6 +180,9 @@ export function loadEnv(): Env {
     spotify: {
       clientId: spotifyId,
       clientSecret: spotifySecret,
+      market: /^[A-Za-z]{2}$/.test(str('SPOTIFY_MARKET', 'US'))
+        ? str('SPOTIFY_MARKET', 'US').toUpperCase()
+        : 'US',
       enabled: Boolean(spotifyId && spotifySecret),
     },
 

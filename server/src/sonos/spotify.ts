@@ -6,6 +6,7 @@ import type { MediaArt } from '~/http/media-art.ts';
 import type { Env } from '~/env.ts';
 import type { MusicServices } from '~/sonos/music.ts';
 import type { BrowseResult, MediaItem, MediaKind } from '@shared/protocol.ts';
+import type { PlayStyle } from '~/sonos/uris.ts';
 
 const log = logger('sonos-spotify');
 
@@ -46,6 +47,8 @@ const SEARCH_URL = 'https://api.spotify.com/v1/search';
 const LIMIT = 10;
 
 const TIMEOUT_MS = 10_000;
+
+type SpotifyKind = 'track' | 'album' | 'artist' | 'playlist' | 'show' | 'episode';
 
 /** Refresh a little before expiry rather than after a failure. */
 const TOKEN_SKEW_MS = 60_000;
@@ -121,7 +124,8 @@ export class SpotifySearch {
     const token = await this.#accessToken();
     const url =
       `${SEARCH_URL}?q=${encodeURIComponent(query)}` +
-      `&type=track,album,artist,playlist&limit=${LIMIT}`;
+      `&type=track,album,artist,playlist,show,episode&limit=${LIMIT}` +
+      `&market=${encodeURIComponent(this.#env.market)}`;
 
     const body = await this.#get(url, token);
 
@@ -130,6 +134,8 @@ export class SpotifySearch {
       { name: 'Albums', items: this.#shapeAll(body, 'albums', 'album', account) },
       { name: 'Artists', items: this.#shapeAll(body, 'artists', 'artist', account) },
       { name: 'Playlists', items: this.#shapeAll(body, 'playlists', 'playlist', account) },
+      { name: 'Podcast shows', items: this.#shapeAll(body, 'shows', 'podcast', account, 'show') },
+      { name: 'Podcast episodes', items: this.#shapeAll(body, 'episodes', 'podcast', account, 'episode') },
     ];
 
     return { kind: 'groups', groups: groups.filter((g) => g.items.length > 0) };
@@ -210,6 +216,7 @@ export class SpotifySearch {
     section: string,
     kind: MediaKind,
     account: Account,
+    spotifyKind: SpotifyKind = kind as SpotifyKind,
   ): MediaItem[] {
     const container = body[section];
     const list = isObject(container) ? container['items'] : null;
@@ -217,32 +224,48 @@ export class SpotifySearch {
 
     const out: MediaItem[] = [];
     for (const raw of list) {
-      const shaped = this.#shape(raw, kind, account);
+      const shaped = this.#shape(raw, kind, account, spotifyKind);
       if (shaped) out.push(shaped);
     }
     return out;
   }
 
-  #shape(raw: unknown, kind: MediaKind, account: Account): MediaItem | null {
+  #shape(
+    raw: unknown,
+    kind: MediaKind,
+    account: Account,
+    spotifyKind: SpotifyKind,
+  ): MediaItem | null {
     if (!isObject(raw)) return null;
 
     const name = typeof raw['name'] === 'string' ? raw['name'] : null;
     const id = typeof raw['id'] === 'string' ? raw['id'] : null;
     if (!name || !id) return null;
 
-    const spotifyUri = typeof raw['uri'] === 'string' ? raw['uri'] : `spotify:${kind}:${id}`;
-    const { uri, metadata } = sonosUri(spotifyUri, name, kind, account);
+    const spotifyUri = typeof raw['uri'] === 'string' ? raw['uri'] : `spotify:${spotifyKind}:${id}`;
+    const { uri, metadata, playStyle } = sonosUri(spotifyUri, name, spotifyKind, account);
 
     const item: MediaItem = {
       // The class goes with it so the registry knows an album is a container:
       // the URI scheme alone would say so too, but only for the kinds that
       // have a prefix, and the class is what keeps the two in step.
-      u: this.#uris.register(uri, null, metadata, UPNP_CLASS[kind] ?? '') ?? '',
+      u:
+        this.#uris.register(
+          uri,
+          null,
+          metadata,
+          UPNP_CLASS[spotifyKind] ?? '',
+          account.sid,
+          playStyle,
+        ) ?? '',
       n: name,
       k: kind,
+      // Web API search results are playable references, not SMAPI browse
+      // object ids, so opening them as folders would always lead nowhere.
+      ...(kind === 'track' ? {} : { b: false as const }),
     };
 
-    const sub = subtitleOf(raw, kind);
+    const sub = subtitleOf(raw, spotifyKind);
     if (sub) item.s = sub;
 
     const art = this.#art.register(imageOf(raw));
@@ -380,9 +403,9 @@ async function spotifyFailure(response: Response, prefix: string): Promise<strin
 export function sonosUri(
   spotifyUri: string,
   title: string,
-  kind: MediaKind,
+  kind: SpotifyKind,
   account: Account,
-): { uri: string; metadata: string } {
+): { uri: string; metadata: string; playStyle: PlayStyle } {
   // Sonos writes the colon escapes in this identifier in lower case. URI
   // escapes are equivalent by spec, but several speaker generations compare
   // the service object id literally while resolving it.
@@ -400,7 +423,10 @@ export function sonosUri(
     sid: account.sid,
   });
 
-  return { uri, metadata };
+  // Spotify share links, including albums and playlists, are expanded by
+  // AddURIToQueue. Sending a collection directly to SetAVTransportURI is the
+  // command path that produces UPnP 701 on real speakers.
+  return { uri, metadata, playStyle: 'track' };
 }
 
 /**
@@ -410,28 +436,33 @@ export function sonosUri(
  * A kind absent from this table is an item rather than a container, and takes
  * the track URI shape instead.
  */
-const CONTAINER_URI_PREFIX: Partial<Record<MediaKind, string>> = {
+const CONTAINER_URI_PREFIX: Partial<Record<SpotifyKind, string>> = {
   album: '1004206c',
   playlist: '1006206c',
   artist: '1005004c',
+  show: '1006206c',
 };
 
 /** DIDL ids use a different prefix from the transport URI. */
-const ITEM_ID_PREFIX: Partial<Record<MediaKind, string>> = {
+const ITEM_ID_PREFIX: Partial<Record<SpotifyKind, string>> = {
   track: '00032020',
   album: '00040000',
   playlist: '1006206c',
   artist: '1005004c',
+  show: '1006206c',
+  episode: '00032020',
 };
 
 /** Containers and items are flagged differently. Both are Sonos's values. */
 const CONTAINER_FLAGS = 8300;
 
-const UPNP_CLASS: Partial<Record<MediaKind, string>> = {
+const UPNP_CLASS: Partial<Record<SpotifyKind, string>> = {
   track: 'object.item.audioItem.musicTrack',
   album: 'object.container.album.musicAlbum',
   artist: 'object.container.person.musicArtist',
   playlist: 'object.container.playlistContainer',
+  show: 'object.container.playlistContainer',
+  episode: 'object.item.audioItem.musicTrack',
 };
 
 /**
@@ -482,8 +513,13 @@ function isObject(raw: unknown): raw is Record<string, unknown> {
   return typeof raw === 'object' && raw !== null;
 }
 
-function subtitleOf(raw: Record<string, unknown>, kind: MediaKind): string | null {
+function subtitleOf(raw: Record<string, unknown>, kind: SpotifyKind): string | null {
   if (kind === 'artist') return null;
+
+  const show = isObject(raw['show']) && typeof raw['show']['name'] === 'string'
+    ? raw['show']['name']
+    : null;
+  const publisher = typeof raw['publisher'] === 'string' ? raw['publisher'] : null;
 
   const artists = Array.isArray(raw['artists'])
     ? raw['artists']
@@ -495,7 +531,12 @@ function subtitleOf(raw: Record<string, unknown>, kind: MediaKind): string | nul
     ? raw['album']['name']
     : null;
 
-  const parts = [artists.join(', '), kind === 'track' ? album : null].filter(
+  const parts = [
+    artists.join(', '),
+    kind === 'track' ? album : null,
+    kind === 'episode' ? show : null,
+    kind === 'show' ? publisher : null,
+  ].filter(
     (p): p is string => typeof p === 'string' && p.length > 0,
   );
   return parts.length > 0 ? parts.join(' · ') : null;

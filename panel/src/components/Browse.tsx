@@ -4,7 +4,6 @@ import { Pressable } from '~/components/Pressable.tsx';
 import { browse } from '~/net/socket.ts';
 import { Artwork } from '~/components/Artwork.tsx';
 import { speakers } from '~/state/selectors.ts';
-import { sources } from '~/state/players.ts';
 import * as act from '~/state/actions.ts';
 import { BROWSE_PAGE } from '@shared/protocol.ts';
 import type {
@@ -91,7 +90,6 @@ interface Crumb {
 
 export function Browse({ playerId, onClose }: { playerId: string; onClose: () => void }) {
   const [tab, setTab] = useState('pinned');
-  const [source, setSource] = useState<'all' | 'library' | number>('all');
   const [mediaFilter, setMediaFilter] = useState<MediaKind | undefined>(undefined);
   const [offset, setOffset] = useState(0);
   const [query, setQuery] = useState('');
@@ -127,7 +125,7 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
     const req: BrowseRequest = here
       ? { kind: 'item', uri: here.uri, offset }
       : current.request.kind === 'search'
-        ? { kind: 'search', text: query, source, media: mediaFilter }
+        ? { kind: 'search', text: query, source: 'all', media: mediaFilter }
         : current.request.kind === 'sources'
           ? // The service list is short by construction and does not page.
             { kind: 'sources' }
@@ -162,7 +160,7 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
     return () => {
       stale = true;
     };
-  }, [tab, offset, query, source, mediaFilter, here?.uri]);
+  }, [tab, offset, query, mediaFilter, here?.uri]);
 
   const pick = (t: string): void => {
     setTab(t);
@@ -244,14 +242,7 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
 
         {tab === 'search' && !here ? (
           <>
-            <SearchBox value={query} onSearch={setQuery} placeholder="Search all connected music" />
-            <div class="browse-filters scroll" aria-label="Search source">
-              <FilterChip label="Everything" active={source === 'all'} onPress={() => setSource('all')} />
-              <FilterChip label="Sonos" active={source === 'library'} onPress={() => setSource('library')} />
-              {sources.value.filter((item) => item.searchable && item.ready).map((item) => (
-                <FilterChip key={item.sid} label={item.name} active={source === item.sid} onPress={() => setSource(item.sid)} />
-              ))}
-            </div>
+            <SearchBox value={query} onSearch={setQuery} placeholder="Search Spotify and Sonos" />
             <div class="browse-filters scroll" aria-label="Result type">
               <FilterChip label="All types" active={!mediaFilter} onPress={() => setMediaFilter(undefined)} />
               {(['track', 'album', 'artist', 'playlist', 'radio', 'podcast'] as MediaKind[]).map((kind) => (

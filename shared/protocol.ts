@@ -346,12 +346,8 @@ export type BrowseRequest =
       offset?: number;
     }
   /**
-   * A text search, against one source.
-   *
-   * There is no "search everything": the local library is searched by object
-   * id and a streaming catalog only by that service's own API. So the source
-   * is named rather than guessed, which is two taps instead of one and the
-   * honest shape of the system underneath.
+   * A text search. The panel uses `all` to combine Sonos and Spotify; the
+   * narrower forms remain available to the backend and protocol tests.
    */
   /**
    * `source` is `'library'` for what the speakers hold, or a service's `sid`

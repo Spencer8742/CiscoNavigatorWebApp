@@ -420,8 +420,8 @@ export class SonosBrowser {
       const available = new Set(music.available().map((service) => service.sid));
       const sources = music.list().filter(
         (service) =>
-          (available.has(service.sid) && canSearch(service)) ||
-          (this.#deps.spotify.enabled && service.name.toLowerCase() === 'spotify'),
+          service.name.toLowerCase() === 'spotify' &&
+          ((available.has(service.sid) && canSearch(service)) || this.#deps.spotify.enabled),
       );
       const results = await Promise.allSettled([
         this.#search({ kind: 'search', text: query, source: 'library', media: req.media }),

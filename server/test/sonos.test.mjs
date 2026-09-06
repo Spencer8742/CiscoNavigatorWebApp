@@ -19,6 +19,7 @@ import {
   seconds,
   flag,
   sonosUri,
+  UriRegistry,
 } from '../dist/testkit.js';
 
 /**
@@ -1313,7 +1314,7 @@ describe('browsing', () => {
     panel.close();
   });
 
-  test('searches every connected source and filters by media type', async () => {
+  test('combined search includes Sonos and filters by media type', async () => {
     const panel = new TestPanel(ctx.port);
     await panel.connect();
     await waitFor(() => panel.players.length > 0, 'players');
@@ -2016,6 +2017,55 @@ describe('Spotify catalog search', () => {
 
     assert.match(result.uri, /^x-rincon-cpcontainer:1004206cspotify%3aalbum%3a/);
     assert.match(result.metadata, /id="00040000spotify%3aalbum%3a/);
+    assert.equal(result.playStyle, 'track', 'collections must be expanded through the queue');
+  });
+
+  test('queues Spotify playlists even though their URI is a container', () => {
+    const result = sonosUri(
+      'spotify:playlist:37i9dQZF1DXcBWIGoYBM5M',
+      'Test playlist',
+      'playlist',
+      { sid: 9, sn: 1 },
+    );
+    const uris = new UriRegistry();
+    const key = uris.register(
+      result.uri,
+      null,
+      result.metadata,
+      'object.container.playlistContainer',
+      9,
+      result.playStyle,
+    );
+
+    assert.match(result.uri, /^x-rincon-cpcontainer:1006206cspotify%3aplaylist%3a/);
+    assert.match(result.metadata, /id="1006206cspotify%3aplaylist%3a/);
+    assert.equal(uris.get(key).style, 'track');
+
+    const restored = new UriRegistry();
+    const restoredKey = restored.restore(uris.get(key));
+    assert.equal(restored.get(restoredKey).style, 'track', 'pinned playlists keep their queue path');
+  });
+
+  test('builds playable Spotify podcast show and episode references', () => {
+    const show = sonosUri(
+      'spotify:show:38bS44xjbVVZ3No3ByF1dJ',
+      'Test show',
+      'show',
+      { sid: 9, sn: 1 },
+    );
+    const episode = sonosUri(
+      'spotify:episode:0zLhl3WsOCQHbe1BPTiHgr',
+      'Test episode',
+      'episode',
+      { sid: 9, sn: 1 },
+    );
+
+    assert.match(show.uri, /^x-rincon-cpcontainer:1006206cspotify%3ashow%3a/);
+    assert.match(show.metadata, /id="1006206cspotify%3ashow%3a/);
+    assert.match(episode.uri, /^x-sonos-spotify:spotify%3aepisode%3a/);
+    assert.match(episode.metadata, /id="00032020spotify%3aepisode%3a/);
+    assert.equal(show.playStyle, 'track');
+    assert.equal(episode.playStyle, 'track');
   });
 });
 

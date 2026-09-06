@@ -630,6 +630,7 @@ SONOS_CALLBACK_HOST=
 # developer.spotify.com — client-credentials flow, no user login, no redirect.
 SPOTIFY_CLIENT_ID=
 SPOTIFY_CLIENT_SECRET=
+SPOTIFY_MARKET=US
 ```
 
 `MASS_URL`, `MASS_TOKEN` and `MASS_INSECURE_TLS` are removed from
