@@ -931,7 +931,32 @@
 .player-select-bar {
   display: flex;
   align-items: center;
+  /* Wraps. Six controls at a comfortable size do not fit across a phone, and
+     without this they simply ran off the right edge — Now Playing and the
+     speaker settings were on screen in the DOM and unreachable with a
+     finger. Wrapping costs a second row on a narrow screen and changes
+     nothing on a wide one, where they all fit anyway. */
+  flex-wrap: wrap;
+  gap: var(--s-2);
   padding: var(--s-4) var(--s-6) var(--s-2);
+}
+
+/* The buttons sit to the right of the selector on a wide screen. Pushing
+   from the SELECTOR rather than pulling each button with `margin-left: auto`
+   keeps that arrangement while letting the group wrap as one. */
+.player-select-bar .player-select {
+  margin-right: auto;
+}
+
+/* Narrow: the speaker picker takes the whole first row and the buttons flow
+   beneath it. Left to wrap on its own it kept one button company on row one
+   and left the rest ragged underneath, which reads as a mistake rather than
+   a layout. */
+@media (max-width: 34rem) {
+  .player-select-bar .player-select {
+    flex: 1 0 100%;
+    margin-right: 0;
+  }
 }
 
 .player-select {
@@ -1051,7 +1076,6 @@
   align-items: center;
   gap: var(--s-2);
   min-height: var(--touch);
-  margin-left: auto;
   padding: var(--s-2) var(--s-4);
   border-radius: var(--r-full);
   background: var(--accent-soft);

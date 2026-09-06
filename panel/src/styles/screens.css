@@ -667,7 +667,7 @@
   display: flex;
   align-items: center;
   gap: var(--s-2);
-  min-height: 2.5rem;
+  min-height: var(--touch-min);
   padding: 0 var(--s-3);
   border-radius: var(--r-full);
   background: var(--surface-2);
@@ -1189,7 +1189,20 @@
  *
  * So: filling is a HEIGHT question, below. Splitting stays a width one.
  */
-@media (min-height: 40rem) {
+/*
+ * Fitting the viewport is for panels and tablets. A phone scrolls.
+ *
+ * "Never scroll" is right for something glanced at from across a room: a
+ * scrollbar there hides content behind a gesture nobody makes while walking
+ * past. It is wrong for a phone held in the hand, where scrolling is free and
+ * cramming everything in costs the album art — which is exactly what
+ * happened, squeezing it to a strip about thirty pixels tall, because it is
+ * the one element told to take whatever height is left.
+ *
+ * So both dimensions have to qualify: wide enough not to be a phone, tall
+ * enough to have room to fill.
+ */
+@media (min-width: 34rem) and (min-height: 40rem) {
   /* Compound selector so this wins over the generic `.scroll` utility the
      other screens share — Home is the one screen that must not scroll. */
   .screen-body.home-body {
@@ -1207,6 +1220,31 @@
 }
 
 /*
+ * Stacked: the artwork is square, centred, and bounded.
+ *
+ * `flex: 1 1 auto; min-height: 0` — take whatever height is left — is right
+ * in the two-column layout, where the card is a 20-26rem column and the
+ * leftover height is about as tall as that is wide. Stacked, the card spans
+ * the full screen, so the same rule produced a 658x369 letterbox: a cover
+ * cropped to a strip, which is what "the album art is squished" looks like.
+ *
+ * Square because album art is. `max-width` keeps it from becoming enormous on
+ * a wide tablet, `max-height: 100%` lets it shrink rather than overflow when
+ * the column is short, and `flex: 0 1 auto` permits that shrinking — together
+ * they mean it fits comfortably without ever being the wrong shape.
+ */
+@media (max-width: 59.99rem) {
+  .np-art {
+    flex: 0 1 auto;
+    aspect-ratio: 1 / 1;
+    max-width: min(100%, 26rem);
+    max-height: 100%;
+    margin-left: auto;
+    margin-right: auto;
+  }
+}
+
+/*
  * Stacked and tall: the CARD takes the leftover height, not the favourites.
  *
  * `grid-template-rows: minmax(0, 1fr)` sizes the first row only, so in one
@@ -1216,7 +1254,7 @@
  * inside it fills that. Only above 60rem does the split go side by side, at
  * which point this does not apply.
  */
-@media (max-width: 59.99rem) and (min-height: 40rem) {
+@media (min-width: 34rem) and (max-width: 59.99rem) and (min-height: 40rem) {
   .home-split {
     grid-template-rows: auto minmax(0, 1fr);
   }
@@ -1271,6 +1309,10 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  /* It opens the full player. Small and quiet by intent, but a target has to
+     be reachable whatever it looks like — this was 14x14. */
+  min-width: var(--touch-min);
+  min-height: var(--touch-min);
   border-radius: var(--r-full);
   color: var(--text-faint);
   background: transparent;
@@ -1345,12 +1387,19 @@
   gap: var(--s-2);
 }
 
+/* `--touch-md` was referenced here and defined nowhere.
+ *
+ * An undefined custom property is invalid at computed-value time, so BOTH
+ * declarations fell back to `auto` and the transport buttons collapsed to the
+ * size of their glyphs — 20x20 on every device, the Navigator included. A
+ * stylesheet says nothing about this; it took auditing a screen that had
+ * music playing to see it at all. */
 .np-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: var(--touch-md);
-  min-height: var(--touch-md);
+  min-width: var(--touch-min);
+  min-height: var(--touch-min);
   border-radius: var(--r-full);
   color: var(--text);
   background: transparent;
