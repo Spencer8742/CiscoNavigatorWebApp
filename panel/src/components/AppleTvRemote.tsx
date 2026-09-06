@@ -1,8 +1,9 @@
+import type { JSX } from 'preact';
 import { useState } from 'preact/hooks';
 import { Icon } from '~/components/Icon.tsx';
 import { Pressable } from '~/components/Pressable.tsx';
 import { Progress } from '~/components/Progress.tsx';
-import { appleTvCommand, launchAppleTvApp, pairAppleTv } from '~/net/socket.ts';
+import { appleTvCommand, appleTvSwipe, launchAppleTvApp, pairAppleTv } from '~/net/socket.ts';
 import { markActivity } from '~/state/ui.ts';
 import { getToken } from '~/net/auth.ts';
 import { controlsConfig } from '~/config/index.ts';
@@ -75,13 +76,7 @@ export function AppleTvRemote({ tv }: { tv: AppleTvState }) {
         </div>
 
         <div class="apple-tv-remote" aria-label={`${tv.name} remote`}>
-          <div class="apple-tv-pad">
-            <RemoteButton icon="chevronUp" label="Up" onPress={() => send('up')} class="atv-up" />
-            <RemoteButton icon="chevronLeft" label="Left" onPress={() => send('left')} class="atv-left" />
-            <Pressable class="atv-select" onPress={() => send('select')} ariaLabel="Select">OK</Pressable>
-            <RemoteButton icon="chevronRight" label="Right" onPress={() => send('right')} class="atv-right" />
-            <RemoteButton icon="chevronDown" label="Down" onPress={() => send('down')} class="atv-down" />
-          </div>
+          <SwipePad tv={tv} send={send} />
           <div class="apple-tv-keys">
             <Pressable onPress={() => send('menu')} ariaLabel="Back">Back</Pressable>
             <Pressable onPress={() => send('home')} ariaLabel="Home"><Icon name="home" size="1.2rem" /> Home</Pressable>
@@ -106,6 +101,97 @@ export function AppleTvRemote({ tv }: { tv: AppleTvState }) {
       </div>
       {tv.error && !tv.reachable ? <p class="apple-tv-error">{tv.error}</p> : null}
     </section>
+  );
+}
+
+interface DragGesture {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  currentX: number;
+  currentY: number;
+  startedAt: number;
+}
+
+function SwipePad({ tv, send }: { tv: AppleTvState; send: (op: AppleTvCommand) => void }) {
+  const [drag, setDrag] = useState<DragGesture | null>(null);
+  const point = (event: JSX.TargetedPointerEvent<HTMLDivElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return {
+      x: Math.round(Math.max(0, Math.min(1000, ((event.clientX - rect.left) / rect.width) * 1000))),
+      y: Math.round(Math.max(0, Math.min(1000, ((event.clientY - rect.top) / rect.height) * 1000))),
+    };
+  };
+  const finish = (event: JSX.TargetedPointerEvent<HTMLDivElement>) => {
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    const end = point(event);
+    const distance = Math.hypot(end.x - drag.startX, end.y - drag.startY);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    setDrag(null);
+    if (distance < 80) {
+      send('select');
+      return;
+    }
+    appleTvSwipe(tv.id, {
+      startX: drag.startX,
+      startY: drag.startY,
+      endX: end.x,
+      endY: end.y,
+      durationMs: Math.max(100, Math.min(2000, Math.round(performance.now() - drag.startedAt))),
+    });
+    markActivity();
+  };
+  const keyboard = (event: JSX.TargetedKeyboardEvent<HTMLDivElement>) => {
+    const commands: Record<string, AppleTvCommand> = {
+      ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
+      Enter: 'select', ' ': 'select',
+    };
+    const command = commands[event.key];
+    if (!command) return;
+    event.preventDefault();
+    send(command);
+  };
+  const x = drag ? drag.currentX / 10 : 50;
+  const y = drag ? drag.currentY / 10 : 50;
+
+  return (
+    <div class="apple-tv-touch-wrap">
+      <div
+        class="apple-tv-touchpad"
+        role="button"
+        tabIndex={0}
+        aria-label="Swipe to navigate, tap to select"
+        data-dragging={drag ? '' : undefined}
+        onKeyDown={keyboard}
+        onPointerDown={(event) => {
+          if (!event.isPrimary) return;
+          const start = point(event);
+          event.currentTarget.setPointerCapture(event.pointerId);
+          setDrag({
+            pointerId: event.pointerId,
+            startX: start.x,
+            startY: start.y,
+            currentX: start.x,
+            currentY: start.y,
+            startedAt: performance.now(),
+          });
+          markActivity();
+        }}
+        onPointerMove={(event) => {
+          if (!drag || event.pointerId !== drag.pointerId) return;
+          const current = point(event);
+          setDrag({ ...drag, currentX: current.x, currentY: current.y });
+        }}
+        onPointerUp={finish}
+        onPointerCancel={() => setDrag(null)}
+      >
+        <span class="apple-tv-touch-glow" style={{ left: `${x}%`, top: `${y}%` }} />
+        <span class="apple-tv-touch-mark"><Icon name="tv" size="2rem" /></span>
+      </div>
+      <span class="apple-tv-touch-hint">Swipe to navigate · Tap to select</span>
+    </div>
   );
 }
 

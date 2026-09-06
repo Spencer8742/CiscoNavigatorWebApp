@@ -4,7 +4,7 @@ import { createInterface } from 'node:readline';
 import type { ServerResponse } from 'node:http';
 import { logger } from '~/lib/log.ts';
 import type { AppleTvConfig } from '@shared/config.ts';
-import type { AppleTvCommand, AppleTvState } from '@shared/protocol.ts';
+import type { AppleTvCommand, AppleTvState, AppleTvSwipe } from '@shared/protocol.ts';
 
 const log = logger('apple-tv');
 
@@ -55,6 +55,18 @@ export class AppleTvBridge {
   command(device: string, op: AppleTvCommand): Promise<string | null> {
     if (!this.#devices.some((item) => item.id === device)) return Promise.resolve('Apple TV is not configured');
     return this.#request({ t: 'command', device, op });
+  }
+
+  swipe(device: string, gesture: AppleTvSwipe): Promise<string | null> {
+    if (!this.#devices.some((item) => item.id === device)) return Promise.resolve('Apple TV is not configured');
+    const coordinates = [gesture.startX, gesture.startY, gesture.endX, gesture.endY];
+    if (!coordinates.every((value) => Number.isInteger(value) && value >= 0 && value <= 1000)) {
+      return Promise.resolve('Apple TV swipe coordinates are invalid');
+    }
+    if (!Number.isInteger(gesture.durationMs) || gesture.durationMs < 100 || gesture.durationMs > 2000) {
+      return Promise.resolve('Apple TV swipe duration is invalid');
+    }
+    return this.#request({ t: 'swipe', device, ...gesture });
   }
 
   launchApp(device: string, bundleId: string): Promise<string | null> {

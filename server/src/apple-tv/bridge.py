@@ -224,6 +224,19 @@ class Bridge:
             await getattr(device.atv.remote_control, op)()
         await self.publish(device)
 
+    async def swipe(self, device: Device, message: dict[str, Any]) -> None:
+        if device.atv is None:
+            await self.connect(device)
+        if device.atv is None:
+            raise RuntimeError(device.error or "Apple TV is not connected")
+        values = [message.get(key) for key in ("startX", "startY", "endX", "endY")]
+        duration = message.get("durationMs")
+        if not all(isinstance(value, int) and 0 <= value <= 1000 for value in values):
+            raise RuntimeError("Swipe coordinates are invalid")
+        if not isinstance(duration, int) or not 100 <= duration <= 2000:
+            raise RuntimeError("Swipe duration is invalid")
+        await device.atv.touch.swipe(*values, duration)
+
     async def launch_app(self, device: Device, bundle_id: str, name: str) -> None:
         if device.atv is None:
             await self.connect(device)
@@ -326,6 +339,8 @@ class Bridge:
                     raise RuntimeError("Apple TV is not configured")
                 if kind == "command":
                     await self.command(device, str(message.get("op")))
+                elif kind == "swipe":
+                    await self.swipe(device, message)
                 elif kind == "launch-app":
                     await self.launch_app(
                         device,
