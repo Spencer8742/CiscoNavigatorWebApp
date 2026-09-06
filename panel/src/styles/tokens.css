@@ -93,10 +93,20 @@
 
   /* ── Touch ───────────────────────────────────────────────────────────────
      Nothing interactive is ever smaller than --touch-min. A fingertip is
-     ~9mm; at 16px root on a 10.1" panel, 3rem ≈ 48px ≈ 10mm. */
-  --touch-min: 3rem;
-  --touch: 4rem;
-  --touch-lg: 5.5rem;
+     ~9mm; at 16px root on a 10.1" panel, 3rem ≈ 48px ≈ 10mm.
+
+     The `max(…, 44px)` is the whole point and is not decoration. These were
+     rem-only, and rem here is tied to the viewport (see the scale above), so
+     on a smaller screen the touch minimum SHRANK — 3rem at the clamped floor
+     of 14px is 42px. A fingertip does not get smaller when the screen does.
+     The floor is a physical measurement and has to be in physical units;
+     44px is the smallest target Apple and Google both still call reachable.
+
+     An audit across eight viewports found this one line accounted for most
+     of the undersized controls in the app. */
+  --touch-min: max(3rem, 44px);
+  --touch: max(4rem, 48px);
+  --touch-lg: max(5.5rem, 56px);
 
   /* ── Motion ──────────────────────────────────────────────────────────────
      --motion is scaled at runtime from ui.motion in dashboard.yaml (set it

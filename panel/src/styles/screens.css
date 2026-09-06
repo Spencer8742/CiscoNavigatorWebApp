@@ -109,7 +109,7 @@
 
 .settings-page-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(max(11rem, (100% - 2 * var(--s-3)) / 3), 1fr));
   gap: var(--s-3);
 }
 
@@ -148,11 +148,7 @@
   color: var(--accent);
 }
 
-@media (max-width: 48rem) {
-  .settings-page-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
+
 
 .settings-ua {
   display: block;
@@ -242,7 +238,9 @@
 
 .status-strip {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  /* 10.5rem rather than 9: at 9 a 744px-wide screen fits five across and
+     every value truncates. One fewer, each readable. */
+  grid-template-columns: repeat(auto-fit, minmax(10.5rem, 1fr));
   gap: var(--s-3);
   margin-bottom: var(--s-2);
 }
@@ -259,12 +257,24 @@
   opacity: 0.45;
 }
 
+/* Two lines rather than an ellipsis.
+
+   These labels are short phrases — "Downstairs Temperature" — set uppercase
+   with letter-spacing, which makes them wide. In a 9rem tile on a narrow
+   screen that truncates to "DOWNSTAIRS TEMP…", which names nothing. Wrapping
+   costs one line and keeps the tile readable; the clamp stops a pathological
+   label from pushing the value out of the card. */
 .status-label {
   font-size: 0.75rem;
   font-weight: 560;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-faint);
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
 }
 
 .status-value {
@@ -1167,7 +1177,19 @@
  * flex item's default minimum size is its content, which is exactly the
  * behaviour that pushes a tall photo past the bottom of the screen.
  */
-@media (min-width: 60rem) {
+/*
+ * Filling the height and splitting into columns are two different questions,
+ * and they used to be one media query.
+ *
+ * Both were behind `min-width: 60rem`, so an iPad held in PORTRAIT — plenty
+ * of height, not much width — correctly collapsed to one column and then
+ * also stopped filling the viewport, leaving the content in the top third
+ * and two thirds of the screen empty. A screenshot showed it immediately;
+ * no overflow or touch-target measurement ever would.
+ *
+ * So: filling is a HEIGHT question, below. Splitting stays a width one.
+ */
+@media (min-height: 40rem) {
   /* Compound selector so this wins over the generic `.scroll` utility the
      other screens share — Home is the one screen that must not scroll. */
   .screen-body.home-body {
@@ -1181,6 +1203,27 @@
     flex: 1 1 auto;
     min-height: 0;
     grid-template-rows: minmax(0, 1fr);
+  }
+}
+
+/*
+ * Stacked and tall: the CARD takes the leftover height, not the favourites.
+ *
+ * `grid-template-rows: minmax(0, 1fr)` sizes the first row only, so in one
+ * column the favourites grew and the photo card was left sitting at the
+ * bottom with a band of empty screen above it. Two named rows instead —
+ * favourites take what they need, the card takes the rest, and the photo
+ * inside it fills that. Only above 60rem does the split go side by side, at
+ * which point this does not apply.
+ */
+@media (max-width: 59.99rem) and (min-height: 40rem) {
+  .home-split {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+}
+
+@media (min-width: 60rem) {
+  .home-split {
     /* The card is a fixed-ish share rather than 1fr: artwork and a photo both
        want a stable width, and a column that grows with the window makes them
        jump about as tiles reflow. */
@@ -1326,7 +1369,11 @@
      portrait photo and a panorama therefore produce the same layout — the
      photo is cropped to the card, the card is not resized to the photo. */
   flex: 1 1 auto;
-  min-height: 0;
+  /* Not 0: on a short screen the flex container runs out of room and this
+     collapsed to a 2px line of photo, which reads as a rendering fault. It
+     is either a picture or it is nothing — see the short-screen rule below,
+     which chooses nothing. */
+  min-height: 6rem;
   border-radius: var(--r-lg);
   overflow: hidden;
   border: 1px solid var(--border-subtle);
@@ -1759,7 +1806,7 @@
 }
 .apple-tv-shortcuts {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(max(4.5rem, (100% - 3 * var(--s-2)) / 4), 1fr));
   gap: var(--s-2);
   margin-top: var(--s-4);
 }
@@ -1878,9 +1925,23 @@
 /* auto-fill, not auto-fit: a page with two buttons should show two buttons,
    not two buttons stretched across the whole panel.
    `columns:` in dashboard.yaml overrides this inline — see Controls.tsx. */
+/* The config asks for a column count; this treats it as a MAXIMUM.
+   `--cols` is set inline by the screen (Controls.tsx). The track sizing reads
+   "as many columns as fit, each at least a key's width, but never narrower
+   than the share the requested count would give" — so a page written for
+   four across is four across when there is room and two when there is not,
+   without the config knowing anything about the screen.
+
+   The plain declaration first is a real fallback, not a leftover: if a
+   browser cannot parse the max()/calc() form it keeps a working grid rather
+   than falling back to `none` and stacking everything in one column. */
 .macro-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr));
+  grid-template-columns: repeat(
+    auto-fill,
+    minmax(max(8rem, (100% - (var(--cols, 4) - 1) * var(--s-3)) / var(--cols, 4)), 1fr)
+  );
   gap: var(--s-3);
   margin-bottom: var(--s-5);
 }
@@ -2391,8 +2452,8 @@
 
 .devtile-refresh {
   margin-left: auto;
-  width: 2.25rem;
-  height: 2.25rem;
+  width: var(--touch-min);
+  height: var(--touch-min);
   border-radius: var(--r-full);
   background: var(--surface-3);
   color: var(--text-dim);
@@ -2456,6 +2517,31 @@
   color: var(--text-faint);
 }
 
+/* Under ~30rem the fixed time column plus the Join button leave the title
+   about 20px, which is not a title. Stacking gives each part a full row and
+   the meeting becomes readable again. */
+@media (max-width: 30rem) {
+  .devtile-meeting {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--s-2);
+  }
+}
+
+/* A meeting title is the one string here that is genuinely long, and it is
+   the one you need to read to know whether the booking is yours. Below the
+   width where it survives on one line it gets two, clamped so a pathological
+   title cannot push Join off the tile. Same trade as the status labels: a
+   wrapped line beats an ellipsis when the text is the point. */
+@media (max-width: 56rem) {
+  .devtile-meeting-title {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+  }
+}
+
 .devtile-join {
   display: flex;
   align-items: center;
@@ -2484,12 +2570,14 @@
 .devtile-keys {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(max(4.5rem, (100% - 3 * var(--s-2)) / 4), 1fr));
   gap: var(--s-2);
 }
 
 .devtile-keys[data-count='5'],
 .devtile-keys[data-count='6'] {
   grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(max(4.5rem, (100% - 2 * var(--s-2)) / 3), 1fr));
 }
 
 .devtile-key {
@@ -2652,8 +2740,12 @@
   min-width: 0;
 }
 
+/* The alert count is a real control — it opens the alerts sheet — so it gets
+   a real target rather than the height of the text inside it. */
 .devtile-alerts {
   margin-left: auto;
+  min-height: var(--touch-min);
+  padding: 0 var(--s-2);
 }
 
 /* ── Device alerts sheet ──────────────────────────────────────────────────*/
