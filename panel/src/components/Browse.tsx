@@ -94,6 +94,7 @@ export function Browse({
   onClose: () => void;
 }) {
   const [tab, setTab] = useState(view === 'search' ? 'search' : 'recent');
+  const [mediaFilter, setMediaFilter] = useState<MediaKind | undefined>(undefined);
   const [offset, setOffset] = useState(0);
   const [query, setQuery] = useState('');
   const [result, setResult] = useState<BrowseResult | null>(null);
@@ -128,7 +129,7 @@ export function Browse({
     const req: BrowseRequest = here
       ? { kind: 'item', uri: here.uri, offset }
       : current.request.kind === 'search'
-        ? { kind: 'search', text: query, source: 'all' }
+        ? { kind: 'search', text: query, source: 'all', media: mediaFilter }
         : current.request.kind === 'sources'
           ? // The service list is short by construction and does not page.
             { kind: 'sources' }
@@ -163,7 +164,7 @@ export function Browse({
     return () => {
       stale = true;
     };
-  }, [tab, offset, query, here?.uri]);
+  }, [tab, offset, query, mediaFilter, here?.uri]);
 
   const pick = (t: string): void => {
     setTab(t);
@@ -246,7 +247,26 @@ export function Browse({
         ) : null}
 
         {view === 'search' && !here ? (
-          <SearchBox value={query} onSearch={setQuery} placeholder="Search Spotify and Sonos" />
+          <>
+            <SearchBox value={query} onSearch={setQuery} placeholder="Search Spotify and Sonos" />
+            <div class="browse-filters scroll" aria-label="Result type">
+              <FilterChip
+                label="All types"
+                active={!mediaFilter}
+                onPress={() => setMediaFilter(undefined)}
+              />
+              {(['track', 'album', 'artist', 'playlist', 'radio', 'podcast'] as MediaKind[]).map(
+                (kind) => (
+                  <FilterChip
+                    key={kind}
+                    label={KIND_LABEL[kind]}
+                    active={mediaFilter === kind}
+                    onPress={() => setMediaFilter(kind)}
+                  />
+                ),
+              )}
+            </div>
+          </>
         ) : null}
 
         <div class="sheet-body scroll browse-body">
@@ -520,6 +540,27 @@ function SearchBox({
         Search
       </Pressable>
     </form>
+  );
+}
+
+function FilterChip({
+  label,
+  active,
+  onPress,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      class={active ? 'browse-filter is-active' : 'browse-filter'}
+      onPress={onPress}
+      ariaPressed={active}
+      ariaLabel={label}
+    >
+      {label}
+    </Pressable>
   );
 }
 
