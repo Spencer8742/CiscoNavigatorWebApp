@@ -4,6 +4,7 @@ import type { SonosClient } from '~/sonos/client.ts';
 import type { UriRegistry } from '~/sonos/uris.ts';
 import type { MediaArt } from '~/http/media-art.ts';
 import type { Env } from '~/env.ts';
+import type { MusicServices } from '~/sonos/music.ts';
 import type { BrowseResult, MediaItem, MediaKind } from '@shared/protocol.ts';
 
 const log = logger('sonos-spotify');
@@ -70,16 +71,24 @@ export class SpotifySearch {
   readonly #client: SonosClient;
   readonly #uris: UriRegistry;
   readonly #art: MediaArt;
+  readonly #services: MusicServices;
 
   #token: string | null = null;
   #tokenExpires = 0;
   #account: Account | null = null;
 
-  constructor(env: Env['spotify'], client: SonosClient, uris: UriRegistry, art: MediaArt) {
+  constructor(
+    env: Env['spotify'],
+    client: SonosClient,
+    uris: UriRegistry,
+    art: MediaArt,
+    services: MusicServices,
+  ) {
     this.#env = env;
     this.#client = client;
     this.#uris = uris;
     this.#art = art;
+    this.#services = services;
   }
 
   get enabled(): boolean {
@@ -254,7 +263,17 @@ export class SpotifySearch {
   async #resolveAccount(): Promise<Account | null> {
     if (this.#account) return this.#account;
 
-    const learned = (await this.#learnFromFavourites()) ?? (await this.#learnFromServices());
+    // The shared service catalog reads `/status/accounts`, which is the only
+    // reliable source of the account serial when a household has no Spotify
+    // favourite (or has more than one Spotify login). Use it before the older
+    // URI/service-list fallbacks kept for firmware without that endpoint.
+    await this.#services.ready();
+    const linked = this.#services
+      .list()
+      .find((service) => service.name.toLowerCase() === 'spotify' && service.sn !== null);
+    const learned = linked?.sn !== null && linked?.sn !== undefined
+      ? { sid: linked.sid, sn: linked.sn }
+      : (await this.#learnFromFavourites()) ?? (await this.#learnFromServices());
     if (learned) {
       log.info(`Sonos Spotify account: sid=${learned.sid}, sn=${learned.sn}`);
       this.#account = learned;
@@ -364,15 +383,18 @@ export function sonosUri(
   kind: MediaKind,
   account: Account,
 ): { uri: string; metadata: string } {
-  const encoded = encodeURIComponent(spotifyUri);
-  const prefix = CONTAINER_PREFIX[kind];
+  // Sonos writes the colon escapes in this identifier in lower case. URI
+  // escapes are equivalent by spec, but several speaker generations compare
+  // the service object id literally while resolving it.
+  const encoded = encodeURIComponent(spotifyUri).replace(/%3A/g, '%3a');
+  const prefix = CONTAINER_URI_PREFIX[kind];
 
   const uri = prefix
     ? `x-rincon-cpcontainer:${prefix}${encoded}?sid=${account.sid}&flags=${CONTAINER_FLAGS}&sn=${account.sn}`
     : `x-sonos-spotify:${encoded}?sid=${account.sid}&flags=${FLAGS}&sn=${account.sn}`;
 
   const metadata = serviceDidl({
-    id: prefix ? `${prefix}${encoded}` : spotifyUri,
+    id: `${ITEM_ID_PREFIX[kind] ?? ITEM_ID_PREFIX.track}${encoded}`,
     title,
     upnpClass: UPNP_CLASS[kind] ?? UPNP_CLASS['track'] ?? '',
     sid: account.sid,
@@ -388,10 +410,18 @@ export function sonosUri(
  * A kind absent from this table is an item rather than a container, and takes
  * the track URI shape instead.
  */
-const CONTAINER_PREFIX: Partial<Record<MediaKind, string>> = {
+const CONTAINER_URI_PREFIX: Partial<Record<MediaKind, string>> = {
   album: '1004206c',
   playlist: '1006206c',
-  artist: '10052064',
+  artist: '1005004c',
+};
+
+/** DIDL ids use a different prefix from the transport URI. */
+const ITEM_ID_PREFIX: Partial<Record<MediaKind, string>> = {
+  track: '00032020',
+  album: '00040000',
+  playlist: '1006206c',
+  artist: '1005004c',
 };
 
 /** Containers and items are flagged differently. Both are Sonos's values. */

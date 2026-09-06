@@ -18,6 +18,7 @@ import {
   parseTrackMetadata,
   seconds,
   flag,
+  sonosUri,
 } from '../dist/testkit.js';
 
 /**
@@ -1987,6 +1988,34 @@ describe('Spotify catalog search', () => {
     assert.equal(spotify.ready, true);
     assert.equal(spotify.searchable, true);
     panel.close();
+  });
+
+  test('builds the Spotify track object id Sonos accepts for queueing', () => {
+    const result = sonosUri(
+      'spotify:track:0GiWi4EkPduFWHQyhiKpRB',
+      'Test track',
+      'track',
+      { sid: 9, sn: 4 },
+    );
+
+    assert.equal(
+      result.uri,
+      'x-sonos-spotify:spotify%3atrack%3a0GiWi4EkPduFWHQyhiKpRB?sid=9&flags=8224&sn=4',
+    );
+    assert.match(result.metadata, /id="00032020spotify%3atrack%3a0GiWi4EkPduFWHQyhiKpRB"/);
+    assert.match(result.metadata, /SA_RINCON2311_X_#Svc2311-0-Token/);
+  });
+
+  test('uses Sonos container and metadata prefixes independently', () => {
+    const result = sonosUri(
+      'spotify:album:6wiUBliPe76YAVpNEdidpY',
+      'Test album',
+      'album',
+      { sid: 9, sn: 1 },
+    );
+
+    assert.match(result.uri, /^x-rincon-cpcontainer:1004206cspotify%3aalbum%3a/);
+    assert.match(result.metadata, /id="00040000spotify%3aalbum%3a/);
   });
 });
 

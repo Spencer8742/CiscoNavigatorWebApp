@@ -347,7 +347,6 @@ async function main(): Promise<void> {
    */
   const sonosUris = new UriRegistry();
   const mediaShelf = new MediaShelf(join(dirname(env.configPath), 'media-shelf.json'), sonosUris);
-  const spotify = new SpotifySearch(env.spotify, sonosClient, sonosUris, mediaArt);
   const sonosCommands = new SonosCommands(sonosClient, sonosStore, sonosUris, mediaShelf);
 
   /*
@@ -361,6 +360,7 @@ async function main(): Promise<void> {
     sonosClient,
     join(dirname(env.configPath), 'music-services.json'),
   );
+  const spotify = new SpotifySearch(env.spotify, sonosClient, sonosUris, mediaArt, musicServices);
 
   const sonosBrowser = new SonosBrowser({
     client: sonosClient,
