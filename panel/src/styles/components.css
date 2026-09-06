@@ -764,7 +764,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 2.25rem;
+  min-height: var(--touch-min);
   padding: 0 var(--s-3);
   border-radius: var(--r-sm);
   font-size: 0.875rem;

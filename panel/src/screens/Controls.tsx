@@ -157,7 +157,11 @@ function Page({ page }: { page: ControlPage }) {
            * a variable into it is the kind of thing that works until it
            * quietly does not on Chromium 102.
            */
-          style={page.columns > 0 ? { gridTemplateColumns: `repeat(${page.columns}, 1fr)` } : undefined}
+          /* The count, not the tracks: the grid in screens.css turns it into
+             "at most this many, fewer when they would be too narrow". Writing
+             the tracks here instead pinned four columns at every width, and
+             an inline style is the one thing a media query cannot answer. */
+          style={page.columns > 0 ? { '--cols': String(page.columns) } : undefined}
         >
           {keys.map((item) =>
             item.type === 'sources' ? (

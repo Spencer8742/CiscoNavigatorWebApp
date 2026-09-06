@@ -109,6 +109,26 @@ img {
   grid-template-areas: 'main' 'nav';
 }
 
+/* ═══ Responsive ═════════════════════════════════════════════════════════
+   The root font-size (tokens.css) already scales the whole UI with the
+   viewport, and that alone carries a surprising distance — an audit across
+   eight sizes, from an 800x480 Nest Hub to 1920x1080, found no horizontal
+   overflow anywhere. What it cannot do is change a LAYOUT: four columns of
+   macro keys stay four columns at 390px, each one 80px wide.
+
+   So this is where counts collapse. Two rules throughout:
+
+   1. A column count from the config is a MAXIMUM, not an instruction. See
+      `--cols` below: the grid honours it when the keys still have room and
+      wraps to fewer when they do not.
+   2. Breakpoints are on the SHORTER measurement where a layout is limited by
+      it — a Nest Hub at 800x480 is not "small", it is short, and shrinking
+      its type would be the wrong answer to a height problem.
+
+   No container queries: Chromium 102 (docs/ROOMOS.md §1) predates them by
+   three versions. min()/max()/clamp() are all available and do most of what
+   they would have been used for here. */
+
 /* One full-bleed screen, no nav. Overrides both nav positions, so it does not
    matter which one the config asks for.
 
@@ -163,6 +183,55 @@ img {
 .reveal-ring[data-filling] {
   opacity: 0.85;
   transform: scale(1);
+}
+
+/* ── Narrow ──────────────────────────────────────────────────────────────
+   A phone, or an iPad held in portrait.
+
+   The left rail costs 5.25rem whatever the screen is, which is 7% of a
+   Navigator and 21% of a 390px phone. Below 34rem it moves to the bottom
+   regardless of what `navPosition` asks for: the config is describing a
+   preference for a wall panel, not a rule that should cost a fifth of a
+   narrow screen. */
+@media (max-width: 34rem) {
+  .shell[data-nav='left'] {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr var(--bar-h);
+    grid-template-areas: 'main' 'nav';
+  }
+
+  .shell[data-nav='left'] .nav {
+    flex-direction: row;
+  }
+
+  /* The labels are what makes seven destinations not fit across a phone —
+     and this applies to BOTH positions, not just the rail that was moved.
+     A screenshot at 390px showed "Apple TV" wrapping onto two lines and
+     "Photos" and "Settings" touching, which the overflow and touch-target
+     measurements had all called clean: nothing was overflowing or too small,
+     the labels were simply illegible. The icons carry it, and the accessible
+     name is on the control either way, so a screen reader loses nothing. */
+  .nav-item-label {
+    display: none;
+  }
+}
+
+/* ── Short ───────────────────────────────────────────────────────────────
+   A Nest Hub is 800x480. It is not a small screen, it is a SHORT one, and
+   the answer to a height problem is to spend less height rather than to
+   shrink the type — which is why this is a height query and adjusts padding
+   and optional furniture rather than the scale. */
+@media (max-height: 34rem) {
+  .shell {
+    --bar-h: 3.75rem;
+  }
+
+  /* The photo beside Favorites is the first thing to go: it is the one piece
+     of the Home screen that carries no information. Keeping it means every
+     row above it gets squeezed to make space for a picture. */
+  .photo-peek {
+    display: none;
+  }
 }
 
 .shell-nav {
