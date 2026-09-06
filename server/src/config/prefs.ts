@@ -12,6 +12,7 @@ import {
 } from '@shared/protocol.ts';
 
 const log = logger('prefs');
+const PREFS_SCHEMA = 2;
 
 /**
  * The handful of settings a panel can change by tapping.
@@ -50,27 +51,35 @@ export class PrefsStore {
     try {
       const raw: unknown = JSON.parse(readFileSync(this.#path, 'utf8'));
       if (raw && typeof raw === 'object') {
+        const stored = raw as Record<string, unknown>;
+        let migrated = false;
         // Validate on the way IN as well as on the way out. The file is
         // machine-written, but it sits in a user-mounted volume and a
         // half-written or hand-edited one must not take the panel down.
         for (const [key, allowed] of Object.entries(PREF_VALUES)) {
-          const value = (raw as Record<string, unknown>)[key];
+          const value = stored[key];
           if (typeof value === 'string' && allowed.includes(value)) {
             this.#prefs = { ...this.#prefs, [key]: value };
           }
         }
-        const visiblePages = sanitizeVisiblePages(
-          (raw as Record<string, unknown>)['visiblePages'],
-        );
+        let visiblePages = sanitizeVisiblePages(stored['visiblePages']);
+        if (visiblePages && Number(stored['version'] ?? 1) < PREFS_SCHEMA) {
+          // Apple TV became a first-class page in schema 2. Existing panels
+          // should see it once; later user choices are stored with version 2
+          // and are respected, including deliberately hiding it.
+          visiblePages = PANEL_PAGES.filter((page) => page === 'apple-tv' || visiblePages!.includes(page));
+          migrated = true;
+        }
         if (visiblePages) this.#prefs = { ...this.#prefs, visiblePages };
         // The layout is shape-checked rather than enum-checked. Section names
         // are NOT validated here: the config may legitimately have changed
         // since this was written, and dropping a whole arrangement because a
         // heading was renamed would be worse than carrying a stale key that
         // the panel simply ignores.
-        const players = (raw as Record<string, unknown>)['players'];
+        const players = stored['players'];
         const layout = sanitizeLayout(players, null);
         if (layout) this.#prefs = { ...this.#prefs, players: layout };
+        if (migrated) this.#save();
       }
       log.info(`Loaded panel preferences from ${this.#path}`);
     } catch (err) {
@@ -144,7 +153,7 @@ export class PrefsStore {
       // Write-then-rename, so a container killed mid-write leaves the previous
       // file intact rather than a truncated one that fails to parse.
       const tmp = `${this.#path}.tmp`;
-      writeFileSync(tmp, `${JSON.stringify(this.#prefs, null, 2)}\n`, 'utf8');
+      writeFileSync(tmp, `${JSON.stringify({ version: PREFS_SCHEMA, ...this.#prefs }, null, 2)}\n`, 'utf8');
       renameSync(tmp, this.#path);
     } catch (err) {
       // A read-only or unwritable volume must not break the panel: the change

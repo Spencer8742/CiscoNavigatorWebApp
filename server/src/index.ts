@@ -585,6 +585,11 @@ async function main(): Promise<void> {
       return;
     }
 
+    if (path === '/api/apple-tv-artwork') {
+      appleTv.serveArtwork(res, query.get('id'));
+      return;
+    }
+
     /*
      * Home Assistant media artwork.
      *

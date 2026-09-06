@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
+import type { ServerResponse } from 'node:http';
 import { logger } from '~/lib/log.ts';
 import type { AppleTvConfig } from '@shared/config.ts';
 import type { AppleTvCommand, AppleTvState } from '@shared/protocol.ts';
@@ -9,6 +10,8 @@ const log = logger('apple-tv');
 
 interface BridgeReply { t: 'response'; id: number; ok: boolean; error?: string }
 interface BridgeState { t: 'state'; state: AppleTvState }
+interface BridgeArtwork { t: 'artwork'; device: string; version: string | null; mimetype: string | null; data: string | null }
+interface CachedArtwork { version: string; mimetype: string; bytes: Buffer }
 
 export class AppleTvBridge {
   readonly #storageFile: string;
@@ -16,6 +19,7 @@ export class AppleTvBridge {
   #process: ChildProcessWithoutNullStreams | null = null;
   #devices: AppleTvConfig[] = [];
   #states = new Map<string, AppleTvState>();
+  #artworks = new Map<string, CachedArtwork>();
   #pending = new Map<number, { resolve: (error: string | null) => void; timer: ReturnType<typeof setTimeout> }>();
   #sequence = 0;
   #restart: ReturnType<typeof setTimeout> | undefined;
@@ -29,8 +33,8 @@ export class AppleTvBridge {
   get snapshot(): AppleTvState[] {
     return this.#devices.map((device) => this.#states.get(device.id) ?? {
       id: device.id, name: device.name, reachable: false, paired: false, pairing: 'idle',
-      power: 'unknown', playback: 'idle', mediaType: 'unknown', title: null, artist: null,
-      album: null, app: null, elapsed: null, duration: null, elapsedAt: null,
+      pairingTarget: null, power: 'unknown', playback: 'idle', mediaType: 'unknown', title: null, artist: null,
+      album: null, app: null, artwork: null, elapsed: null, duration: null, elapsedAt: null,
       error: this.#process ? null : 'Apple TV bridge is starting',
     });
   }
@@ -56,6 +60,22 @@ export class AppleTvBridge {
   pair(device: string, op: 'begin' | 'pin' | 'cancel', pin?: string): Promise<string | null> {
     if (!this.#devices.some((item) => item.id === device)) return Promise.resolve('Apple TV is not configured');
     return this.#request({ t: `pair-${op}`, device, ...(pin ? { pin } : {}) }, 20_000);
+  }
+
+  serveArtwork(res: ServerResponse, device: string | null): void {
+    const artwork = device ? this.#artworks.get(device) : undefined;
+    if (!artwork || !this.#devices.some((item) => item.id === device)) {
+      res.writeHead(404, { 'content-type': 'text/plain', 'cache-control': 'no-store' });
+      res.end('Artwork unavailable');
+      return;
+    }
+    res.writeHead(200, {
+      'content-type': artwork.mimetype,
+      'content-length': String(artwork.bytes.length),
+      'cache-control': 'private, max-age=86400, immutable',
+      'x-content-type-options': 'nosniff',
+    });
+    res.end(artwork.bytes);
   }
 
   stop(): void {
@@ -100,11 +120,30 @@ export class AppleTvBridge {
   }
 
   #handleLine(line: string): void {
-    let message: BridgeReply | BridgeState;
-    try { message = JSON.parse(line) as BridgeReply | BridgeState; }
+    let message: BridgeReply | BridgeState | BridgeArtwork;
+    try { message = JSON.parse(line) as BridgeReply | BridgeState | BridgeArtwork; }
     catch { log.warn('Ignored invalid Apple TV bridge response'); return; }
+    if (message.t === 'artwork') {
+      if (!message.data || !message.version || !message.mimetype || !/^image\/(jpeg|png|webp)$/.test(message.mimetype)) {
+        this.#artworks.delete(message.device);
+      } else {
+        const bytes = Buffer.from(message.data, 'base64');
+        if (bytes.length <= 4 * 1024 * 1024) {
+          this.#artworks.set(message.device, { version: message.version, mimetype: message.mimetype, bytes });
+        }
+      }
+      const state = this.#states.get(message.device);
+      if (state) {
+        this.#states.set(message.device, { ...state, artwork: this.#artworkPath(message.device) });
+        this.#onState(this.snapshot);
+      }
+      return;
+    }
     if (message.t === 'state') {
-      this.#states.set(message.state.id, message.state);
+      this.#states.set(message.state.id, {
+        ...message.state,
+        artwork: this.#artworkPath(message.state.id),
+      });
       this.#onState(this.snapshot);
       return;
     }
@@ -113,6 +152,13 @@ export class AppleTvBridge {
     clearTimeout(pending.timer);
     this.#pending.delete(message.id);
     pending.resolve(message.ok ? null : (message.error || 'Apple TV command failed'));
+  }
+
+  #artworkPath(device: string): string | null {
+    const artwork = this.#artworks.get(device);
+    return artwork
+      ? `/api/apple-tv-artwork?id=${encodeURIComponent(device)}&v=${encodeURIComponent(artwork.version)}`
+      : null;
   }
 
   #request(payload: Record<string, unknown>, timeout = 12_000): Promise<string | null> {

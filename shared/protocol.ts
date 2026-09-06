@@ -629,6 +629,8 @@ export interface AppleTvState {
   reachable: boolean;
   paired: boolean;
   pairing: AppleTvPairingState;
+  /** Which protocol the current/next PIN enables. */
+  pairingTarget: 'remote' | 'media' | null;
   power: 'on' | 'off' | 'unknown';
   playback: 'idle' | 'loading' | 'paused' | 'playing' | 'stopped' | 'seeking';
   mediaType: 'unknown' | 'video' | 'music' | 'tv';
@@ -636,6 +638,8 @@ export interface AppleTvState {
   artist: string | null;
   album: string | null;
   app: string | null;
+  /** Authenticated path served by the backend; never a device address. */
+  artwork: string | null;
   elapsed: number | null;
   duration: number | null;
   elapsedAt: number | null;
@@ -837,7 +841,7 @@ export type ClientMessage =
  * real keyboard exists — the RoomOS soft keyboard has no numeric, date or
  * colour modes (docs/ROOMOS.md §6). These are things you pick by tapping.
  */
-export const PANEL_PAGES = ['home', 'rooms', 'controls', 'media', 'photos'] as const;
+export const PANEL_PAGES = ['home', 'rooms', 'controls', 'apple-tv', 'media', 'photos'] as const;
 export type PanelPage = (typeof PANEL_PAGES)[number];
 
 export interface PanelPrefs {

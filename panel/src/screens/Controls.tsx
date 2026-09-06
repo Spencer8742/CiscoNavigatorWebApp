@@ -9,8 +9,6 @@ import { keyLightFor, pressed, tvStateOf } from '~/state/controls.ts';
 import { pressControl, setKeyLight } from '~/net/socket.ts';
 import { KEY_LIGHT_MAX_KELVIN, KEY_LIGHT_MIN_KELVIN } from '@shared/protocol.ts';
 import { DeviceTile } from '~/components/DeviceTile.tsx';
-import { AppleTvRemote } from '~/components/AppleTvRemote.tsx';
-import { appleTvs } from '~/state/controls.ts';
 import type {
   ControlButton,
   ControlDevice,
@@ -46,9 +44,8 @@ import type { KeyLightState } from '@shared/protocol.ts';
  */
 export function Controls() {
   const pages = controlPages.value;
-  const remotes = appleTvs.value;
 
-  if (pages.length === 0 && remotes.length === 0) {
+  if (pages.length === 0) {
     return (
       <div class="screen screen-enter">
         <div class="screen-head">
@@ -67,13 +64,13 @@ export function Controls() {
 
   // A page that has been deleted from the config leaves the signal pointing at
   // nothing; fall back to the first rather than showing an empty screen.
-  const active = pages.find((p) => p.id === controlPage.value) ?? pages[0] ?? null;
+  const active = pages.find((p) => p.id === controlPage.value) ?? pages[0]!;
 
   return (
     <div class="screen screen-enter">
       <div class="screen-head">
         <h1 class="screen-title">Controls</h1>
-        <span class="screen-sub truncate">{active?.name ?? 'Apple TV'}</span>
+        <span class="screen-sub truncate">{active.name}</span>
       </div>
 
       {/* A page strip, not a nav level: the Controls screen is one
@@ -83,11 +80,10 @@ export function Controls() {
           The kiosk lock hides it too. "Locked to this page" has to mean this
           page: hiding the nav bar but leaving the strip would still let
           anyone wander off to Lights, which is most of what the lock is for. */}
-      {pages.length > 1 && active && !kiosk.value ? <PageTabs pages={pages} active={active.id} /> : null}
+      {pages.length > 1 && !kiosk.value ? <PageTabs pages={pages} active={active.id} /> : null}
 
       <div class="screen-body scroll">
-        {remotes.map((tv) => <AppleTvRemote key={tv.id} tv={tv} />)}
-        {active ? <Page page={active} /> : null}
+        <Page page={active} />
       </div>
     </div>
   );
