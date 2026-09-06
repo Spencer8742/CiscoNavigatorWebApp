@@ -19,28 +19,56 @@
  * recoverable no matter what was erased. localStorage is used purely as a
  * cache, and we strip the token from the visible URL immediately so it does
  * not sit on screen in a room full of people.
+ *
+ * The panel's own id rides in the same URL for the same reason:
+ *
+ *     https://panel.your.lan/?t=<PANEL_TOKEN>&panel=office
+ *
+ * It is NOT stripped. It is not a secret, and leaving it visible is the only
+ * way to tell from the address which panel a browser is pretending to be.
  */
+
+import { PANEL_ID_PATTERN } from '@shared/protocol.ts';
 
 const STORAGE_KEY = 'np.token';
 
 let token: string | null = null;
+let panelId: string | null = null;
 
 /**
  * Resolve the token, in priority order:
  *   1. `?t=` in the URL   — the durable, provisioned source of truth
  *   2. localStorage       — a cache; may have been wiped at any time
  *
+ * The panel's own id (`?panel=office`) is read the same way and for the same
+ * reason: it decides which settings this panel gets, so it has to survive the
+ * nightly wipe, and only the provisioned URL does.
+ *
  * Call once at boot, before anything opens a socket.
  */
 export function initAuth(): void {
   let fromUrl: string | null = null;
+  let idFromUrl: string | null = null;
 
   try {
     const params = new URLSearchParams(window.location.search);
     fromUrl = params.get('t');
+    idFromUrl = params.get('panel');
   } catch {
     /* malformed query string — fall through to storage */
   }
+
+  /*
+   * The URL and nothing else.
+   *
+   * The token is cached in localStorage because it is a secret the nightly
+   * wipe destroys and the panel cannot ask for again. The id is neither: it
+   * is in the URL RoomOS reloads every time, so there is nothing for a cache
+   * to recover. Caching it anyway makes a browser that has opened two panels
+   * keep answering with the first one — which is how this line was found —
+   * and leaves no way back to the shared settings short of clearing storage.
+   */
+  panelId = readPanelId(idFromUrl);
 
   if (fromUrl) {
     token = fromUrl;
@@ -85,6 +113,23 @@ export function getToken(): string | null {
   return token;
 }
 
+/**
+ * Which panel this is, or null for "use the shared settings".
+ *
+ * Validated here as well as on the server so a typo in a provisioned URL
+ * fails the same way at both ends — the panel falls back to the shared
+ * defaults rather than asking for a scope the backend will not honour.
+ */
+export function getPanelId(): string | null {
+  return panelId;
+}
+
+function readPanelId(value: string | null): string | null {
+  if (!value) return null;
+  const id = value.trim().toLowerCase();
+  return PANEL_ID_PATTERN.test(id) ? id : null;
+}
+
 /** Authorization header, or an empty object when auth is disabled. */
 export function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
@@ -102,6 +147,12 @@ export function authHeaders(): Record<string, string> {
  */
 export function socketUrl(): string {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const base = `${proto}//${window.location.host}/ws`;
-  return token ? `${base}?t=${encodeURIComponent(token)}` : base;
+  const query = new URLSearchParams();
+  if (token) query.set('t', token);
+  // The id has to be here rather than sent after connecting: the backend puts
+  // this panel's preferences in `hello`, which it sends before the panel has
+  // said anything at all.
+  if (panelId) query.set('panel', panelId);
+  const q = query.toString();
+  return q ? `${proto}//${window.location.host}/ws?${q}` : `${proto}//${window.location.host}/ws`;
 }

@@ -13,7 +13,8 @@
 # Usage:
 #
 #   scripts/provision-roombar.sh --host 192.168.1.243 \
-#       --url https://panel.example.com/?t=YOUR_PANEL_TOKEN
+#       --url https://panel.example.com/?t=YOUR_PANEL_TOKEN \
+#       --panel office
 #
 #   DEVICE_HOST=192.168.1.243 DEVICE_USER=admin DEVICE_PASSWORD=... \
 #   PANEL_URL='https://panel.example.com/?t=...' scripts/provision-roombar.sh
@@ -23,6 +24,8 @@
 #   --user USER        device API user                (env DEVICE_USER, default admin)
 #   --password PASS    device API password            (env DEVICE_PASSWORD)
 #   --url URL          the panel URL, token included  (env PANEL_URL)
+#   --panel ID         this panel's name, so it keeps its own settings
+#                      (env PANEL_ID; letters, digits, - and _)
 #   --target NAME      Controller | OSD | PersistentWebApp  (env WEBVIEW_TARGET)
 #   --standby-delay N  minutes before the display sleeps, 0 to leave alone
 #   --insecure         accept the device's self-signed certificate
@@ -42,6 +45,7 @@ DEVICE_HOST="${DEVICE_HOST:-}"
 DEVICE_USER="${DEVICE_USER:-admin}"
 DEVICE_PASSWORD="${DEVICE_PASSWORD:-}"
 PANEL_URL="${PANEL_URL:-}"
+PANEL_ID="${PANEL_ID:-}"
 WEBVIEW_TARGET="${WEBVIEW_TARGET:-Controller}"
 STANDBY_DELAY="${STANDBY_DELAY:-120}"
 INSECURE=""
@@ -63,6 +67,7 @@ while [ $# -gt 0 ]; do
     --user) DEVICE_USER="${2:-}"; shift 2 ;;
     --password) DEVICE_PASSWORD="${2:-}"; shift 2 ;;
     --url) PANEL_URL="${2:-}"; shift 2 ;;
+    --panel) PANEL_ID="${2:-}"; shift 2 ;;
     --target) WEBVIEW_TARGET="${2:-}"; shift 2 ;;
     --standby-delay) STANDBY_DELAY="${2:-}"; shift 2 ;;
     --insecure) INSECURE=1; shift ;;
@@ -89,6 +94,22 @@ case "$PANEL_URL" in
     ;;
   *) die "--url must start with http:// or https://" ;;
 esac
+
+# Append the panel's own id, so this device keeps its own settings rather than
+# sharing one set with every other panel. Appended rather than required in
+# --url because the URL is usually copied verbatim between devices and the id
+# is the one part that must differ.
+if [ -n "$PANEL_ID" ]; then
+  case "$PANEL_ID" in
+    *[!A-Za-z0-9_-]*) die "--panel may contain only letters, digits, - and _" ;;
+  esac
+  case "$PANEL_URL" in
+    *'?panel='*|*'&panel='*)
+      die "--panel given, but --url already names a panel. Use one or the other." ;;
+    *'?'*) PANEL_URL="$PANEL_URL&panel=$PANEL_ID" ;;
+    *)     PANEL_URL="$PANEL_URL?panel=$PANEL_ID" ;;
+  esac
+fi
 
 case "$PANEL_URL" in
   *'?t='*|*'&t='*) ;;

@@ -896,6 +896,33 @@ export interface PlayerLayout {
   hidden: string[];
 }
 
+/**
+ * What a panel may call itself.
+ *
+ * A panel's identity is provisioned in its URL (`?panel=office`) because that
+ * is the only durable thing about a RoomOS device — web storage is erased
+ * nightly, so anything the panel remembers about itself is gone by morning.
+ *
+ * Deliberately narrow. The id is used as a key in a JSON file on disk and as
+ * a field in the log, so anything that could confuse either — a path
+ * separator, a quote, whitespace, something absurdly long — is not an id, and
+ * a panel offering one is treated as if it offered none.
+ */
+export const PANEL_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,31}$/;
+
+/**
+ * The panel id in `value`, lowercased, or null when it is not one.
+ *
+ * Null is a working answer, not an error: a panel with no id — every panel
+ * provisioned before per-panel settings existed — uses the shared defaults,
+ * which is exactly the old behaviour.
+ */
+export function panelIdOf(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const id = value.trim().toLowerCase();
+  return PANEL_ID_PATTERN.test(id) ? id : null;
+}
+
 export const DEFAULT_PREFS: PanelPrefs = {
   homeSide: 'media',
   visiblePages: [...PANEL_PAGES],
