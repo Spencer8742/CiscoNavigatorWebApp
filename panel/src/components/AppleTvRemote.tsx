@@ -2,14 +2,16 @@ import { useState } from 'preact/hooks';
 import { Icon } from '~/components/Icon.tsx';
 import { Pressable } from '~/components/Pressable.tsx';
 import { Progress } from '~/components/Progress.tsx';
-import { appleTvCommand, pairAppleTv } from '~/net/socket.ts';
+import { appleTvCommand, launchAppleTvApp, pairAppleTv } from '~/net/socket.ts';
 import { markActivity } from '~/state/ui.ts';
 import { getToken } from '~/net/auth.ts';
+import { controlsConfig } from '~/config/index.ts';
 import type { AppleTvCommand, AppleTvState } from '@shared/protocol.ts';
 
 export function AppleTvRemote({ tv }: { tv: AppleTvState }) {
   const [pin, setPin] = useState('');
   const token = getToken();
+  const shortcuts = controlsConfig.value.appleTvs.find((device) => device.id === tv.id)?.shortcuts ?? [];
   const send = (op: AppleTvCommand) => {
     appleTvCommand(tv.id, op);
     markActivity();
@@ -85,6 +87,21 @@ export function AppleTvRemote({ tv }: { tv: AppleTvState }) {
             <Pressable onPress={() => send('volume_down')} ariaLabel="Volume down"><Icon name="volumeDown" size="1.2rem" /></Pressable>
             <Pressable onPress={() => send('volume_up')} ariaLabel="Volume up"><Icon name="volumeUp" size="1.2rem" /></Pressable>
           </div>
+          {shortcuts.length ? (
+            <div class="apple-tv-shortcuts" aria-label={`${tv.name} app shortcuts`}>
+              {shortcuts.map((shortcut) => (
+                <Pressable
+                  key={shortcut.bundleId}
+                  class="apple-tv-shortcut"
+                  onPress={() => { launchAppleTvApp(tv.id, shortcut.bundleId); markActivity(); }}
+                  ariaLabel={`Open ${shortcut.name}`}
+                >
+                  <span aria-hidden="true">{shortcut.name.slice(0, 1).toUpperCase()}</span>
+                  <strong>{shortcut.name}</strong>
+                </Pressable>
+              ))}
+            </div>
+          ) : null}
         </div>
       </div>
       {tv.error && !tv.reachable ? <p class="apple-tv-error">{tv.error}</p> : null}

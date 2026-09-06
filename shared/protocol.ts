@@ -761,6 +761,7 @@ export type ClientMessage =
   | { t: 'music'; id: number; cmd: MusicCommand }
   /** Drive or pair a configured Apple TV. */
   | { t: 'apple-tv'; id: number; appleTv: string; op: AppleTvCommand }
+  | { t: 'apple-tv-app'; id: number; appleTv: string; app: string }
   | { t: 'apple-tv-pair'; id: number; appleTv: string; op: 'begin' | 'pin' | 'cancel'; pin?: string }
   /** Ask for the next N slideshow photos. */
   | { t: 'photos'; id: number; count: number }

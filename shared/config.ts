@@ -663,6 +663,13 @@ export interface TvConfig {
   inputs: SourceRef[];
 }
 
+/** One launchable app deliberately exposed as a shortcut on the wall panel. */
+export interface AppleTvShortcutConfig {
+  name: string;
+  /** The bundle identifier reported by Apple TV, such as com.plexapp.plex. */
+  bundleId: string;
+}
+
 /** An Apple TV controlled locally with Apple's Companion/MRP protocols. */
 export interface AppleTvConfig {
   id: string;
@@ -671,6 +678,8 @@ export interface AppleTvConfig {
   host: string;
   /** Optional pyatv identifier when more than one device answers at this address. */
   identifier?: string;
+  /** Apps shown directly below this Apple TV's remote controls. */
+  shortcuts: AppleTvShortcutConfig[];
 }
 
 export interface ControlsConfig {

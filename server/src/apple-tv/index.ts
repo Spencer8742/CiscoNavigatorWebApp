@@ -57,6 +57,18 @@ export class AppleTvBridge {
     return this.#request({ t: 'command', device, op });
   }
 
+  launchApp(device: string, bundleId: string): Promise<string | null> {
+    const configured = this.#devices.find((item) => item.id === device);
+    const shortcut = configured?.shortcuts.find((item) => item.bundleId === bundleId);
+    if (!shortcut) return Promise.resolve('That Apple TV app is not configured as a shortcut');
+    return this.#request({
+      t: 'launch-app',
+      device,
+      app: shortcut.bundleId,
+      name: shortcut.name,
+    });
+  }
+
   pair(device: string, op: 'begin' | 'pin' | 'cancel', pin?: string): Promise<string | null> {
     if (!this.#devices.some((item) => item.id === device)) return Promise.resolve('Apple TV is not configured');
     return this.#request({ t: `pair-${op}`, device, ...(pin ? { pin } : {}) }, 20_000);

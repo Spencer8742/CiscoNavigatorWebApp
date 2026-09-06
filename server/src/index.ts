@@ -431,6 +431,7 @@ async function main(): Promise<void> {
     getTvs: () => controls.tvSnapshot(),
     getAppleTvs: () => appleTv.snapshot,
     onAppleTv: (device, op) => appleTv.command(device, op),
+    onAppleTvApp: (device, app) => appleTv.launchApp(device, app),
     onAppleTvPair: (device, op, pin) => appleTv.pair(device, op, pin),
     onControl: (button) => controls.press(button),
     onKeyLight: (light, op, value) => controls.keyLight(light, op, value),
