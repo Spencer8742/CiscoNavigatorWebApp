@@ -14,22 +14,12 @@ import type {
 } from '@shared/protocol.ts';
 
 /**
- * The music browser.
+ * Search and saved music for one Sonos player.
  *
  * Everything here comes off the speakers themselves — this app keeps no
  * library, no cache of album names and no search index of its own. Which means
  * whatever you favourited in the Sonos app this morning is here, and the panel
  * never disagrees with the Sonos app about what exists.
- *
- * ## Why tabs rather than a folder tree
- *
- * Home Assistant's media browser is a hierarchy you walk down: source, then
- * category, then letter, then album. That is fine with a mouse. On a wall
- * panel it is four taps and a soft keyboard before you hear anything, and
- * every one of those taps is a round trip.
- *
- * These are six flat views over the same call, with the one you actually use
- * — what you favourited in the Sonos app — first and needing no typing at all.
  *
  * Sonos exposes no household play-history API, so Recent records successful
  * plays started through this app. It is persisted by the backend and shared
@@ -58,8 +48,8 @@ interface Tab {
 }
 
 const TABS: Tab[] = [
-  { id: 'pinned', label: 'Pinned', icon: 'pin', request: { kind: 'shelf', shelf: 'pinned' } },
   { id: 'recent', label: 'Recent', icon: 'clock', request: { kind: 'shelf', shelf: 'recent' } },
+  { id: 'pinned', label: 'Pinned', icon: 'pin', request: { kind: 'shelf', shelf: 'pinned' } },
   { id: 'favorites', label: 'Favourites', icon: 'heart', request: { kind: 'library', media: 'track', favorite: true } },
   {
     /*
@@ -77,8 +67,14 @@ const TABS: Tab[] = [
     icon: 'list',
     request: { kind: 'sources' },
   },
-  { id: 'search', label: 'Search', icon: 'search', request: { kind: 'search', text: '' } },
 ];
+
+const SEARCH: Tab = {
+  id: 'search',
+  label: 'Search',
+  icon: 'search',
+  request: { kind: 'search', text: '' },
+};
 
 /** One level of the drill-down: what we opened, and what it was called. */
 interface Crumb {
@@ -88,9 +84,16 @@ interface Crumb {
   playable: boolean;
 }
 
-export function Browse({ playerId, onClose }: { playerId: string; onClose: () => void }) {
-  const [tab, setTab] = useState('pinned');
-  const [mediaFilter, setMediaFilter] = useState<MediaKind | undefined>(undefined);
+export function Browse({
+  playerId,
+  view,
+  onClose,
+}: {
+  playerId: string;
+  view: 'search' | 'library';
+  onClose: () => void;
+}) {
+  const [tab, setTab] = useState(view === 'search' ? 'search' : 'recent');
   const [offset, setOffset] = useState(0);
   const [query, setQuery] = useState('');
   const [result, setResult] = useState<BrowseResult | null>(null);
@@ -106,7 +109,7 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
    */
   const [path, setPath] = useState<Crumb[]>([]);
 
-  const current = TABS.find((t) => t.id === tab) ?? (TABS[0] as Tab);
+  const current = view === 'search' ? SEARCH : (TABS.find((t) => t.id === tab) ?? (TABS[0] as Tab));
   const here = path[path.length - 1] ?? null;
   const playerName = speakers.value.find((s) => s.id === playerId)?.name ?? playerId;
 
@@ -125,7 +128,7 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
     const req: BrowseRequest = here
       ? { kind: 'item', uri: here.uri, offset }
       : current.request.kind === 'search'
-        ? { kind: 'search', text: query, source: 'all', media: mediaFilter }
+        ? { kind: 'search', text: query, source: 'all' }
         : current.request.kind === 'sources'
           ? // The service list is short by construction and does not page.
             { kind: 'sources' }
@@ -160,7 +163,7 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
     return () => {
       stale = true;
     };
-  }, [tab, offset, query, mediaFilter, here?.uri]);
+  }, [tab, offset, query, here?.uri]);
 
   const pick = (t: string): void => {
     setTab(t);
@@ -193,7 +196,7 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
       <div
         class="sheet browse-sheet"
         role="dialog"
-        aria-label="Browse music"
+        aria-label={view === 'search' ? 'Search music' : 'Recently played music'}
         aria-modal={!chosen}
       >
         <div class="sheet-head">
@@ -203,7 +206,9 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
             </Pressable>
           ) : null}
           <div class="sheet-titles">
-            <h2 class="sheet-title truncate">{here ? here.name : 'Browse'}</h2>
+            <h2 class="sheet-title truncate">
+              {here ? here.name : view === 'search' ? 'Search' : 'Recently Played'}
+            </h2>
             <div class="sheet-subtitle truncate">Play on {playerName}</div>
           </div>
           {here?.playable ? (
@@ -223,7 +228,7 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
         {/* The tab strip disappears while drilled in: it would offer to jump
             somewhere else from a screen whose whole job is "you are inside
             this album", and Back is the only navigation that makes sense there. */}
-        {here ? null : (
+        {view === 'library' && !here ? (
           <div class="browse-tabs" role="tablist">
             {TABS.map((t) => (
               <Pressable
@@ -238,18 +243,10 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
               </Pressable>
             ))}
           </div>
-        )}
+        ) : null}
 
-        {tab === 'search' && !here ? (
-          <>
-            <SearchBox value={query} onSearch={setQuery} placeholder="Search Spotify and Sonos" />
-            <div class="browse-filters scroll" aria-label="Result type">
-              <FilterChip label="All types" active={!mediaFilter} onPress={() => setMediaFilter(undefined)} />
-              {(['track', 'album', 'artist', 'playlist', 'radio', 'podcast'] as MediaKind[]).map((kind) => (
-                <FilterChip key={kind} label={KIND_LABEL[kind]} active={mediaFilter === kind} onPress={() => setMediaFilter(kind)} />
-              ))}
-            </div>
-          </>
+        {view === 'search' && !here ? (
+          <SearchBox value={query} onSearch={setQuery} placeholder="Search Spotify and Sonos" />
         ) : null}
 
         <div class="sheet-body scroll browse-body">
@@ -257,7 +254,7 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
             loading={loading}
             error={error}
             result={result}
-            searching={tab === 'search' && !here}
+            searching={view === 'search' && !here}
             query={query}
             onPick={setChosen}
             onOpen={open}
@@ -523,14 +520,6 @@ function SearchBox({
         Search
       </Pressable>
     </form>
-  );
-}
-
-function FilterChip({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
-  return (
-    <Pressable class={active ? 'browse-filter is-active' : 'browse-filter'} onPress={onPress} ariaPressed={active} ariaLabel={label}>
-      {label}
-    </Pressable>
   );
 }
 
