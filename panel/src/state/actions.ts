@@ -373,10 +373,6 @@ export function setVolume(playerId: string, level: number, final: boolean): void
   }
 }
 
-export function nudgeVolume(playerId: string, delta: number): void {
-  setVolume(playerId, (player(playerId)?.volume ?? 0) + delta, true);
-}
-
 export function setMuted(playerId: string, muted: boolean): void {
   patchPlayer(playerId, { muted });
   music({ verb: 'mute', player: playerId, muted });

@@ -704,14 +704,13 @@
 
 .np-volume .slider { flex: 1 1 auto; min-width: 0; }
 
-.np-mute,
-.np-step {
+.np-mute {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 3rem;
-  height: 3rem;
+  width: 4rem;
+  height: 4rem;
   border-radius: var(--r-full);
   background: var(--surface-2);
   color: var(--text-dim);
@@ -979,6 +978,23 @@
   margin-top: clamp(1.5rem, 4vh, 3rem);
   color: rgba(255, 255, 255, 0.68);
   font-size: 0.9375rem;
+}
+
+.saver-np-progress {
+  margin: clamp(1.5rem, 4vh, 3rem) 0 0;
+}
+
+.saver-np-progress .np-time {
+  color: rgba(255, 255, 255, 0.66);
+}
+
+.saver-np-progress .np-progress-track {
+  height: 0.45rem;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.saver-np-progress .np-progress-fill {
+  background: rgba(255, 255, 255, 0.92);
 }
 
 @keyframes saver-np-drift {

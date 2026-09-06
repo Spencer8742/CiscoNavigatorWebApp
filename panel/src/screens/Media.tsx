@@ -3,7 +3,11 @@ import { Empty } from '~/components/Empty.tsx';
 import { Icon } from '~/components/Icon.tsx';
 import { Pressable } from '~/components/Pressable.tsx';
 import { Slider } from '~/components/Slider.tsx';
-import { defaultPlayerId, speakers, type SpeakerInfo } from '~/state/selectors.ts';
+import {
+  defaultPlayerId,
+  speakers,
+  type SpeakerInfo,
+} from '~/state/selectors.ts';
 import { queues } from '~/state/players.ts';
 import { GroupSheet } from '~/components/GroupSheet.tsx';
 import { SpeakerSheet } from '~/components/SpeakerSheet.tsx';
@@ -12,7 +16,7 @@ import { Browse } from '~/components/Browse.tsx';
 import { Queue } from '~/components/Queue.tsx';
 import { Progress } from '~/components/Progress.tsx';
 import { getToken } from '~/net/auth.ts';
-import { health } from '~/state/ui.ts';
+import { health, markActivity, screensaverActive } from '~/state/ui.ts';
 import * as act from '~/state/actions.ts';
 import type { PlayerQueue } from '@shared/protocol.ts';
 
@@ -53,6 +57,7 @@ export function Media() {
   if (!player) return <NoPlayers />;
 
   const queue = queues.value.find((q) => q.id === player.queueId);
+  const canShowNowPlaying = all.some((speaker) => speaker.state === 'playing' && speaker.media);
 
   return (
     <div class="screen screen-enter">
@@ -75,6 +80,19 @@ export function Media() {
         <Pressable class="browse-button" onPress={() => setHandoffOpen(true)} ariaLabel="Move playback">
           <Icon name="next" size="1.1rem" weight={1.9} />
           <span>Move</span>
+        </Pressable>
+
+        <Pressable
+          class="browse-button"
+          onPress={() => {
+            markActivity();
+            screensaverActive.value = true;
+          }}
+          disabled={!canShowNowPlaying}
+          ariaLabel="Show Now Playing screen"
+        >
+          <Icon name="expand" size="1.1rem" weight={1.9} />
+          <span>Now Playing</span>
         </Pressable>
 
         {/* Bass, sleep timer, inputs — real but occasional, so one tap away
@@ -327,30 +345,16 @@ function NowPlaying({ player, queue }: { player: SpeakerInfo; queue: PlayerQueue
               ariaPressed={player.muted}
               ariaLabel={player.muted ? 'Unmute' : 'Mute'}
             >
-              <Icon name={player.muted ? 'mute' : 'volume'} size="1.3rem" />
+              <Icon name={player.muted ? 'mute' : 'volume'} size="1.7rem" />
             </Pressable>
 
             <Slider
               value={player.muted ? 0 : player.volume}
               ariaLabel="Volume"
               readout={`${player.muted ? 0 : player.volume}%`}
+              size="lg"
               onChange={(v, final) => act.setVolume(player.id, v, final)}
             />
-
-            <Pressable
-              class="np-step p-sm"
-              onPress={() => act.nudgeVolume(player.id, -5)}
-              ariaLabel="Volume down"
-            >
-              <Icon name="minus" size="1.2rem" weight={2.2} />
-            </Pressable>
-            <Pressable
-              class="np-step p-sm"
-              onPress={() => act.nudgeVolume(player.id, 5)}
-              ariaLabel="Volume up"
-            >
-              <Icon name="plus" size="1.2rem" weight={2.2} />
-            </Pressable>
           </div>
         ) : null}
       </div>

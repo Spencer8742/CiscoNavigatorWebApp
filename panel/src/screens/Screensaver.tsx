@@ -27,6 +27,7 @@ import {
   type SpeakerInfo,
 } from '~/state/selectors.ts';
 import { Icon } from '~/components/Icon.tsx';
+import { Progress } from '~/components/Progress.tsx';
 import { getToken } from '~/net/auth.ts';
 import type { PhotoRef } from '@shared/protocol.ts';
 
@@ -114,6 +115,16 @@ function PlayingScreensaver({ player }: { player: SpeakerInfo }) {
             {media?.artist ? <div class="saver-np-artist">{media.artist}</div> : null}
             {media?.album ? <div class="saver-np-album">{media.album}</div> : null}
           </div>
+
+          {media?.duration ? (
+            <Progress
+              class="saver-np-progress"
+              elapsed={media.elapsed}
+              elapsedAt={media.elapsedAt}
+              duration={media.duration}
+              running
+            />
+          ) : null}
 
           <div class="saver-np-room">
             <Icon name="speaker" size="1.1rem" weight={1.7} />
