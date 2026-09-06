@@ -4,6 +4,7 @@ import type { Server } from 'node:http';
 import { logger } from '~/lib/log.ts';
 import type { PanelAuth } from '~/http/auth.ts';
 import type { ConfigStore } from '~/config/load.ts';
+import { panelIdOf } from '@shared/protocol.ts';
 import type {
   BackendHealth,
   BrowseRequest,
@@ -65,12 +66,12 @@ export interface HubDeps {
    * system owns which speaker.
    */
   onMusic?: (cmd: MusicCommand) => Promise<string | null>;
-  /** Current panel preferences, sent in `hello`. */
-  getPrefs: () => PanelPrefs;
-  /** Apply a preference change. Returns an error string, or null. */
-  onPref?: (key: string, value: string) => string | null;
-  /** Apply a player-layout change. Returns an error string, or null. */
-  onLayout?: (layout: unknown) => string | null;
+  /** This panel's preferences, sent in `hello`. */
+  getPrefs: (panelId: string | null) => PanelPrefs;
+  /** Apply a preference change, for the panel that asked. */
+  onPref?: (key: string, value: string, panelId: string | null) => string | null;
+  /** Apply a player-layout change, for the panel that asked. */
+  onLayout?: (layout: unknown, panelId: string | null) => string | null;
   /** Current Elgato Key Light states, sent in `hello`. */
   getKeyLights: () => KeyLightState[];
   getTvs: () => TvState[];
@@ -87,6 +88,12 @@ interface Panel {
   /** Set by the pong handler; cleared before each ping sweep. */
   alive: boolean;
   id: number;
+  /**
+   * Which panel this is, from `?panel=` on its socket URL, or null when it
+   * did not say. Null is a working state, not a degraded one — it means the
+   * shared defaults, which is how every panel behaved before this existed.
+   */
+  panelId: string | null;
 }
 
 export class Hub {
@@ -133,11 +140,12 @@ export class Hub {
 
   #accept(socket: WebSocket, req: IncomingMessage): void {
     this.#seq += 1;
-    const panel: Panel = { socket, alive: true, id: this.#seq };
+    const panel: Panel = { socket, alive: true, id: this.#seq, panelId: panelIdFrom(req.url) };
     this.#panels.add(panel);
 
     const from = req.socket.remoteAddress ?? 'unknown';
-    log.info(`Panel #${panel.id} connected from ${from} (${this.#panels.size} total)`);
+    const who = panel.panelId ? `"${panel.panelId}"` : 'unnamed';
+    log.info(`Panel #${panel.id} (${who}) connected from ${from} (${this.#panels.size} total)`);
 
     socket.on('pong', () => {
       panel.alive = true;
@@ -163,7 +171,7 @@ export class Hub {
       states: this.#deps.getStates(),
       health: this.#deps.getHealth(),
       now: Date.now(),
-      prefs: this.#deps.getPrefs(),
+      prefs: this.#deps.getPrefs(panel.panelId),
       players: music.players,
       queues: music.queues,
       keylights: this.#deps.getKeyLights(),
@@ -188,7 +196,7 @@ export class Hub {
 
       case 'layout': {
         if (!this.#deps.onLayout) return;
-        const problem = this.#deps.onLayout(msg.layout);
+        const problem = this.#deps.onLayout(msg.layout, panel.panelId);
         if (problem) {
           this.#send(panel, { t: 'error', ref: msg.id, code: 'layout_rejected', message: problem });
         }
@@ -197,7 +205,7 @@ export class Hub {
 
       case 'pref': {
         if (!this.#deps.onPref) return;
-        const problem = this.#deps.onPref(msg.key, msg.value);
+        const problem = this.#deps.onPref(msg.key, msg.value, panel.panelId);
         if (problem) {
           this.#send(panel, { t: 'error', ref: msg.id, code: 'pref_rejected', message: problem });
         }
@@ -322,8 +330,20 @@ export class Hub {
     this.broadcast({ t: 'health', health });
   }
 
-  broadcastPrefs(prefs: PanelPrefs): void {
-    this.broadcast({ t: 'prefs', prefs });
+  /**
+   * Send every connected panel the preferences that apply to IT.
+   *
+   * Not a broadcast: two panels resolve the same file to different answers.
+   * Every panel is told on every change rather than only the ones whose scope
+   * was touched, because a change to the shared block reaches any panel that
+   * has not overridden that key — and deciding which those are is exactly the
+   * resolution the store already does. Asking it per panel cannot drift from
+   * what a fresh connection would receive.
+   */
+  refreshPrefs(): void {
+    for (const panel of this.#panels) {
+      this.#send(panel, { t: 'prefs', prefs: this.#deps.getPrefs(panel.panelId) });
+    }
   }
 
   broadcastPlayers(players: MassPlayer[], queues: MassQueue[]): void {
@@ -386,4 +406,17 @@ export class Hub {
     this.#panels.clear();
     this.#wss.close();
   }
+}
+
+/**
+ * The panel id on a socket URL, or null.
+ *
+ * The id rides in the query string for the same reason the token does: the
+ * browser WebSocket API cannot set request headers, and RoomOS reloads the
+ * provisioned URL and nothing else.
+ */
+function panelIdFrom(url: string | undefined): string | null {
+  const q = (url ?? '').indexOf('?');
+  if (q === -1) return null;
+  return panelIdOf(new URLSearchParams((url ?? '').slice(q + 1)).get('panel'));
 }

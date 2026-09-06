@@ -2,7 +2,7 @@ import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { WebSocket } from 'ws';
-import { writeFileSync, rmSync } from 'node:fs';
+import { writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { fileURLToPath, URL } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -89,8 +89,9 @@ async function waitFor(check, description, timeoutMs = 8000) {
 
 /** Minimal panel client that can request photo batches. */
 class PhotoPanel {
-  constructor(port = PANEL_PORT) {
+  constructor(port = PANEL_PORT, panelId = null) {
     this.port = port;
+    this.panelId = panelId;
     this.photos = [];
     this.config = null;
     this.health = null;
@@ -99,7 +100,8 @@ class PhotoPanel {
   }
 
   async connect() {
-    this.ws = new WebSocket(`ws://127.0.0.1:${this.port}/ws?t=${TOKEN}`);
+    const id = this.panelId ? `&panel=${encodeURIComponent(this.panelId)}` : '';
+    this.ws = new WebSocket(`ws://127.0.0.1:${this.port}/ws?t=${TOKEN}${id}`);
     this.ws.on('message', (data) => {
       const msg = JSON.parse(data.toString());
       if (msg.t === 'hello') {
@@ -597,6 +599,156 @@ describe('panel preferences', () => {
     const second = await isolated();
     assert.equal(second.panel.prefs.homeSide, 'photos', 'the choice outlived the process');
     await second.stop();
+  });
+
+  /*
+   * Per-panel settings. Every panel is provisioned with the same URL and the
+   * same token, so before this the office panel and the kitchen panel were
+   * one setting that both of them edited — changing the Home screen on one
+   * wall changed it on the other.
+   */
+
+  test('two named panels keep their own settings', async () => {
+    rmSync(PREFS_FILE, { force: true });
+    const t = await isolated();
+
+    const office = new PhotoPanel(t.panel.port, 'office');
+    const kitchen = new PhotoPanel(t.panel.port, 'kitchen');
+    await office.connect();
+    await kitchen.connect();
+
+    office.send({ t: 'pref', id: 1, key: 'homeSide', value: 'photos' });
+    await waitFor(() => office.prefs.homeSide === 'photos', 'the office panel to change');
+
+    // The whole point: the other wall did not change.
+    await sleep(200);
+    assert.equal(kitchen.prefs.homeSide, 'media', 'the kitchen panel kept its own');
+
+    office.close();
+    kitchen.close();
+    await t.stop();
+  });
+
+  test('a panel with no id still reads and writes the shared settings', async () => {
+    // Every panel provisioned before this existed has no id. It must keep
+    // working, and keep behaving exactly as it did.
+    rmSync(PREFS_FILE, { force: true });
+    const t = await isolated();
+
+    const observer = new PhotoPanel(t.panel.port);
+    await observer.connect();
+
+    t.panel.send({ t: 'pref', id: 1, key: 'homeSide', value: 'photos' });
+    await waitFor(() => observer.prefs.homeSide === 'photos', 'the other unnamed panel');
+
+    observer.close();
+    await t.stop();
+  });
+
+  test('a named panel inherits the shared setting until it overrides it', async () => {
+    /*
+     * The merge is per KEY. Setting the shared default has to reach a panel
+     * that has its own block for something else, or "set it once for
+     * everywhere, then adjust the odd one" quietly stops working the moment a
+     * panel is touched.
+     */
+    rmSync(PREFS_FILE, { force: true });
+    const t = await isolated();
+
+    const office = new PhotoPanel(t.panel.port, 'office');
+    await office.connect();
+
+    // Give the office panel a block of its own, holding a DIFFERENT key.
+    office.send({ t: 'layout', id: 1, layout: { sections: {}, hidden: [] } });
+    await sleep(200);
+
+    // Now change the shared default from an unnamed panel.
+    t.panel.send({ t: 'pref', id: 2, key: 'homeSide', value: 'photos' });
+    await waitFor(
+      () => office.prefs.homeSide === 'photos',
+      'the shared change to reach a panel that overrode something else',
+    );
+
+    // And an override still wins over it.
+    office.send({ t: 'pref', id: 3, key: 'homeSide', value: 'media' });
+    await waitFor(() => office.prefs.homeSide === 'media', 'the override to take');
+
+    const shared = new PhotoPanel(t.panel.port);
+    await shared.connect();
+    assert.equal(shared.prefs.homeSide, 'photos', 'the shared value was not overwritten');
+
+    shared.close();
+    office.close();
+    await t.stop();
+  });
+
+  test('each panel keeps its own settings across a restart', async () => {
+    rmSync(PREFS_FILE, { force: true });
+    const first = await isolated();
+    const office = new PhotoPanel(first.panel.port, 'office');
+    await office.connect();
+    office.send({ t: 'pref', id: 1, key: 'homeSide', value: 'photos' });
+    await sleep(300);
+    office.close();
+    await first.stop();
+
+    const second = await isolated();
+    const back = new PhotoPanel(second.panel.port, 'office');
+    const other = new PhotoPanel(second.panel.port, 'kitchen');
+    await back.connect();
+    await other.connect();
+
+    assert.equal(back.prefs.homeSide, 'photos', 'the office panel came back to its own choice');
+    assert.equal(other.prefs.homeSide, 'media', 'and the kitchen panel to the default');
+
+    back.close();
+    other.close();
+    await second.stop();
+  });
+
+  test('an old flat prefs file is read as the shared settings', async () => {
+    /*
+     * The file used to be one flat object. Upgrading must not silently reset
+     * a setting somebody already chose — on a wall panel, with nothing
+     * anywhere saying why it moved.
+     */
+    rmSync(PREFS_FILE, { force: true });
+    writeFileSync(PREFS_FILE, JSON.stringify({ homeSide: 'photos' }));
+
+    const t = await isolated();
+    assert.equal(t.panel.prefs.homeSide, 'photos', 'the old file was carried forward');
+
+    const named = new PhotoPanel(t.panel.port, 'office');
+    await named.connect();
+    assert.equal(named.prefs.homeSide, 'photos', 'and a named panel inherits it');
+
+    named.close();
+    await t.stop();
+  });
+
+  test('a panel id that is not one falls back to the shared settings', async () => {
+    // The id ends up as a key in a JSON file on disk. Anything that could
+    // confuse that is not an id, and a panel offering one is treated as a
+    // panel that offered none.
+    rmSync(PREFS_FILE, { force: true });
+    const t = await isolated();
+
+    const sneaky = new PhotoPanel(t.panel.port, '../../etc/passwd');
+    await sneaky.connect();
+
+    sneaky.send({ t: 'pref', id: 1, key: 'homeSide', value: 'photos' });
+    await waitFor(() => sneaky.prefs.homeSide === 'photos', 'the change to apply somewhere');
+
+    const shared = new PhotoPanel(t.panel.port);
+    await shared.connect();
+    assert.equal(shared.prefs.homeSide, 'photos', 'it landed in the shared block');
+
+    const saved = JSON.parse(readFileSync(PREFS_FILE, 'utf8'));
+    assert.deepEqual(Object.keys(saved.panels), [], 'and created no scope of its own');
+
+    shared.close();
+    sneaky.close();
+    await t.stop();
   });
 
   test('a player layout is bounded and section-checked', async () => {

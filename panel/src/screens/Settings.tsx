@@ -3,6 +3,7 @@ import { config, ui } from '~/config/index.ts';
 import { health, linkStatus, prefs, socketState } from '~/state/ui.ts';
 import { Pressable } from '~/components/Pressable.tsx';
 import { setPref } from '~/net/socket.ts';
+import { getPanelId } from '~/net/auth.ts';
 import type { PanelPrefs } from '@shared/protocol.ts';
 import { entityCount } from '~/state/entities.ts';
 import { speakers } from '~/state/selectors.ts';
@@ -105,6 +106,11 @@ export function Settings() {
           />
           <Row k="Backend uptime" v={h ? formatUptime(h.uptime) : '—'} />
           <Row k="Backend version" v={h?.version ?? '—'} />
+          {/* Which panel this is, and therefore whose settings the choices
+              below are changing. Worth stating: the panels are identical to
+              look at, and "Shared" versus a name is the difference between a
+              tap that changes one wall and one that changes all of them. */}
+          <Row k="This panel" v={getPanelId() ?? 'Shared (no id)'} />
         </div>
 
         <div class="section-head">

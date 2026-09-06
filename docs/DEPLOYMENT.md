@@ -213,7 +213,7 @@ panel down.
 **7. Point the Navigator at it** (Persistent Web App mode, see [§3](#3-provisioning-the-room-navigator)):
 
 ```
-http://YOUR-UNRAID-IP:8099/?t=YOUR_PANEL_TOKEN
+http://YOUR-UNRAID-IP:8099/?t=YOUR_PANEL_TOKEN&panel=office
 ```
 
 > **The `?t=` part is not optional.** Without it the panel cannot authenticate
@@ -447,7 +447,8 @@ later means re-provisioning the device.
 
 ```bash
 scripts/provision-roombar.sh --host 192.168.1.243 \
-  --url 'https://panel.example.com/?t=<PANEL_TOKEN>'
+  --url 'https://panel.example.com/?t=<PANEL_TOKEN>' \
+  --panel office
 ```
 
 This applies everything in this section that can be applied remotely — the web
@@ -482,7 +483,7 @@ in another mode you must factory reset it to change this.
 3. Enter the URL, **including the token**:
 
    ```
-   https://panel.example.com/?t=<PANEL_TOKEN>
+   https://panel.example.com/?t=<PANEL_TOKEN>&panel=office
    ```
 
 The app then fills the entire screen, replaces the RoomOS UI, and cannot be
@@ -492,6 +493,58 @@ dismissed by users.
 (`docs/ROOMOS.md` §5). Anything the panel must remember has to be recoverable
 from the URL RoomOS reloads. The panel reads `?t=`, caches it in
 `localStorage`, and strips it from the visible URL immediately.
+
+### `&panel=` — giving a panel its own settings
+
+Two settings are changed by tapping rather than by editing YAML: which side
+the Home screen shows, and how the speaker list is arranged. They are held by
+the backend, in `panel-prefs.json` beside `dashboard.yaml`, because web
+storage on the device does not survive the night.
+
+`&panel=<id>` is how a panel says which settings are its own. Give each device
+a different id — `office`, `kitchen`, `bedroom` — and each keeps its own
+arrangement. Ids may contain letters, digits, `-` and `_`, up to 32
+characters; anything else is ignored and the panel falls back to the shared
+settings.
+
+The id is **not** stripped from the address bar the way the token is. It is
+not a secret, and leaving it visible is the only way to tell from the URL
+which panel a browser is claiming to be. The Settings screen shows it too,
+under *This panel* — worth checking before changing something, since the
+panels are identical to look at and the difference between `office` and
+*Shared (no id)* is whether a tap changes one wall or all of them.
+
+**Leaving it out is a supported choice, not an oversight.** A panel with no id
+reads and writes one shared set of settings — exactly how every panel behaved
+before ids existed. So you can deploy this and re-provision devices whenever
+you get to them, one at a time, and nothing breaks in between.
+
+How a panel's settings are resolved, in order:
+
+| | |
+|---|---|
+| built-in defaults | Now Playing on the Home screen, no speaker arrangement |
+| the `default` block | what an unnamed panel changes; every named panel inherits it |
+| that panel's own block | created the first time somebody changes something on it |
+
+The merge is **per setting**, not per block. A panel that has only ever
+rearranged its speakers still follows the shared Home-screen choice, so
+"set it once everywhere, then adjust the odd one" keeps working.
+
+```jsonc
+{
+  "default": { "homeSide": "media" },
+  "panels": {
+    "office":  { "homeSide": "photos" },     // this wall shows photos
+    "kitchen": { "players": { /* ... */ } }   // still shows Now Playing
+  }
+}
+```
+
+You never have to write that file — it is machine-owned and rewritten on every
+tap. It is documented because it is the one place to look when a panel is
+showing something you did not expect. An older flat file, from before ids,
+is read as the `default` block and upgrades silently.
 
 ### Device configuration
 

@@ -213,8 +213,14 @@ async function main(): Promise<void> {
     },
   });
 
-  // A preference set on one panel appears on every other one immediately.
-  prefs.onChange((next) => hub.broadcastPrefs(next));
+  /*
+   * A preference change re-sends every panel ITS OWN preferences.
+   *
+   * Not a broadcast of one value: a change to the shared default reaches
+   * panels that have not overridden it, and must not overwrite the ones that
+   * have. See PrefsStore for how the two scopes resolve.
+   */
+  prefs.onChange(() => hub.refreshPrefs());
 
   const services = new ServiceGuard(haClient, store);
 
@@ -343,9 +349,10 @@ async function main(): Promise<void> {
         data: msg.data,
       }),
 
-    getPrefs: () => prefs.current,
-    onPref: (key, value) => prefs.set(key, value),
-    onLayout: (layout) => prefs.setLayout(layout, config.current.media.sections),
+    getPrefs: (panelId) => prefs.for(panelId),
+    onPref: (key, value, panelId) => prefs.set(key, value, panelId),
+    onLayout: (layout, panelId) =>
+      prefs.setLayout(layout, config.current.media.sections, panelId),
 
     getPlayers: () => {
       const [players, queues] = musicSnapshot();
