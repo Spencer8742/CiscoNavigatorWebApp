@@ -652,6 +652,14 @@ export type AppleTvCommand =
   | 'skip_forward' | 'skip_backward' | 'volume_up' | 'volume_down'
   | 'power_on' | 'power_off' | 'screensaver';
 
+export interface AppleTvSwipe {
+  startX: number;
+  startY: number;
+  endX: number;
+  endY: number;
+  durationMs: number;
+}
+
 export interface KeyLightState {
   id: string;
   name: string;
@@ -761,6 +769,7 @@ export type ClientMessage =
   | { t: 'music'; id: number; cmd: MusicCommand }
   /** Drive or pair a configured Apple TV. */
   | { t: 'apple-tv'; id: number; appleTv: string; op: AppleTvCommand }
+  | ({ t: 'apple-tv-swipe'; id: number; appleTv: string } & AppleTvSwipe)
   | { t: 'apple-tv-app'; id: number; appleTv: string; app: string }
   | { t: 'apple-tv-pair'; id: number; appleTv: string; op: 'begin' | 'pin' | 'cancel'; pin?: string }
   /** Ask for the next N slideshow photos. */

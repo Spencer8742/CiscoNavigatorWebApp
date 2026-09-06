@@ -7,6 +7,7 @@ import type { ConfigStore } from '~/config/load.ts';
 import type {
   BackendHealth,
   AppleTvCommand,
+  AppleTvSwipe,
   AppleTvState,
   BrowseRequest,
   BrowseResult,
@@ -80,6 +81,7 @@ export interface HubDeps {
   getTvs: () => TvState[];
   getAppleTvs: () => AppleTvState[];
   onAppleTv?: (device: string, op: AppleTvCommand) => Promise<string | null>;
+  onAppleTvSwipe?: (device: string, gesture: AppleTvSwipe) => Promise<string | null>;
   onAppleTvApp?: (device: string, app: string) => Promise<string | null>;
   onAppleTvPair?: (device: string, op: 'begin' | 'pin' | 'cancel', pin?: string) => Promise<string | null>;
   /** Music services the household has, sent in `hello`. */
@@ -247,6 +249,13 @@ export class Hub {
         if (!this.#deps.onAppleTv) return;
         const problem = await this.#deps.onAppleTv(msg.appleTv, msg.op);
         if (problem) this.#send(panel, { t: 'error', ref: msg.id, code: 'apple_tv_failed', message: problem });
+        break;
+      }
+
+      case 'apple-tv-swipe': {
+        if (!this.#deps.onAppleTvSwipe) return;
+        const problem = await this.#deps.onAppleTvSwipe(msg.appleTv, msg);
+        if (problem) this.#send(panel, { t: 'error', ref: msg.id, code: 'apple_tv_swipe_failed', message: problem });
         break;
       }
 

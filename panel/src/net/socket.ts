@@ -434,6 +434,10 @@ export function appleTvCommand(appleTv: string, op: import('@shared/protocol.ts'
   return send({ t: 'apple-tv', id: nextId(), appleTv, op });
 }
 
+export function appleTvSwipe(appleTv: string, gesture: import('@shared/protocol.ts').AppleTvSwipe): boolean {
+  return send({ t: 'apple-tv-swipe', id: nextId(), appleTv, ...gesture });
+}
+
 export function launchAppleTvApp(appleTv: string, app: string): boolean {
   return send({ t: 'apple-tv-app', id: nextId(), appleTv, app });
 }
