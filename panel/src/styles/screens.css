@@ -1732,41 +1732,23 @@
 }
 .apple-tv-shortcuts {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--s-2);
   margin-top: var(--s-4);
 }
 .apple-tv-shortcut {
-  display: flex;
-  align-items: center;
-  gap: var(--s-3);
+  display: grid;
+  place-items: center;
   min-width: 0;
-  min-height: 4.5rem;
-  padding: var(--s-2) var(--s-3);
+  min-height: 5.75rem;
+  padding: var(--s-3);
   border-radius: var(--r-lg);
   border: 1px solid var(--border-subtle);
   background: var(--surface-2);
   color: var(--text);
-  text-align: left;
 }
-.apple-tv-shortcut > span {
-  display: grid;
-  place-items: center;
-  flex: 0 0 2.75rem;
-  width: 2.75rem;
-  height: 2.75rem;
-  border-radius: var(--r-md);
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: 1.15rem;
-  font-weight: 750;
-}
-.apple-tv-shortcut > strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.95rem;
-}
+.apple-tv-shortcut:active { background: var(--surface-3); }
+.apple-tv-service-logo { width: 3.25rem; height: 3.25rem; }
 
 .apple-tv-pair {
   gap: var(--s-3);
