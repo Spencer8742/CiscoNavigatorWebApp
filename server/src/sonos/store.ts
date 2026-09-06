@@ -446,7 +446,9 @@ export class SonosStore {
       artist: track.artist ?? (track.streamContent ? track.title : null),
       album: track.album,
       art: this.#art.register(artUrl(track.artUri, host)),
-      duration: seconds(change.get('CurrentTrackDuration') ?? null),
+      // Some music services leave CurrentTrackDuration blank even though the
+      // same duration is present on TrackMetaData's playable `res` element.
+      duration: seconds(change.get('CurrentTrackDuration') ?? null) ?? track.duration,
       elapsed: sameTrack ? previous.elapsed : null,
       elapsedAt: sameTrack ? previous.elapsedAt : null,
     };
@@ -724,7 +726,7 @@ export class SonosStore {
       artist: track.artist ?? (track.streamContent ? track.title : null),
       album: track.album,
       art: this.#art.register(artUrl(track.artUri, host)),
-      duration: seconds(textOf(position, 'TrackDuration')),
+      duration: seconds(textOf(position, 'TrackDuration')) ?? track.duration,
       elapsed,
       elapsedAt: elapsed === null ? null : Date.now(),
     };

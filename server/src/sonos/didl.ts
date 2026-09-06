@@ -28,6 +28,8 @@ export interface DidlTrack {
    * looks frozen.
    */
   streamContent: string | null;
+  /** Seconds, when the provider includes it on the playable `res` element. */
+  duration: number | null;
 }
 
 /** One row of a browse result. */
@@ -176,6 +178,7 @@ export function parseTrackMetadata(xml: string | null): DidlTrack | null {
   const root = parseXml(xml);
   if (!root) return null;
 
+  const res = find(root, 'res');
   const track: DidlTrack = {
     title: textOf(root, 'title'),
     // `dc:creator` is the performing artist. `upnp:artist` also appears on
@@ -184,6 +187,7 @@ export function parseTrackMetadata(xml: string | null): DidlTrack | null {
     album: textOf(root, 'album'),
     artUri: textOf(root, 'albumArtURI'),
     streamContent: textOf(root, 'streamContent'),
+    duration: hmsToSeconds(res?.attrs['duration']),
   };
 
   const empty =
