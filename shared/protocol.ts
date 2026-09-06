@@ -64,13 +64,6 @@ export type LinkState = 'connected' | 'connecting' | 'disconnected';
 export interface BackendHealth {
   ha: LinkState;
   immich: LinkState;
-  /** Music Assistant, spoken to directly. 'disabled' when MASS_URL is unset. */
-  mass: LinkState | 'disabled';
-  /**
-   * Why Music Assistant is unhappy — most usefully, a missing or rejected
-   * token, which is otherwise indistinguishable from the server being down.
-   */
-  massError: string | null;
   /**
    * Sonos, spoken to directly on the LAN. 'disabled' when SONOS_HOST is unset
    * and discovery is off.
@@ -85,6 +78,17 @@ export interface BackendHealth {
    * and they need three different things done about them.
    */
   sonosError: string | null;
+  /**
+   * How Sonos state is arriving.
+   *
+   * `live` means the speakers are pushing changes, which is what makes the
+   * panel keep up with a volume knob turned anywhere else. `polling` is the
+   * fallback for when those pushes cannot reach the backend — almost always
+   * Docker bridge networking — and is shown rather than hidden because the
+   * symptom (a panel that responds to taps but lags behind the house) is
+   * otherwise impossible to attribute.
+   */
+  sonosUpdates: 'live' | 'polling' | 'off';
   /**
    * Why Immich is unhappy, if it is — already human-readable, and including
    * whatever Immich itself said. Null when the last request succeeded.
@@ -117,27 +121,27 @@ export interface PhotoRef {
   country?: string;
 }
 
-/* ── Music Assistant players ───────────────────────────────────────────── */
+/* ── Speakers ──────────────────────────────────────────────────────────── */
 
 /**
- * A speaker, as Music Assistant describes it.
+ * A speaker, as Sonos describes it.
  *
- * This replaces reading `media_player` entities from Home Assistant. Music
- * Assistant knows things Home Assistant's media_player model has nowhere to
- * put: which players a given speaker is *able* to group with, whether it is a
- * dedicated group or a synced child, and which queue is driving it.
+ * This replaces reading `media_player` entities from Home Assistant. Sonos
+ * knows things that model has nowhere to put: which zone coordinates a group,
+ * which speakers are following it, and whether two are bonded as one.
  *
- * Volume is 0-100 here, not 0-1 — that is Music Assistant's own scale, and
- * converting twice is how off-by-a-factor-of-100 bugs happen.
+ * Volume is 0-100, which is Sonos's own scale — converting it anywhere is how
+ * a slider ends up setting a speaker to 1% of what was asked for.
  */
-export interface MassPlayer {
+export interface Player {
   id: string;
   name: string;
-  /** 'player' | 'stereo_pair' | 'group' — MA's own PlayerType. */
+  /** 'player' when it is one speaker, 'stereo_pair' when two are bonded. */
   type: string;
   available: boolean;
-  /** 'playing' | 'paused' | 'idle' | 'playing'… MA's PlaybackState. */
+  /** 'playing' | 'paused' | 'buffering' | 'idle'. */
   state: string;
+  /** Always null for Sonos, which has no power concept. */
   powered: boolean | null;
   /** 0-100, or null when the player has no volume control. */
   volume: number | null;
@@ -146,17 +150,34 @@ export interface MassPlayer {
   members: string[];
   /** The player this one is synced to, if it is a follower. */
   syncedTo: string | null;
-  /** Players this one is ABLE to group with. Empty means grouping is off. */
+  /** Speakers this one can group with — for Sonos, every other zone. */
   canGroupWith: string[];
   /** The queue driving this player — the id every queue command needs. */
   queueId: string | null;
   /** Group volume when this is a group leader, else the player's own. */
   groupVolume: number | null;
   /** What is on it right now. */
-  media: MassMedia | null;
+  media: NowPlaying | null;
+  /**
+   * Tone, −10 to +10, and loudness. Null until the speaker has said.
+   *
+   * Per speaker rather than per group, like volume: they describe the room the
+   * speaker stands in, and two grouped speakers in different rooms want
+   * different bass and the same music.
+   */
+  bass: number | null;
+  treble: number | null;
+  loudness: boolean | null;
+  /**
+   * When the sleep timer will stop this group, as epoch ms. Null when none.
+   *
+   * An instant rather than a remaining duration, so the panel can count down
+   * without the backend re-sending a number every second.
+   */
+  sleepAt: number | null;
 }
 
-export interface MassMedia {
+export interface NowPlaying {
   title: string | null;
   artist: string | null;
   album: string | null;
@@ -170,7 +191,7 @@ export interface MassMedia {
 }
 
 /** The state of a player's queue, minus the items themselves. */
-export interface MassQueue {
+export interface PlayerQueue {
   id: string;
   name: string;
   /** How many items the queue holds. */
@@ -183,7 +204,7 @@ export interface MassQueue {
 
 /** One row of a queue. */
 export interface QueueEntry {
-  /** MA's queue_item_id — what move and remove act on. */
+  /** The queue object id, `Q:0/5` — what move and remove act on. */
   id: string;
   name: string;
   /** "Artist · Album". */
@@ -196,7 +217,7 @@ export interface QueueEntry {
 
 /* ── Music browsing ────────────────────────────────────────────────────── */
 
-/** The media types Music Assistant's library and search understand. */
+/** The kinds of thing that can appear in a browse result. */
 export type MediaKind =
   | 'artist'
   | 'album'
@@ -220,12 +241,17 @@ export const MEDIA_KINDS: readonly MediaKind[] = [
  * One browsable thing.
  *
  * Short keys, and only the four fields a list row actually draws. A library
- * page is sixty of these and Music Assistant's own item shape carries a dozen
- * fields per entry — sending that raw would triple the frame for data the
- * panel would immediately discard, on a device with a hard memory ceiling.
+ * page is sixty of these and a DIDL entry carries a dozen fields apiece —
+ * sending that raw would triple the frame for data the panel would
+ * immediately discard, on a device with a hard memory ceiling.
  */
 export interface MediaItem {
-  /** Music Assistant URI. The only thing needed to play it. */
+  /**
+   * An opaque key this backend minted. The only thing needed to play it.
+   *
+   * NOT a URI: Sonos will fetch whatever URI it is handed, so the panel is
+   * never given one. See server/src/sonos/uris.ts.
+   */
   u: string;
   /** Name. */
   n: string;
@@ -235,8 +261,68 @@ export interface MediaItem {
   s?: string;
   /** Artwork path on THIS origin, already proxied. See http/media-art.ts. */
   a?: string;
-  /** Favourited in Music Assistant. Absent when the item cannot be one. */
+  /** Favourited upstream. Absent when the state is unknown, which for Sonos
+   *  is always — favourites are managed in the Sonos app, not from here. */
   f?: boolean;
+  /** Pinned in this app's shared media shelf. */
+  p?: boolean;
+  /**
+   * This row can be OPENED but not played.
+   *
+   * True for the browse root's sources — "Favourites" and "Music Library" are
+   * places, not records — and for a service row the service itself marked
+   * unplayable. Without it the panel draws a play button that produces a
+   * refusal, which reads as a bug rather than as a category.
+   */
+  o?: true;
+  /** False when a collection can be played but Sonos cannot expose its rows. */
+  b?: false;
+  /**
+   * The music service this row IS, on the service list only.
+   *
+   * Present so the panel can tell "open this" from "connect this first"
+   * without matching on the subtitle text, and so it has the id the link
+   * flow needs. Absent on every other kind of row, including rows from
+   * inside a service.
+   */
+  sid?: number;
+}
+
+/**
+ * A music service this household has — Sonos Radio, Plex, SoundCloud…
+ *
+ * The panel gets these rather than discovering them, because which services
+ * exist and whether each is usable are both facts about the household and its
+ * stored credentials, neither of which a wall panel should be reasoning about.
+ */
+export interface MusicSource {
+  /** Sonos's service id — the `sid` in every URI it produces. */
+  sid: number;
+  name: string;
+  /** Browsable right now: it needs no login, or this app is linked to it. */
+  ready: boolean;
+  /** The service will answer a catalog search. */
+  searchable: boolean;
+  /**
+   * Connecting is offerable. False for a service that needs a password, which
+   * cannot be typed on a shared screen and is not asked for.
+   */
+  linkable: boolean;
+  /** Why account linking is unavailable for this service's sign-in method. */
+  blocked?: string;
+  /** Last failed connection attempt. Retry remains available. */
+  lastError?: string;
+}
+
+/** Where a device link has got to. */
+export interface ServiceLink {
+  sid: number;
+  /** 'prompt' — go here and enter this; 'waiting' — not confirmed yet. */
+  state: 'prompt' | 'waiting' | 'linked';
+  /** Where to go. Shown as text: the panel has no second tab to open. */
+  url?: string;
+  /** The code to type there, when the service does not display its own. */
+  code?: string;
 }
 
 /**
@@ -250,18 +336,61 @@ export type BrowseRequest =
   | {
       kind: 'library';
       media: MediaKind;
-      /** Only items marked favourite in Music Assistant. */
+      /** The Favourites container, which on Sonos is a place not a filter. */
       favorite?: boolean;
-      /** Sort by last played rather than by name. */
-      recent?: boolean;
       /**
-       * How many items to skip — an ITEM offset, as Music Assistant itself
-       * uses, not a page number. Page size is fixed by the backend at
-       * `BROWSE_PAGE`, so a caller pages by adding that.
+       * How many items to skip — an ITEM offset, as Sonos itself uses, not a
+       * page number. Page size is fixed by the backend at `BROWSE_PAGE`, so a
+       * caller pages by adding that.
        */
       offset?: number;
     }
-  | { kind: 'search'; text: string }
+  /**
+   * A text search. The panel uses `all` to combine Sonos and Spotify; the
+   * narrower forms remain available to the backend and protocol tests.
+   */
+  /**
+   * `source` is `'library'` for what the speakers hold, or a service's `sid`
+   * for its own catalog. A number rather than a name because the panel is
+   * given the services in `hello` and echoes back what it was told.
+   */
+  | {
+      kind: 'search';
+      text: string;
+      source?: 'all' | 'library' | number;
+      /** Limit grouped results to one kind. */
+      media?: MediaKind;
+    }
+  /**
+   * A page of a music service's own tree.
+   *
+   * `id` is the service's id for a container, or absent for its top level.
+   * These ids come from a previous page of the same service, so the panel
+   * never composes one.
+   */
+  | { kind: 'service'; sid: number; id?: string; offset?: number }
+  /**
+   * Everywhere music can come from, as one list of rows to open.
+   *
+   * The top of the browser, and the reason there is no tab strip: which
+   * sources a household HAS is a fact about that household, not something to
+   * hard-code six of. A house with no NAS share has no Albums tab to offer,
+   * and a house with Plex and SoundCloud should not have to find them behind
+   * a tab called "Services".
+   *
+   * It is also how the Sonos app's own Browse screen works, and it means
+   * opening Plex reuses the drill-down that opening an album already uses.
+   */
+  | { kind: 'sources' }
+  /**
+   * Every service Sonos offers, for adding one detection missed.
+   *
+   * Detection reads the household — its accounts, its favourites, its saved
+   * stations — and a service that is set up but has none of those leaves no
+   * trace to find. This is the deliberate way past that: a long list nobody
+   * has to look at unless something they know they have is absent.
+   */
+  | { kind: 'catalog' }
   /**
    * The contents of one item — an album's tracks, an artist's albums, a
    * playlist's tracks.
@@ -270,6 +399,8 @@ export type BrowseRequest =
    * able to mean "show me track 7", not only "play the whole thing".
    */
   | { kind: 'item'; uri: string; offset?: number }
+  /** Content played or pinned through this app. */
+  | { kind: 'shelf'; shelf: 'recent' | 'pinned' }
   /** The actual rows of a player's queue. */
   | { kind: 'queue'; queueId: string; offset?: number };
 
@@ -280,6 +411,24 @@ export interface BrowseList {
   offset: number;
   /** Whether another page exists. */
   more: boolean;
+  /**
+   * This service needs connecting before it can answer, and its `sid`.
+   *
+   * The difference between an explanation and a button. "Connect SoundCloud
+   * first" told somebody what was wrong and gave them nowhere to do anything
+   * about it; carrying the id means the empty state can offer the pairing
+   * flow where they are already looking.
+   */
+  connect?: number;
+  /**
+   * Why this list is empty, when it is.
+   *
+   * An empty list and a broken one look identical on a wall panel, and the
+   * commonest empty list here is entirely correct — a household with no NAS
+   * share has no Albums, and saying so is the difference between "this works
+   * and you have none" and "this is broken".
+   */
+  note?: string;
 }
 
 /** Search results, grouped by media type in the order they should be shown. */
@@ -291,10 +440,10 @@ export interface BrowseGroups {
 /**
  * A page of the actual queue.
  *
- * This is the thing the Home Assistant integration could not give us:
- * `music_assistant.get_queue` returns a summary — current item, next item, a
- * count. The rows, and the commands that reorder and remove them, exist only
- * on Music Assistant's own API, which is why the panel talks to it directly.
+ * This is the thing the Home Assistant integration could not give us: a
+ * summary with a current item and a count, but never the rows, nor the
+ * commands that reorder and remove them. Those exist only on the speaker's
+ * own API, which is why the backend talks to it directly.
  */
 export interface QueuePage {
   kind: 'queuePage';
@@ -317,23 +466,16 @@ export type Enqueue = 'play' | 'replace' | 'next' | 'replace_next' | 'add';
 /**
  * Everything the panel can ask of a speaker.
  *
- * A closed set of verbs, deliberately, and it replaced a message that carried
- * a Music Assistant command name straight through. Two things came of that:
+ * A closed set of verbs, deliberately, and the reason is a safety property
+ * rather than tidiness. Sonos's local API has no authentication, and the same
+ * port that pauses a track can rename rooms, rewrite alarms and write
+ * music-service credentials. With an upstream command name on the wire the
+ * guarantee is "the allow-list is complete" — something that can be
+ * overlooked into being false. With a verb it is "no other action exists",
+ * which cannot.
  *
- * **The panel stopped knowing which music system it is talking to.** It names
- * a player and an intention; the backend routes to Sonos or to Music Assistant
- * depending on which one owns that id. That is what lets both run at once
- * during the migration in `docs/SONOS.md`, and what makes phase 6 a deletion
- * rather than a rewrite.
- *
- * **The guard got stronger.** Sonos's local API has no authentication, and the
- * same port that pauses a track can rename rooms and rewrite alarms. With a
- * command name on the wire the safety property is "the allow-list is
- * complete"; with a verb it is "no other action exists", which is not a
- * property that can be overlooked into being false.
- *
- * `player` is always a player id, never a queue id — resolving a queue is the
- * backend's job, and the two systems disagree about what a queue even is.
+ * `player` is always a player id, never a queue id: a Sonos queue belongs to a
+ * group rather than to a speaker, and resolving that is the backend's job.
  */
 export type MusicCommand =
   | { verb: 'playPause' | 'play' | 'pause' | 'stop' | 'next' | 'previous'; player: string }
@@ -342,20 +484,59 @@ export type MusicCommand =
   /** 0-100. Both systems use that scale; converting anywhere is a bug. */
   | { verb: 'volume'; player: string; level: number }
   | { verb: 'mute'; player: string; muted: boolean }
-  /** Music Assistant only. Sonos speakers have no power concept. */
+  /** Accepted and refused: Sonos speakers have no power concept. */
   | { verb: 'power'; player: string; on: boolean }
   | { verb: 'shuffle'; player: string; on: boolean }
   | { verb: 'repeat'; player: string; mode: string }
   /** Set the group led by `player` to exactly these members. Absolute. */
   | { verb: 'group'; player: string; members: string[] }
   | { verb: 'ungroup'; player: string }
-  | { verb: 'playItem'; player: string; item: string; enqueue: Enqueue; radio?: boolean }
+  | {
+      verb: 'playItem';
+      player: string;
+      item: string;
+      enqueue: Enqueue;
+      radio?: boolean;
+      media?: MediaItem;
+    }
+  | { verb: 'pin'; player: string; item: string; media: MediaItem; on: boolean }
+  /** Move the current group and queue to another room. */
+  | { verb: 'handoff'; player: string; target: string }
   | { verb: 'queueJump'; player: string; index: number }
   /** `by` is a position shift, not an index. */
   | { verb: 'queueMove'; player: string; item: string; by: number }
   | { verb: 'queueRemove'; player: string; item: string }
   | { verb: 'queueClear'; player: string }
-  | { verb: 'favorite'; player: string; item: string; on: boolean };
+  | { verb: 'favorite'; player: string; item: string; on: boolean }
+  /**
+   * Volume for the whole group at once, 0-100.
+   *
+   * Sonos scales every member proportionally and keeps their relative balance,
+   * which is what makes it different from setting each speaker in turn — that
+   * would flatten a deliberately quiet speaker up to match the others.
+   */
+  | { verb: 'groupVolume'; player: string; level: number }
+  /** Tone, −10 to +10. Per speaker, like volume. */
+  | { verb: 'bass' | 'treble'; player: string; level: number }
+  | { verb: 'loudness'; player: string; on: boolean }
+  /** Blend the end of one track into the next. Per group. */
+  | { verb: 'crossfade'; player: string; on: boolean }
+  /**
+   * Stop this group after `minutes`. Zero cancels a running timer.
+   *
+   * Sonos holds the timer itself, so it survives this backend restarting —
+   * which is the whole reason not to implement it with a `setTimeout` here.
+   */
+  | { verb: 'sleep'; player: string; minutes: number }
+  /**
+   * Play a physical input instead of the queue.
+   *
+   * `tv` is a soundbar's optical or HDMI-ARC input and `line` an analogue one;
+   * `queue` puts a speaker back on its own queue, which is how you leave.
+   * A speaker without the named input refuses, and that refusal is the answer
+   * rather than something to pre-empt with a capability table.
+   */
+  | { verb: 'input'; player: string; source: 'tv' | 'line' | 'queue' };
 
 /**
  * Every verb, for the runtime check the type system cannot do.
@@ -383,11 +564,20 @@ export const MUSIC_VERBS: readonly string[] = [
   'group',
   'ungroup',
   'playItem',
+  'pin',
+  'handoff',
   'queueJump',
   'queueMove',
   'queueRemove',
   'queueClear',
   'favorite',
+  'groupVolume',
+  'bass',
+  'treble',
+  'loudness',
+  'crossfade',
+  'sleep',
+  'input',
 ];
 
 /** How many items one library page holds. Fixed here so a panel cannot ask
@@ -430,6 +620,46 @@ export interface TvState {
   confirmed: boolean;
 }
 
+export type AppleTvPairingState = 'idle' | 'starting' | 'pin' | 'paired' | 'error';
+
+/** Live state from a configured Apple TV. Credentials never leave the backend. */
+export interface AppleTvState {
+  id: string;
+  name: string;
+  reachable: boolean;
+  paired: boolean;
+  pairing: AppleTvPairingState;
+  /** Which protocol the current/next PIN enables. */
+  pairingTarget: 'remote' | 'media' | null;
+  power: 'on' | 'off' | 'unknown';
+  playback: 'idle' | 'loading' | 'paused' | 'playing' | 'stopped' | 'seeking';
+  mediaType: 'unknown' | 'video' | 'music' | 'tv';
+  title: string | null;
+  artist: string | null;
+  album: string | null;
+  app: string | null;
+  /** Authenticated path served by the backend; never a device address. */
+  artwork: string | null;
+  elapsed: number | null;
+  duration: number | null;
+  elapsedAt: number | null;
+  error: string | null;
+}
+
+export type AppleTvCommand =
+  | 'up' | 'down' | 'left' | 'right' | 'select' | 'menu' | 'home'
+  | 'play_pause' | 'play' | 'pause' | 'stop' | 'next' | 'previous'
+  | 'skip_forward' | 'skip_backward' | 'volume_up' | 'volume_down'
+  | 'power_on' | 'power_off' | 'screensaver';
+
+export interface AppleTvSwipe {
+  startX: number;
+  startY: number;
+  endX: number;
+  endY: number;
+  durationMs: number;
+}
+
 export interface KeyLightState {
   id: string;
   name: string;
@@ -456,25 +686,28 @@ export type ServerMessage =
       /** Server time, so the panel's clock is right even if the device's isn't. */
       now: number;
       prefs: PanelPrefs;
-      /** Every Music Assistant speaker, if MA is configured. */
-      players: MassPlayer[];
+      /** Every Sonos speaker, if a household was found. */
+      players: Player[];
       /** Queue state for each of those players, keyed by queue id. */
-      queues: MassQueue[];
+      queues: PlayerQueue[];
       /** Every Elgato Key Light named in `controls.keylights`. */
       keylights: KeyLightState[];
       tvs: TvState[];
+      appleTvs: AppleTvState[];
+      /** Music services this household has. Empty until they are discovered. */
+      sources: MusicSource[];
     }
   /** Incremental entity state. */
   | { t: 'patch'; patch: StatePatch }
   /**
-   * Music Assistant state changed.
+   * Speaker state changed.
    *
    * Sent whole rather than as a diff. A house has tens of speakers, not the
    * hundreds of entities that made diffing Home Assistant worth the
    * complexity, and a player carries its now-playing metadata — which changes
    * as a unit anyway when the track does.
    */
-  | { t: 'players'; players: MassPlayer[]; queues: MassQueue[] }
+  | { t: 'players'; players: Player[]; queues: PlayerQueue[] }
   /**
    * Elgato Key Light state changed.
    *
@@ -482,7 +715,17 @@ export type ServerMessage =
    * is four fields. A diff would be larger than the thing it describes.
    */
   | { t: 'keylights'; lights: KeyLightState[] }
+  /**
+   * The music services changed — discovered, connected, or disconnected.
+   *
+   * Sent whole for the same reason as `players`: a household has a handful of
+   * services and each is five short fields.
+   */
+  | { t: 'sources'; sources: MusicSource[] }
+  /** Where a device link has got to, in answer to a `link` request. */
+  | { t: 'link'; ref: number; link: ServiceLink }
   | { t: 'tvs'; tvs: TvState[] }
+  | { t: 'apple-tvs'; appleTvs: AppleTvState[] }
   /** Config file changed on disk and revalidated. */
   | { t: 'config'; config: DashboardConfig }
   /** Backend link health changed. */
@@ -518,17 +761,21 @@ export type ClientMessage =
    * Drive a speaker.
    *
    * Fire-and-forget, like `call`: the authoritative result arrives moments
-   * later as a `players` push. The backend routes by player id — Sonos zones
-   * to Sonos, everything else to Music Assistant — and validates every id
-   * against what the relevant system actually told it about, for the same
-   * reason the Home Assistant path does. See `MusicCommand` for why this
-   * carries a verb rather than an upstream command name.
+   * later as a `players` push. Every id is validated against what Sonos
+   * actually told the backend about, for the same reason the Home Assistant
+   * path does. See `MusicCommand` for why this carries a verb rather than an
+   * upstream command name.
    */
   | { t: 'music'; id: number; cmd: MusicCommand }
+  /** Drive or pair a configured Apple TV. */
+  | { t: 'apple-tv'; id: number; appleTv: string; op: AppleTvCommand }
+  | ({ t: 'apple-tv-swipe'; id: number; appleTv: string } & AppleTvSwipe)
+  | { t: 'apple-tv-app'; id: number; appleTv: string; app: string }
+  | { t: 'apple-tv-pair'; id: number; appleTv: string; op: 'begin' | 'pin' | 'cancel'; pin?: string }
   /** Ask for the next N slideshow photos. */
   | { t: 'photos'; id: number; count: number }
   /**
-   * Ask Music Assistant for something to look at.
+   * Ask for something to look at.
    *
    * The only request/reply pair besides photos. Everything else in this
    * protocol is either a push or fire-and-forget, because a wall panel that
@@ -536,6 +783,15 @@ export type ClientMessage =
    * until the answer arrives, so this one waits, with a spinner.
    */
   | { t: 'browse'; id: number; req: BrowseRequest }
+  /**
+   * Connect or disconnect a music service.
+   *
+   * `begin` asks the service for a link code, `poll` asks whether the person
+   * has confirmed it yet, `forget` throws the token away. Polling rather than
+   * pushing because the confirmation happens on somebody's phone, out of
+   * sight of anything this backend is connected to.
+   */
+  | { t: 'link'; id: number; sid: number; op: 'begin' | 'poll' | 'forget' }
   /**
    * Run a macro button from `controls.pages`.
    *
@@ -574,7 +830,11 @@ export type ClientMessage =
    * (docs/ROOMOS.md §3), so a setting chosen at the panel would silently
    * revert overnight.
    */
-  | { t: 'pref'; id: number; key: 'homeSide'; value: string }
+  | { t: 'pref'; id: number; key: 'homeSide'; value: PanelPrefs['homeSide'] }
+  | { t: 'pref'; id: number; key: 'visiblePages'; value: PanelPage[] }
+  | { t: 'pref'; id: number; key: 'homeTime'; value: boolean }
+  | { t: 'pref'; id: number; key: 'photoScreensaverTime'; value: boolean }
+  | { t: 'pref'; id: number; key: 'nowPlayingScreensaverTime'; value: boolean }
   /**
    * Rearrange the player list.
    *
@@ -594,6 +854,9 @@ export type ClientMessage =
  * real keyboard exists — the RoomOS soft keyboard has no numeric, date or
  * colour modes (docs/ROOMOS.md §6). These are things you pick by tapping.
  */
+export const PANEL_PAGES = ['home', 'rooms', 'controls', 'apple-tv', 'media', 'photos'] as const;
+export type PanelPage = (typeof PANEL_PAGES)[number];
+
 export interface PanelPrefs {
   /**
    * What fills the panel beside Favorites on the Home screen.
@@ -602,6 +865,14 @@ export interface PanelPrefs {
    * never empty — which is the entire reason it exists.
    */
   homeSide: 'media' | 'photos';
+  /** Pages shown in primary navigation. Settings always remains available. */
+  visiblePages: PanelPage[];
+  /** Show the clock on the Home screen. */
+  homeTime: boolean;
+  /** Show the clock over the photo screensaver. */
+  photoScreensaverTime: boolean;
+  /** Show the clock on the full-screen Now Playing view. */
+  nowPlayingScreensaverTime: boolean;
   /** How the player list is arranged. See `PlayerLayout`. */
   players: PlayerLayout;
 }
@@ -654,6 +925,10 @@ export function panelIdOf(value: unknown): string | null {
 
 export const DEFAULT_PREFS: PanelPrefs = {
   homeSide: 'media',
+  visiblePages: [...PANEL_PAGES],
+  homeTime: true,
+  photoScreensaverTime: true,
+  nowPlayingScreensaverTime: true,
   players: { sections: {}, hidden: [] },
 };
 
@@ -671,9 +946,11 @@ export const PREF_VALUES: Record<string, readonly string[]> = {
   homeSide: ['media', 'photos'],
 };
 
+/** Boolean preferences accepted from a panel and persisted by the backend. */
+export const BOOLEAN_PREFS = ['homeTime', 'photoScreensaverTime', 'nowPlayingScreensaverTime'] as const;
+
 /** Application-level heartbeat interval. A Wi-Fi roam can leave a socket
  *  half-open for minutes before TCP notices; this catches it in seconds. */
 export const HEARTBEAT_MS = 25_000;
 /** Miss this many heartbeats and we tear the socket down and reconnect. */
 export const HEARTBEAT_TIMEOUT_MS = 12_000;
-

@@ -16,3 +16,7 @@ config/dashboard.yaml
 data/
 .vite/
 *.tsbuildinfo
+
+# Python bridge bytecode
+__pycache__/
+*.pyc

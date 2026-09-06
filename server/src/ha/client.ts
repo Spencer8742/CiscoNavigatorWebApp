@@ -51,7 +51,7 @@ const CALL_TIMEOUT_MS = 10_000;
  * Longer, for calls whose answer we actually need.
  *
  * A `light.turn_on` that has not returned in ten seconds has failed. A
- * `music_assistant.get_library` against a cold Spotify provider genuinely can
+ * a library query against a cold streaming provider genuinely can
  * take longer than that and still succeed, and timing it out would show an
  * error on a screen that was about to fill with albums.
  */

@@ -1,5 +1,12 @@
-import { signal, computed } from '@preact/signals';
-import { DEFAULT_PREFS, type BackendHealth, type LinkState, type PanelPrefs } from '@shared/protocol.ts';
+import { signal, computed, effect } from '@preact/signals';
+import {
+  DEFAULT_PREFS,
+  PANEL_PAGES,
+  type BackendHealth,
+  type LinkState,
+  type PanelPage,
+  type PanelPrefs,
+} from '@shared/protocol.ts';
 import type { ConnectionProblem } from '~/net/diagnose.ts';
 
 /**
@@ -10,9 +17,9 @@ import type { ConnectionProblem } from '~/net/diagnose.ts';
  * `route.value` updates exactly the subscribers that read it.
  */
 
-export type Route = 'home' | 'rooms' | 'controls' | 'media' | 'photos' | 'settings';
+export type Route = PanelPage | 'settings';
 
-export const ROUTES: Route[] = ['home', 'rooms', 'controls', 'media', 'photos', 'settings'];
+export const ROUTES: readonly Route[] = [...PANEL_PAGES, 'settings'];
 
 /* ── Navigation ──────────────────────────────────────────────────────────
    No History API and no hash routing. RoomOS runs this in a kiosk web view
@@ -98,6 +105,7 @@ export function navigate(to: Route): void {
   // Belt and braces: the nav is hidden under the kiosk lock, but nothing else
   // should be able to move the panel off the page it is locked to either.
   if (kiosk.value) return;
+  if (!isRouteVisible(to)) return;
   if (route.value === to) return;
   // Leaving Rooms always resets the drill-down, so coming back lands on the
   // list rather than a room the user has forgotten they were in.
@@ -122,6 +130,21 @@ export const health = signal<BackendHealth | null>(null);
  * a preference kept here would quietly revert overnight.
  */
 export const prefs = signal<PanelPrefs>({ ...DEFAULT_PREFS });
+
+export const visibleRoutes = computed<readonly Route[]>(() => [
+  ...PANEL_PAGES.filter((page) => prefs.value.visiblePages.includes(page)),
+  'settings',
+]);
+
+export function isRouteVisible(value: Route): boolean {
+  return value === 'settings' || prefs.value.visiblePages.includes(value);
+}
+
+// A preference can arrive from another connected panel while this one is on
+// the page being hidden. Move it somewhere usable immediately.
+effect(() => {
+  if (!isRouteVisible(route.value)) route.value = 'settings';
+});
 
 /**
  * What the connection dot shows. Deliberately conservative: we report the

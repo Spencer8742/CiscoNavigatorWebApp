@@ -156,6 +156,39 @@
     Mask="false"/>
 
   <Config
+    Name="Spotify Client ID"
+    Target="SPOTIFY_CLIENT_ID"
+    Default=""
+    Mode=""
+    Description="Optional, and ONLY for searching Spotify. Playback runs through the Spotify account already linked in your Sonos app - this never touches it and gives no access to your account. Create a free app at developer.spotify.com/dashboard. Without it, Search still searches your local Sonos library and everything you favourited in the Sonos app plays regardless."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false"/>
+
+  <Config
+    Name="Spotify Client Secret"
+    Target="SPOTIFY_CLIENT_SECRET"
+    Default=""
+    Mode=""
+    Description="The secret for the Spotify app above. Search only."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="true"/>
+
+  <Config
+    Name="Spotify Market"
+    Target="SPOTIFY_MARKET"
+    Default="US"
+    Mode=""
+    Description="Two-letter country code used for Spotify availability and podcast search, for example US, CA, GB or AU."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false"/>
+
+  <Config
     Name="Companion URL"
     Target="COMPANION_URL"
     Default=""

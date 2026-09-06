@@ -285,12 +285,8 @@ The panel talks to Sonos **directly on your LAN** — no cloud account, no
 developer key, no Home Assistant in the middle. Why the local protocol rather
 than Sonos's cloud API is in [`SONOS.md`](./SONOS.md) §2.
 
-> **What works today.** Rooms, groups, volumes, what is playing, live updates,
-> and full control — play/pause, skip, seek, volume, mute, shuffle, repeat and
-> grouping. **Browsing and search do not exist yet**: there is no way to start
-> something that is not already playing or queued, so Sonos is a remote
-> control rather than a music browser until phase 4
-> ([`SONOS.md`](./SONOS.md) §15).
+> **Sonos is now the only music source.** Music Assistant has been removed —
+> `MASS_URL` and `MASS_TOKEN` do nothing and can be deleted from your config.
 
 ### One address is all it needs
 
@@ -364,11 +360,20 @@ cross a bridge network either, so in a container it usually finds nothing —
 and that failure looks like an empty Media screen rather than an error. Name
 the address.
 
-### Running it alongside Music Assistant
+## Music services — use the accounts already connected to Sonos
 
-Supported, and the intended path while you decide. Speakers that Music
-Assistant also knows about will be **listed twice** — once per source — and the
-container warns about it at startup. Removing Music Assistant is phase 6.
+Nothing to configure in this app. `Browse → My Sonos` shows Favourites, Sonos
+Playlists, saved radio stations, and the local music library. Content saved
+there plays through the provider accounts already connected in the Sonos app.
+
+Add or remove providers in the Sonos app, then save the albums, playlists,
+stations, or other content you want on the panel as Sonos Favourites or Sonos
+Playlists. The panel reads those records directly from the household.
+
+Sonos does not expose provider credentials or arbitrary provider catalogs to
+third-party local controllers. Search covers Sonos Favourites and an indexed
+local music library. Streaming providers remain available through content
+saved in Sonos.
 
 ---
 
@@ -578,8 +583,8 @@ xConfiguration Standby Control: On
 ```
 
 With `idle.timeoutSeconds: 180` (3 minutes) in `dashboard.yaml`, the panel
-shows photos from 3 minutes of inactivity and the display sleeps at 120
-minutes.
+enters its screensaver after 3 minutes. It shows Now Playing while Sonos is
+active and photos otherwise. The display itself sleeps at 120 minutes.
 
 ---
 
@@ -741,7 +746,7 @@ in the whole app.
 
 **If the session still drops**, set `audioKeepAlive: true`. It plays a silent
 loop, which is a stronger signal to the platform — but it takes the device's
-audio focus, and on a Nest Hub that is *also* a Music Assistant speaker that
+audio focus, and on a Nest Hub that is *also* a speaker that
 may interrupt playback on that speaker. Try without it first.
 
 ### What you will not get
@@ -860,16 +865,13 @@ worth taking literally:
 | Panel re-downloads everything daily | `RoomCleanup` still on | `xConfiguration RoomCleanup AutoRun ContentType WebData: Off` |
 | Home screen side card shows the wrong thing | It is a per-installation setting, not YAML | Settings → Home screen. Stored in `panel-prefs.json` beside `dashboard.yaml` |
 | A setting reverts overnight | Should not happen — preferences are stored on the server, not in the browser | If it does, check the appdata volume is writable; the log warns when it cannot persist |
-| Speakers missing from the Media screen | Not Music Assistant players | Discovery keys on MA's own `mass_player_type` attribute. A plain Sonos/Chromecast entity is not discovered — list it under `media.players` |
-| A speaker cannot be grouped | It does not advertise GROUPING | Music Assistant only sets that feature on players that support it; those are shown but not offered in the group sheet |
-| Grouping does nothing | The join was refused | Check the log: every id in `group_members` is validated against the same allow-list as the target |
+| Speakers missing from the Media screen | Sonos not reachable, or UPnP off | Settings → Connection names the reason. See [Sonos](#1b-sonos) |
+| Grouping does nothing | The join was refused | Check the log: every zone id is validated against the household the backend actually read |
 | No Sonos rooms at all | Several possible causes | Settings → Connection names the actual one in the **Sonos says** row. Start there, not here |
 | Sonos: "refused the connection" | `SONOS_HOST` is wrong, or the speaker moved | Re-read the address in the Sonos app (Settings → System → About My System) and give it a DHCP reservation |
 | Sonos: connected, then empty later | The speaker's DHCP lease changed | Same fix: a reservation. Any speaker's address works, so pick one that is never unplugged |
 | Sonos rooms appear but volumes never change | Events are not reaching the backend | Almost always Docker bridge networking — see [Networking](#networking--read-this-if-volumes-look-stale). The Settings screen names the callback address it handed out |
-| Sonos: "Not available yet" when playing something | Expected — browsing is phase 4 | Transport, volume and grouping work; starting something new does not yet |
 | Sonos: buttons work but the panel lags a few seconds | Reconciliation is covering for lost events | The five-minute reconcile is a safety net, not the mechanism. If it is doing the work, events are not arriving — see the row above |
-| Every speaker listed twice | Music Assistant and Sonos both configured | Expected during the migration; the container warns at startup. Unset `MASS_URL`, or wait for phase 6 |
 | A sub or "(R)" speaker in the picker | Should not happen — bonded members are filtered | If one appears, it is a real bug: the filter keys on `Invisible="1"` |
 | Config edit does nothing | YAML failed to parse | `docker compose logs` — the last good config is still running, on purpose |
 | Photos never load | Several possible causes | The Photos screen now names the actual one — it shows Immich's own error, not a guess. Start there |

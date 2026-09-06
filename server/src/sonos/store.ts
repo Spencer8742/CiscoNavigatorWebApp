@@ -8,30 +8,34 @@ import type { SonosClient } from '~/sonos/client.ts';
 import type { SonosEvent, SonosEvents } from '~/sonos/events.ts';
 import type { SonosZone } from '~/sonos/topology.ts';
 import type { MediaArt } from '~/http/media-art.ts';
-import type { MassMedia, MassPlayer, MassQueue } from '@shared/protocol.ts';
+import type { NowPlaying, Player, PlayerQueue } from '@shared/protocol.ts';
 
 const log = logger('sonos-store');
 
 /**
- * Every Sonos zone, shaped into the protocol the panel already speaks.
- *
- * The types are still called `Mass*` because `docs/SONOS.md` phase 6 does the
- * rename as part of the cut-over, when Music Assistant is deleted and there is
- * one music source again.
+ * Every Sonos zone, shaped into the protocol the panel speaks.
  *
  * ## Events, not polling
  *
- * Phase 1 polled every five seconds because it had nothing else. Phase 2
- * subscribes (`events.ts`) and the speakers push instead — a volume knob
- * turned in the Sonos app now reaches the panel in milliseconds rather than up
- * to five seconds later, and an idle household costs nothing at all.
+ * The speakers push (`events.ts`), so a volume knob turned in the Sonos app
+ * reaches the panel in milliseconds and an idle household costs nothing at
+ * all. When those pushes cannot reach us — almost always Docker bridge
+ * networking — `#tick` falls back to polling rather than letting the screen
+ * go quietly stale.
  *
- * What remains on a timer is **reconciliation**, every five minutes and only
- * while a panel is connected. That is not the poll wearing a hat: subscription
- * renewal already detects a dead subscription, but a single dropped `NOTIFY`
- * on a busy Wi-Fi network leaves one value wrong with nothing to correct it.
- * Five minutes is slow enough to be free and fast enough that nobody lives
- * with a stale number for long.
+ * What remains on a timer while events work is **reconciliation**, every five
+ * minutes and only while a panel is connected. That is not the poll wearing a
+ * hat: subscription renewal already detects a dead subscription, but a single
+ * dropped `NOTIFY` on a busy Wi-Fi network leaves one value wrong with
+ * nothing to correct it.
+ *
+ * ## Anything user-visible is published before anything else
+ *
+ * An event is folded in and published; reconciling subscriptions and
+ * re-reading state happen afterwards, coalesced. Doing it the other way round
+ * is what made grouping feel slow — a seven-zone re-read is ~40 requests, one
+ * regroup emits several topology events, and the screen was waiting behind
+ * all of it for something it had already been told.
  *
  * ## One thing events do not carry
  *
@@ -43,18 +47,44 @@ const log = logger('sonos-store');
  */
 
 /**
- * Reconciliation, not polling. See the note above.
+ * How often the timer wakes up. What it DOES depends on whether events work.
  *
  * Gated on a panel being connected, like the key-light poll — a container
  * running before the Navigator is provisioned talks to nobody.
  */
+const TICK_MS = 5000;
+
+/**
+ * Reconciliation, while events are arriving. See the note above.
+ *
+ * Slow because it is a safety net, not the mechanism: a single dropped
+ * `NOTIFY` leaves one value wrong with nothing to correct it.
+ */
 const RECONCILE_MS = 300_000;
+
+/**
+ * How often to try subscribing again while events are NOT arriving.
+ *
+ * A minute rather than every tick: re-subscribing is a request per speaker
+ * per service, and the thing that usually changes to fix this is a container
+ * being restarted with `SONOS_CALLBACK_HOST` set — not a retry.
+ */
+const RESUBSCRIBE_MS = 60_000;
 
 /** Long enough to absorb a burst of events, short enough to feel immediate. */
 const PUBLISH_DEBOUNCE_MS = 120;
 
 /** A track change arrives as several events; anchor the position once. */
 const POSITION_DEBOUNCE_MS = 400;
+
+/**
+ * One grouping change produces a topology event per speaker involved.
+ *
+ * Long enough to let a whole regroup settle, short enough that the follow-up
+ * read is not noticeably behind. Nothing user-visible waits on this — the
+ * panel is given the new topology the moment the first event lands.
+ */
+const TOPOLOGY_DEBOUNCE_MS = 600;
 
 /**
  * Concurrent SOAP calls during a full read.
@@ -66,7 +96,15 @@ const POSITION_DEBOUNCE_MS = 400;
 const CONCURRENCY = 6;
 
 export interface SonosStoreEvents {
-  onChange(players: MassPlayer[], queues: MassQueue[]): void;
+  onChange(players: Player[], queues: PlayerQueue[]): void;
+  /**
+   * Push started or stopped working.
+   *
+   * Worth a health broadcast of its own: recovering from polling to live is
+   * invisible otherwise, and somebody who has just set `SONOS_CALLBACK_HOST`
+   * wants to see it take effect without reloading anything.
+   */
+  onUpdatesChange(mode: 'live' | 'polling'): void;
 }
 
 export interface SonosStoreDeps {
@@ -78,21 +116,42 @@ export interface SonosStoreDeps {
   hasPanels: () => boolean;
 }
 
-/** Per-zone facts. Volume and mute are per speaker, always. */
+/** Per-zone facts. Volume, mute and tone are per speaker, always. */
 interface ZoneState {
   volume: number | null;
   muted: boolean;
   reachable: boolean;
+  /**
+   * Tone controls, −10 to +10, and loudness.
+   *
+   * Per speaker rather than per group for the same reason volume is: they
+   * describe the room the speaker is standing in. A grouped pair of speakers
+   * in a kitchen and a bathroom want different bass and the same music.
+   *
+   * Null until a speaker has reported them, which it does unprompted in its
+   * first `RenderingControl` event — so these cost no round trip at all.
+   */
+  bass: number | null;
+  treble: number | null;
+  loudness: boolean | null;
 }
 
 /** Per-group facts, owned by the coordinator and shared by its members. */
 interface GroupState {
   state: string;
-  media: MassMedia | null;
+  media: NowPlaying | null;
   tracks: number;
   index: number | null;
   shuffle: boolean;
   repeat: string;
+  /**
+   * When the sleep timer will stop this group, as epoch ms.
+   *
+   * Stored as an INSTANT rather than the remaining seconds Sonos reports, so
+   * it stays correct without being re-read: a duration would be wrong one
+   * second after it arrived and would need a timer here to keep it honest.
+   */
+  sleepAt: number | null;
 }
 
 export class SonosStore {
@@ -109,8 +168,13 @@ export class SonosStore {
   #publishTimer: ReturnType<typeof setTimeout> | undefined;
   #reconcileTimer: ReturnType<typeof setInterval> | undefined;
   #positionTimer: ReturnType<typeof setTimeout> | undefined;
+  #topologyTimer: ReturnType<typeof setTimeout> | undefined;
   #positionWanted = new Set<string>();
   #refreshing = false;
+  /** When the last full read finished, so `#tick` can pace itself. */
+  #lastFullRead = 0;
+  /** Last reported update mode, so a change is announced exactly once. */
+  #lastMode: 'live' | 'polling' | null = null;
 
   constructor(deps: SonosStoreDeps) {
     this.#client = deps.client;
@@ -129,19 +193,99 @@ export class SonosStore {
     void this.refresh();
 
     clearInterval(this.#reconcileTimer);
-    this.#reconcileTimer = setInterval(() => {
-      if (this.#hasPanels()) void this.refresh();
-    }, RECONCILE_MS);
+    this.#reconcileTimer = setInterval(() => this.#tick(), TICK_MS);
     this.#reconcileTimer.unref();
+  }
+
+  /**
+   * Record a sleep timer that was just set, without asking for it back.
+   *
+   * The `SleepTimerGeneration` event says a timer changed but never says to
+   * what, and `GetRemainingSleepTimerDuration` is a round trip to learn a
+   * number we chose ourselves a moment ago. So the command writes it here and
+   * the panel sees the countdown start immediately.
+   */
+  noteSleep(coordinator: string, minutes: number): void {
+    const group = this.#groups.get(coordinator);
+    if (!group) return;
+    this.#groups.set(coordinator, {
+      ...group,
+      sleepAt: minutes > 0 ? Date.now() + minutes * 60_000 : null,
+    });
+    this.#touch();
+  }
+
+  /**
+   * How state is currently arriving.
+   *
+   * Shown on the Settings screen, because the difference is the difference
+   * between a panel that keeps up and one that lags by seconds — and because
+   * "polling" is a fact about the deployment (almost always Docker bridge
+   * networking) that nobody can guess from the symptoms.
+   */
+  get updates(): 'live' | 'polling' {
+    return this.#events.healthy ? 'live' : 'polling';
+  }
+
+  /**
+   * One timer, two behaviours.
+   *
+   * **This is the fallback that keeps the panel working when events do not
+   * arrive.** Speakers push, and when that works there is nothing to do here
+   * but reconcile occasionally. When it does not — a container on a bridge
+   * network the speakers cannot reach back into, a firewall, a VLAN — the
+   * alternative to polling is a panel that responds to taps and never
+   * notices anything anyone else does, which is worse than a few requests a
+   * second on a LAN.
+   *
+   * Subscribing is retried while degraded, so fixing the network or setting
+   * `SONOS_CALLBACK_HOST` restores push without a restart.
+   */
+  #tick(): void {
+    if (!this.#hasPanels()) return;
+
+    const since = Date.now() - this.#lastFullRead;
+
+    if (this.#events.healthy) {
+      if (since >= RECONCILE_MS) void this.refresh();
+      return;
+    }
+
+    // Events are not reaching us. Keep the panel current the slow way, and
+    // keep trying to make that unnecessary.
+    if (since >= RESUBSCRIBE_MS) void this.refresh();
+    else void this.poll();
+  }
+
+  /**
+   * Re-read state without touching the topology or the subscriptions.
+   *
+   * The polling half of `#tick`. Deliberately lighter than `refresh()`: the
+   * household does not change every five seconds, and re-subscribing that
+   * often would be a request storm rather than a fallback.
+   */
+  async poll(): Promise<void> {
+    if (this.#refreshing) return;
+    this.#refreshing = true;
+    try {
+      await this.#readAll();
+      this.#publishNow();
+    } catch (err) {
+      log.debug('Sonos poll failed:', err);
+    } finally {
+      this.#refreshing = false;
+    }
   }
 
   dispose(): void {
     clearInterval(this.#reconcileTimer);
     clearTimeout(this.#publishTimer);
     clearTimeout(this.#positionTimer);
+    clearTimeout(this.#topologyTimer);
     this.#reconcileTimer = undefined;
     this.#publishTimer = undefined;
     this.#positionTimer = undefined;
+    this.#topologyTimer = undefined;
   }
 
   clear(): void {
@@ -173,11 +317,19 @@ export class SonosStore {
         if (!this.#client.adoptTopology(xml)) return;
 
         log.debug('Topology changed');
-        await this.#resubscribe();
-        // Grouping moves which speaker owns the transport, so the affected
-        // groups have to be re-read rather than waiting for their next event.
-        await this.#readAll();
+
+        /*
+         * Publish IMMEDIATELY, before doing anything else.
+         *
+         * The event already carries the complete new topology — every zone,
+         * every group, every coordinator — so the panel can draw the new
+         * grouping right now. Everything below is reconciliation, and putting
+         * it first is what made grouping feel slow: a full re-read of a
+         * seven-zone household is ~40 requests, grouping emits several
+         * topology events, and the screen was waiting behind all of it.
+         */
         this.#publishNow();
+        this.#scheduleTopologyWork();
         return;
       }
 
@@ -188,11 +340,20 @@ export class SonosStore {
         const previous = this.#zones.get(event.uuid);
         const volume = integer(change.get('Volume') ?? null);
         const muteRaw = change.get('Mute');
+        const loudRaw = change.get('Loudness');
 
         this.#zones.set(event.uuid, {
           volume: volume ?? previous?.volume ?? null,
           muted: muteRaw === undefined ? (previous?.muted ?? false) : flag(muteRaw),
           reachable: true,
+          /*
+           * A `LastChange` carries only what CHANGED, so an absent field means
+           * "unchanged" rather than "unset" — hence the fall-through to the
+           * previous value on every one of these rather than a fresh null.
+           */
+          bass: integer(change.get('Bass') ?? null) ?? previous?.bass ?? null,
+          treble: integer(change.get('Treble') ?? null) ?? previous?.treble ?? null,
+          loudness: loudRaw === undefined ? (previous?.loudness ?? null) : flag(loudRaw),
         });
         this.#touch();
         return;
@@ -234,6 +395,13 @@ export class SonosStore {
       index: track === null ? (previous?.index ?? null) : track < 1 ? null : track - 1,
       shuffle: mode.shuffle,
       repeat: mode.repeat,
+      /*
+       * `SleepTimerGeneration` bumps whenever the timer is set or cleared, but
+       * the event never carries the remaining time. So this keeps what it had
+       * and the command that changed it writes the new instant directly —
+       * which is exact, where a re-read would be a round trip late.
+       */
+      sleepAt: previous?.sleepAt ?? null,
     };
 
     this.#groups.set(uuid, next);
@@ -263,8 +431,8 @@ export class SonosStore {
     metadata: string,
     change: Map<string, string>,
     host: string,
-    previous: MassMedia | null,
-  ): MassMedia | null {
+    previous: NowPlaying | null,
+  ): NowPlaying | null {
     const track = parseTrackMetadata(metadata);
     if (!track) return null;
 
@@ -278,10 +446,72 @@ export class SonosStore {
       artist: track.artist ?? (track.streamContent ? track.title : null),
       album: track.album,
       art: this.#art.register(artUrl(track.artUri, host)),
-      duration: seconds(change.get('CurrentTrackDuration') ?? null),
+      // Some music services leave CurrentTrackDuration blank even though the
+      // same duration is present on TrackMetaData's playable `res` element.
+      duration: seconds(change.get('CurrentTrackDuration') ?? null) ?? track.duration,
       elapsed: sameTrack ? previous.elapsed : null,
       elapsedAt: sameTrack ? previous.elapsedAt : null,
     };
+  }
+
+  /**
+   * Reconcile subscriptions and state after the topology moved.
+   *
+   * Coalesced, because one grouping change produces a topology event per
+   * speaker involved and each would otherwise re-subscribe and re-read the
+   * whole household. Nothing here is user-visible — the panel already has the
+   * new grouping — so it can afford to wait for the burst to finish.
+   */
+  #scheduleTopologyWork(): void {
+    if (this.#topologyTimer) return;
+
+    this.#topologyTimer = setTimeout(() => {
+      this.#topologyTimer = undefined;
+      void this.#reconcileTopology();
+    }, TOPOLOGY_DEBOUNCE_MS);
+    this.#topologyTimer.unref();
+  }
+
+  async #reconcileTopology(): Promise<void> {
+    if (this.#refreshing) return;
+    this.#refreshing = true;
+    try {
+      // Subscriptions first: grouping moves which speaker owns the transport,
+      // and the new subscription delivers that speaker's current state
+      // unprompted — which is most of what the read below would have fetched.
+      await this.#resubscribe();
+      await this.#readGroups();
+      this.#publishNow();
+    } catch (err) {
+      log.debug('Reconciling after a topology change failed:', err);
+    } finally {
+      this.#refreshing = false;
+    }
+  }
+
+  /**
+   * Re-read the coordinators only.
+   *
+   * Grouping cannot change a speaker's volume or mute, so re-reading every
+   * zone after it is two requests per speaker spent confirming what we
+   * already knew. Transport genuinely does move, so that half is kept.
+   */
+  async #readGroups(): Promise<void> {
+    const zones = [...this.#client.household.zones.values()];
+    const coordinators = zones.filter((z) => z.coordinator === z.uuid);
+
+    const live = new Set(zones.map((z) => z.uuid));
+    for (const uuid of [...this.#groups.keys()]) {
+      if (!live.has(uuid)) this.#groups.delete(uuid);
+    }
+    for (const uuid of [...this.#zones.keys()]) {
+      if (!live.has(uuid)) this.#zones.delete(uuid);
+    }
+
+    await mapLimit(
+      coordinators.map((zone) => () => this.#readGroup(zone)),
+      CONCURRENCY,
+    );
   }
 
   /** Coalesce position reads: a track change arrives as several events. */
@@ -362,6 +592,7 @@ export class SonosStore {
       log.warn('Failed to read Sonos state:', err);
     } finally {
       this.#refreshing = false;
+      this.#lastFullRead = Date.now();
     }
   }
 
@@ -405,12 +636,23 @@ export class SonosStore {
         }),
       ]);
 
+      const previous = this.#zones.get(zone.uuid);
+
       this.#zones.set(zone.uuid, {
         // Sonos volume is already 0-100, the same scale the protocol uses.
         // Converting it anywhere is how a slider sets 1% of what was asked.
         volume: integer(textOf(volume, 'CurrentVolume')),
         muted: flag(textOf(mute, 'CurrentMute')),
         reachable: true,
+        /*
+         * Tone is NOT read here. It arrives unprompted in the speaker's first
+         * `RenderingControl` event and never changes on its own afterwards, so
+         * asking for it would add three requests per speaker to every
+         * reconcile to learn something already on its way.
+         */
+        bass: previous?.bass ?? null,
+        treble: previous?.treble ?? null,
+        loudness: previous?.loudness ?? null,
       });
     } catch (err) {
       log.debug(`${zone.name} did not answer:`, err);
@@ -420,17 +662,30 @@ export class SonosStore {
         volume: previous?.volume ?? null,
         muted: previous?.muted ?? false,
         reachable: false,
+        bass: previous?.bass ?? null,
+        treble: previous?.treble ?? null,
+        loudness: previous?.loudness ?? null,
       });
     }
   }
 
   async #readGroup(zone: SonosZone): Promise<void> {
     try {
-      const [transport, position, media, settings] = await Promise.all([
+      const [transport, position, media, settings, sleep] = await Promise.all([
         this.#client.call(zone.host, 'AVTransport', 'GetTransportInfo', { InstanceID: 0 }),
         this.#client.call(zone.host, 'AVTransport', 'GetPositionInfo', { InstanceID: 0 }),
         this.#client.call(zone.host, 'AVTransport', 'GetMediaInfo', { InstanceID: 0 }),
         this.#client.call(zone.host, 'AVTransport', 'GetTransportSettings', { InstanceID: 0 }),
+        /*
+         * Tolerated separately, because it is the least important of the five
+         * and must not be able to take the other four with it. `Promise.all`
+         * rejects as a unit, so an older speaker that does not implement this
+         * action would otherwise lose its transport state, its track and its
+         * queue — a blank Media screen because of a sleep timer nobody set.
+         */
+        this.#client
+          .call(zone.host, 'AVTransport', 'GetRemainingSleepTimerDuration', { InstanceID: 0 })
+          .catch(() => null),
       ]);
 
       const track = integer(textOf(position, 'Track'));
@@ -443,6 +698,7 @@ export class SonosStore {
         index: track === null || track < 1 ? null : track - 1,
         shuffle: mode.shuffle,
         repeat: mode.repeat,
+        sleepAt: sleep ? sleepInstant(textOf(sleep, 'RemainingSleepTimerDuration')) : null,
       });
     } catch (err) {
       log.debug(`${zone.name} transport did not answer:`, err);
@@ -450,7 +706,7 @@ export class SonosStore {
     }
   }
 
-  #mediaFromPosition(position: XmlNode, host: string): MassMedia | null {
+  #mediaFromPosition(position: XmlNode, host: string): NowPlaying | null {
     const track = parseTrackMetadata(textOf(position, 'TrackMetaData'));
     if (!track) return null;
 
@@ -470,7 +726,7 @@ export class SonosStore {
       artist: track.artist ?? (track.streamContent ? track.title : null),
       album: track.album,
       art: this.#art.register(artUrl(track.artUri, host)),
-      duration: seconds(textOf(position, 'TrackDuration')),
+      duration: seconds(textOf(position, 'TrackDuration')) ?? track.duration,
       elapsed,
       elapsedAt: elapsed === null ? null : Date.now(),
     };
@@ -478,13 +734,13 @@ export class SonosStore {
 
   /* ── Shaping ───────────────────────────────────────────────────────────*/
 
-  snapshot(): { players: MassPlayer[]; queues: MassQueue[] } {
+  snapshot(): { players: Player[]; queues: PlayerQueue[] } {
     const zones = [...this.#client.household.zones.values()];
 
-    const players: MassPlayer[] = zones.map((zone) => this.#describe(zone, zones));
+    const players: Player[] = zones.map((zone) => this.#describe(zone, zones));
     players.sort((a, b) => a.name.localeCompare(b.name));
 
-    const queues: MassQueue[] = [];
+    const queues: PlayerQueue[] = [];
     for (const zone of zones) {
       // One queue per group, owned by its coordinator. A follower has no queue
       // of its own while it is grouped.
@@ -503,7 +759,7 @@ export class SonosStore {
     return { players, queues };
   }
 
-  #describe(zone: SonosZone, all: SonosZone[]): MassPlayer {
+  #describe(zone: SonosZone, all: SonosZone[]): Player {
     const state = this.#zones.get(zone.uuid);
     const group = this.#groups.get(zone.coordinator);
     const leading = zone.coordinator === zone.uuid;
@@ -522,6 +778,12 @@ export class SonosStore {
       powered: null,
       volume: state?.volume ?? null,
       muted: state?.muted ?? false,
+      bass: state?.bass ?? null,
+      treble: state?.treble ?? null,
+      loudness: state?.loudness ?? null,
+      // The timer belongs to the GROUP, so a follower shows its coordinator's
+      // — which is the one that will actually stop the music.
+      sleepAt: group?.sleepAt ?? null,
       // A group of one is not a group: a lone speaker listing itself as its
       // own member reads oddly in "Playing on".
       members: zone.group.length > 1 ? zone.group : [],
@@ -564,6 +826,18 @@ export class SonosStore {
 
   #publishNow(): void {
     this.#dirty = false;
+
+    const mode = this.updates;
+    if (mode !== this.#lastMode) {
+      this.#lastMode = mode;
+      log.info(
+        mode === 'live'
+          ? 'Sonos updates are live — the speakers are pushing changes'
+          : 'Sonos updates are POLLED — no events are reaching this backend',
+      );
+      this.#listeners.onUpdatesChange(mode);
+    }
+
     const { players, queues } = this.snapshot();
     this.#listeners.onChange(players, queues);
   }
@@ -593,6 +867,19 @@ function playbackState(raw: string | null): string {
  * alone — `SHUFFLE_NOREPEAT` is the one that means what its name suggests.
  * Reading them the obvious way round makes the repeat button lie.
  */
+/**
+ * Sonos's remaining sleep time → the instant it will fire.
+ *
+ * `H:MM:SS` while a timer is running, and an EMPTY string when none is — not
+ * `0:00:00`, and not `NOT_IMPLEMENTED`. Reading the empty case as a duration
+ * gives zero, which is a timer that expired in the past and would draw a
+ * countdown stuck at nothing.
+ */
+export function sleepInstant(raw: string | null): number | null {
+  const left = seconds(raw);
+  return left === null || left <= 0 ? null : Date.now() + left * 1000;
+}
+
 export function playMode(raw: string | null): { shuffle: boolean; repeat: string } {
   switch (raw) {
     case 'REPEAT_ALL':

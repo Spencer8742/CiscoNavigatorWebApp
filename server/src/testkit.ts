@@ -33,6 +33,8 @@ export type { VisitResult } from '~/cast/keeper.ts';
 export { WebosClient } from '~/tv/webos.ts';
 export { endpointsFor, failureOf, inputOfAppId, inputsOf } from '~/tv/protocol.ts';
 export { magicPacket, parseMac } from '~/tv/wol.ts';
+export { ConfigStore } from '~/config/load.ts';
+export { swipeBridgeRequest } from '~/apple-tv/index.ts';
 
 /*
  * Sonos XML, for the same reason again — with one addition that matters more
@@ -48,3 +50,8 @@ export { parseZoneGroupState } from '~/sonos/topology.ts';
 export type { Household, SonosZone } from '~/sonos/topology.ts';
 export { parseTrackMetadata, artUrl } from '~/sonos/didl.ts';
 export { seconds, flag, integer } from '~/sonos/soap.ts';
+
+export { SmapiClient, SmapiError } from '~/sonos/smapi.ts';
+export { accountsFromUris } from '~/sonos/services.ts';
+export { sonosUri } from '~/sonos/spotify.ts';
+export { UriRegistry } from '~/sonos/uris.ts';

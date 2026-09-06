@@ -39,7 +39,8 @@ Full detail, with citations: **[`docs/ROOMOS.md`](docs/ROOMOS.md)**.
 Room Navigator ──── one origin, HTTPS ────▶ navigator-panel (Node)
   Preact + signals                            │  holds ALL credentials
   ~17 KB gz                                   ├──▶ Home Assistant  (WebSocket)
-  no credentials                              ├──▶ Immich          (REST)
+  no credentials                              ├──▶ Sonos           (SOAP + events)
+                                              ├──▶ Immich          (REST)
                                               ├──▶ Bitfocus Companion
                                               └──▶ Elgato Key Lights
 ```
@@ -169,6 +170,14 @@ controls:
     - { id: key_left,  name: Key Left,  host: 192.168.1.201 }
     - { id: key_right, name: Key Right, host: 192.168.1.148 }
 
+  appleTvs:
+    - id: living_room_apple_tv
+      name: Living Room Apple TV
+      host: 192.168.1.80
+      shortcuts:
+        - { name: Plex, app: com.plexapp.plex }
+        - { name: YouTube, app: com.google.ios.youtube }
+
   pages:
     - id: deskpro
       name: Desk Pro
@@ -185,6 +194,13 @@ A button reaches Companion (`POST /api/location/<page>/<row>/<column>/press`),
 a Home Assistant webhook, an ordinary service call, or an Elgato Key Light. A
 bare `light:` item is not a button at all — it is the full light control, with
 live state.
+
+Configured Apple TVs appear on their own page with pairing, power, directional
+navigation, Home/Back, playback, skipping, volume, live media metadata and
+allow-listed app shortcuts. Each shortcut names an installed app's bundle id;
+the backend verifies both the configuration and the Apple TV's installed app
+list before launching it. Pairing credentials are stored in
+`/config/apple-tv.json` and never sent to the panel.
 
 Two properties are worth stating explicitly:
 
@@ -236,7 +252,7 @@ already in this repository. `--dry-run` prints the XML without sending it.
 | 10 | Failure hardening | ⬜ |
 | 11 | Performance pass on-device | ⬜ |
 | 12 | Deployment polish | 🟡 CI, GHCR images, Unraid template and the device provisioning script done |
-| 13 | Sonos direct — replaces Music Assistant | 🟡 phases 1–3 of 6: live state and full control; browsing next. [`docs/SONOS.md`](docs/SONOS.md) |
+| 13 | Sonos direct — replaced Music Assistant | ✅ [`docs/SONOS.md`](docs/SONOS.md) |
 
 Each phase is verified working before the next begins.
 
@@ -268,8 +284,7 @@ panel/      frontend (Preact + signals, Vite, target chrome102)
               registry.tsx = how it looks · controls.tsx = how it works
 server/     backend  (Node 22, deps: ws + yaml)
   ha/         WebSocket client · state store · service allow-list
-  mass/       Music Assistant · players, queues, library browsing
-  sonos/      Sonos, direct on the LAN · SOAP, XML, household topology
+  sonos/      Sonos, direct on the LAN · topology, events, control, browsing
   immich/     REST client · playlist · image proxy (originals unreachable)
   cast/       Cast v2 — keeps Google Nest Hubs showing the dashboard
   controls/   Companion presses · Elgato Key Lights · HA webhooks

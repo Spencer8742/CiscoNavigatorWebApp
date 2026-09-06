@@ -6,7 +6,7 @@ import { fetchGrid, photoUrl } from '~/media/photos.ts';
 import { thumbHashCss } from '~/lib/thumbhash.ts';
 import { getToken } from '~/net/auth.ts';
 import { immichConfig, mediaConfig } from '~/config/index.ts';
-import { prefs, route, screensaverActive, markActivity } from '~/state/ui.ts';
+import { isRouteVisible, navigate, prefs, screensaverActive, markActivity } from '~/state/ui.ts';
 import * as act from '~/state/actions.ts';
 import type { PhotoRef } from '@shared/protocol.ts';
 
@@ -24,7 +24,7 @@ import type { PhotoRef } from '@shared/protocol.ts';
  */
 export function HomeSide() {
   const wantsMedia = prefs.value.homeSide === 'media';
-  // Speakers come from Music Assistant now, so "do we have any" is a question
+  // Speakers come from Sonos now, so "do we have any" is a question
   // about what MA reported rather than about what dashboard.yaml listed.
   const hasPlayers = speakers.value.length > 0;
   const photosOn = immichConfig.value.enabled;
@@ -48,7 +48,7 @@ function NowPlayingCard() {
   const artist = media?.artist ?? '';
   const playing = player.state === 'playing';
   const token = getToken();
-  // Already proxied by the backend — the panel never holds a Music Assistant
+  // Already proxied by the backend — the panel never holds a speaker's
   // address. See server/src/http/media-art.ts.
   const art = media?.art ? `${media.art}${token ? `&t=${encodeURIComponent(token)}` : ''}` : null;
 
@@ -56,16 +56,11 @@ function NowPlayingCard() {
     <section class="side-card" aria-label="Now playing">
       <div class="side-head">
         <h2 class="section-title">Now Playing</h2>
-        <Pressable
-          class="side-more p-sm"
-          onPress={() => {
-            route.value = 'media';
-            markActivity();
-          }}
-          ariaLabel="Open media"
-        >
-          <Icon name="next" size="1rem" weight={2} />
-        </Pressable>
+        {isRouteVisible('media') ? (
+          <Pressable class="side-more p-sm" onPress={() => navigate('media')} ariaLabel="Open media">
+            <Icon name="next" size="1rem" weight={2} />
+          </Pressable>
+        ) : null}
       </div>
 
       <div class="np-body">

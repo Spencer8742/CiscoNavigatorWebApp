@@ -4,7 +4,7 @@ import { players } from '~/state/players.ts';
 import { homeConfig, mediaConfig, roomsById } from '~/config/index.ts';
 import { activeRoom, prefs } from '~/state/ui.ts';
 import { countsAsOn, describe, type EntityDescriptor } from '~/domains/registry.ts';
-import type { MassMedia } from '@shared/protocol.ts';
+import type { NowPlaying } from '@shared/protocol.ts';
 
 /**
  * Derived views over the entity store.
@@ -120,23 +120,23 @@ export const roomActivity = computed<Map<string, number>>(() => {
   return out;
 });
 
-/* ── Music Assistant speakers ─────────────────────────────────────────────
-   Music Assistant is the source of truth for everything about music, and the
-   panel now talks to it directly rather than reading `media_player` entities
-   Home Assistant mirrored from it. That is what makes the queue editable and
-   grouping exact: MA tells us which players a speaker CAN group with, which
-   Home Assistant's media_player model has nowhere to put. */
+/* ── Speakers ─────────────────────────────────────────────────────────────
+   Sonos is the source of truth for everything about music, and the panel
+   talks to it directly rather than reading `media_player` entities Home
+   Assistant mirrored from it. That is what makes the queue editable and
+   grouping exact: the household describes which zone coordinates a group,
+   which Home Assistant's media_player model has nowhere to put. */
 
 export interface SpeakerInfo {
   id: string;
   name: string;
   /** MA's own player type: 'player' | 'stereo_pair' | 'group'. */
   kind: string;
-  /** A permanent Music Assistant group rather than an ad-hoc join. */
+  /** A permanent group rather than an ad-hoc join. Unused on Sonos. */
   isGroup: boolean;
   state: string;
   available: boolean;
-  /** 0-100, Music Assistant's own scale. Null when there is no volume. */
+  /** 0-100, Sonos's own scale. Null when there is no volume. */
   volume: number | null;
   muted: boolean;
   canGroup: boolean;
@@ -150,17 +150,25 @@ export interface SpeakerInfo {
   powered: boolean | null;
   /** The queue driving it — needed by every queue command. */
   queueId: string | null;
-  /** What is playing on it, straight from Music Assistant. */
-  media: MassMedia | null;
+  /** What is playing on it. */
+  media: NowPlaying | null;
+  /** Volume for the whole group at once. Null when there is no group. */
+  groupVolume: number | null;
+  /** Tone, −10 to +10, and loudness. Null until the speaker has reported. */
+  bass: number | null;
+  treble: number | null;
+  loudness: boolean | null;
+  /** When the sleep timer will stop this group, epoch ms. Null when none. */
+  sleepAt: number | null;
 }
 
 /**
- * Every speaker Music Assistant knows about.
+ * Every speaker in the household.
  *
  * `media.players` in `dashboard.yaml` is now only a rename: identity comes
- * from Music Assistant, so there is nothing to list and nothing to keep in
- * sync. Entries are matched by Music Assistant player id, falling back to a
- * case-insensitive name match so an existing config keeps working.
+ * from Sonos, so there is nothing to list and nothing to keep in sync.
+ * Entries are matched by zone id, falling back to a case-insensitive name
+ * match so an existing config keeps working.
  */
 export const speakers = computed<SpeakerInfo[]>(() => {
   const overrides = new Map<string, string>();
@@ -178,7 +186,7 @@ export const speakers = computed<SpeakerInfo[]>(() => {
     volume: p.volume,
     muted: p.muted,
     // A player with nothing it can group with cannot be grouped — that is
-    // Music Assistant's own answer, not a guess from a feature bitmask.
+    // The household's own answer, not a guess from a feature bitmask.
     canGroup: p.canGroupWith.length > 0,
     members: p.members,
     canGroupWith: p.canGroupWith,
@@ -186,6 +194,11 @@ export const speakers = computed<SpeakerInfo[]>(() => {
     powered: p.powered,
     queueId: p.queueId,
     media: p.media,
+    groupVolume: p.groupVolume,
+    bass: p.bass,
+    treble: p.treble,
+    loudness: p.loudness,
+    sleepAt: p.sleepAt,
   }));
 });
 
@@ -244,7 +257,7 @@ export const joinableSpeakers = computed<SpeakerInfo[]>(() =>
   speakers.value.filter((s) => !s.isGroup && s.canGroup),
 );
 
-/** Permanent Music Assistant groups, offered as one-tap shortcuts. */
+/** Permanent groups, offered as one-tap shortcuts. Sonos has none. */
 export const speakerGroups = computed<SpeakerInfo[]>(() =>
   speakers.value.filter((s) => s.isGroup),
 );

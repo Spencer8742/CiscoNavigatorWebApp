@@ -3,35 +3,42 @@ import { Empty } from '~/components/Empty.tsx';
 import { Icon } from '~/components/Icon.tsx';
 import { Pressable } from '~/components/Pressable.tsx';
 import { Slider } from '~/components/Slider.tsx';
-import { defaultPlayerId, speakers, type SpeakerInfo } from '~/state/selectors.ts';
+import {
+  defaultPlayerId,
+  speakers,
+  type SpeakerInfo,
+} from '~/state/selectors.ts';
 import { queues } from '~/state/players.ts';
 import { GroupSheet } from '~/components/GroupSheet.tsx';
+import { SpeakerSheet } from '~/components/SpeakerSheet.tsx';
 import { PlayerPicker } from '~/components/PlayerPicker.tsx';
 import { Browse } from '~/components/Browse.tsx';
 import { Queue } from '~/components/Queue.tsx';
 import { Progress } from '~/components/Progress.tsx';
 import { getToken } from '~/net/auth.ts';
-import { health } from '~/state/ui.ts';
+import { health, markActivity, screensaverActive } from '~/state/ui.ts';
 import * as act from '~/state/actions.ts';
+import type { PlayerQueue } from '@shared/protocol.ts';
 
 /**
  * Now Playing.
  *
- * Everything on this screen comes from Music Assistant directly — the speaker
- * list, what is playing, the volume, the group and the queue. Nothing is read
- * from Home Assistant's `media_player` entities, which were only ever a
- * flattened copy of this with the interesting parts removed.
+ * Everything on this screen comes from Sonos directly — the speaker list, what
+ * is playing, the volume, the group and the queue. Nothing is read from Home
+ * Assistant's `media_player` entities, which were only ever a flattened copy
+ * of this with the interesting parts removed.
  *
- * Music Assistant pushes changes, so a track skipped from a phone or a speaker
- * grouped in the Music Assistant app appears here without the panel asking for
- * anything.
+ * The speakers push changes, so a track skipped from a phone or a group made
+ * in the Sonos app appears here without the panel asking for anything.
  */
 export function Media() {
   const [chosen, setChosen] = useState<string | null>(null);
   const [grouping, setGrouping] = useState(false);
   const [picking, setPicking] = useState(false);
-  const [browsing, setBrowsing] = useState(false);
+  const [browseView, setBrowseView] = useState<'search' | 'library' | null>(null);
   const [queueOpen, setQueueOpen] = useState(false);
+  const [tuning, setTuning] = useState(false);
+  const [handoffOpen, setHandoffOpen] = useState(false);
 
   const all = speakers.value;
   // Key by id rather than the array, which is a fresh object on every volume
@@ -50,6 +57,7 @@ export function Media() {
   if (!player) return <NoPlayers />;
 
   const queue = queues.value.find((q) => q.id === player.queueId);
+  const canShowNowPlaying = all.some((speaker) => speaker.state === 'playing' && speaker.media);
 
   return (
     <div class="screen screen-enter">
@@ -64,9 +72,46 @@ export function Media() {
           <Icon name="chevronDown" size="1rem" weight={2.2} />
         </Pressable>
 
-        <Pressable class="browse-button" onPress={() => setBrowsing(true)} ariaLabel="Browse music">
+        <Pressable class="browse-button" onPress={() => setBrowseView('search')} ariaLabel="Search music">
           <Icon name="search" size="1.1rem" weight={1.9} />
-          <span>Browse</span>
+          <span>Search</span>
+        </Pressable>
+
+        <Pressable
+          class="browse-button"
+          onPress={() => setBrowseView('library')}
+          ariaLabel="Recently played music"
+        >
+          <Icon name="clock" size="1.1rem" weight={1.9} />
+          <span>Recent</span>
+        </Pressable>
+
+        <Pressable class="browse-button" onPress={() => setHandoffOpen(true)} ariaLabel="Move playback">
+          <Icon name="next" size="1.1rem" weight={1.9} />
+          <span>Move</span>
+        </Pressable>
+
+        <Pressable
+          class="browse-button"
+          onPress={() => {
+            markActivity();
+            screensaverActive.value = true;
+          }}
+          disabled={!canShowNowPlaying}
+          ariaLabel="Show Now Playing screen"
+        >
+          <Icon name="expand" size="1.1rem" weight={1.9} />
+          <span>Now Playing</span>
+        </Pressable>
+
+        {/* Bass, sleep timer, inputs — real but occasional, so one tap away
+            rather than on the screen somebody uses while standing here. */}
+        <Pressable
+          class="browse-button p-sm"
+          onPress={() => setTuning(true)}
+          ariaLabel="Speaker settings"
+        >
+          <Icon name="settings" size="1.1rem" weight={1.9} />
         </Pressable>
       </div>
 
@@ -83,7 +128,7 @@ export function Media() {
       ) : null}
 
       <div class="screen-body scroll">
-        <NowPlaying player={player} />
+        <NowPlaying player={player} queue={queue} />
       </div>
 
       {/* The queue gets its own entry rather than living inside Now Playing:
@@ -124,13 +169,39 @@ export function Media() {
         />
       ) : null}
 
-      {browsing ? <Browse playerId={activeId} onClose={() => setBrowsing(false)} /> : null}
+      {browseView ? (
+        <Browse
+          playerId={activeId}
+          view={browseView}
+          onClose={() => setBrowseView(null)}
+        />
+      ) : null}
+
+      {tuning ? (
+        <SpeakerSheet
+          player={player}
+          grouped={player.members.length > 1}
+          onClose={() => setTuning(false)}
+        />
+      ) : null}
 
       {queueOpen && player.queueId ? (
         <Queue
           playerId={player.id}
           queueId={player.queueId}
           onClose={() => setQueueOpen(false)}
+        />
+      ) : null}
+
+      {handoffOpen ? (
+        <HandoffSheet
+          player={player}
+          onMove={(target) => {
+            act.handoff(player.id, target);
+            setChosen(target);
+            setHandoffOpen(false);
+          }}
+          onClose={() => setHandoffOpen(false)}
         />
       ) : null}
     </div>
@@ -153,24 +224,24 @@ function NoPlayers() {
         <h1 class="screen-title">Media</h1>
       </div>
       <div class="screen-body">
-        {h?.mass === 'disabled' ? (
-          <Empty icon="media" title="Music Assistant is not connected">
-            Set <code>MASS_URL</code> to your Music Assistant server (for example{' '}
-            <code>http://192.168.1.10:8095</code>) and <code>MASS_TOKEN</code> to a token from
-            Music Assistant&apos;s Settings, then restart the container.
+        {h?.sonos === 'disabled' ? (
+          <Empty icon="media" title="Sonos is not set up">
+            Set <code>SONOS_HOST</code> to the IP address of any one Sonos speaker (for
+            example <code>192.168.1.51</code>) and restart the container. The panel finds the
+            rest of the household from there.
           </Empty>
-        ) : h?.massError ? (
-          <Empty icon="alert" title="Music Assistant refused the connection">
-            {h.massError}
+        ) : h?.sonosError ? (
+          <Empty icon="alert" title="Sonos could not be reached">
+            {h.sonosError}
           </Empty>
-        ) : h?.mass === 'connected' ? (
+        ) : h?.sonos === 'connected' ? (
           <Empty icon="media" title="No speakers yet">
-            Music Assistant is connected but has no players set up. Add them in Music
-            Assistant and they appear here on their own.
+            Sonos answered but reported no rooms. Check that UPnP is enabled in the Sonos
+            app, under Settings, App Preferences, Privacy.
           </Empty>
         ) : (
-          <Empty icon="media" title="Reaching Music Assistant…">
-            Waiting for the server at <code>MASS_URL</code> to answer.
+          <Empty icon="media" title="Looking for Sonos…">
+            Waiting for the speaker at <code>SONOS_HOST</code> to answer.
           </Empty>
         )}
       </div>
@@ -178,7 +249,7 @@ function NoPlayers() {
   );
 }
 
-function NowPlaying({ player }: { player: SpeakerInfo }) {
+function NowPlaying({ player, queue }: { player: SpeakerInfo; queue: PlayerQueue | undefined }) {
   const media = player.media;
   const playing = player.state === 'playing';
   const off = !player.available || player.powered === false;
@@ -206,10 +277,10 @@ function NowPlaying({ player }: { player: SpeakerInfo }) {
         {media?.artist ? <div class="np-artist truncate">{media.artist}</div> : null}
         {media?.album ? <div class="np-album truncate">{media.album}</div> : null}
 
-        {/* Position, extrapolated locally. Music Assistant reports elapsed
-            time with the moment it was measured, so the bar can move smoothly
-            between updates instead of stepping once a second. */}
-        {media?.duration ? (
+        {/* Position, extrapolated locally. The backend sends elapsed time
+            with the moment it was measured, so the bar moves smoothly between
+            updates instead of stepping. */}
+        {media && (media.duration !== null || media.elapsed !== null) ? (
           <Progress
             elapsed={media.elapsed}
             elapsedAt={media.elapsedAt}
@@ -258,6 +329,29 @@ function NowPlaying({ player }: { player: SpeakerInfo }) {
           ) : null}
         </div>
 
+        {queue ? (
+          <div class="np-modes" role="group" aria-label="Queue playback mode">
+            <Pressable
+              class={queue.shuffle ? 'np-mode is-on' : 'np-mode'}
+              onPress={() => act.setShuffle(player.id, !queue.shuffle)}
+              ariaPressed={queue.shuffle}
+              ariaLabel="Shuffle"
+            >
+              <Icon name="shuffle" size="1.1rem" weight={2} />
+              <span>Shuffle</span>
+            </Pressable>
+            <Pressable
+              class={queue.repeat !== 'off' ? 'np-mode is-on' : 'np-mode'}
+              onPress={() => act.setRepeat(player.id, nextRepeat(queue.repeat))}
+              ariaPressed={queue.repeat !== 'off'}
+              ariaLabel={`Repeat ${queue.repeat}`}
+            >
+              <Icon name="repeat" size="1.1rem" weight={2} />
+              <span>{queue.repeat === 'one' ? 'Repeat one' : queue.repeat === 'all' ? 'Repeat all' : 'Repeat'}</span>
+            </Pressable>
+          </div>
+        ) : null}
+
         {player.volume !== null ? (
           <div class="np-volume">
             <Pressable
@@ -266,35 +360,70 @@ function NowPlaying({ player }: { player: SpeakerInfo }) {
               ariaPressed={player.muted}
               ariaLabel={player.muted ? 'Unmute' : 'Mute'}
             >
-              <Icon name={player.muted ? 'mute' : 'volume'} size="1.3rem" />
+              <Icon name={player.muted ? 'mute' : 'volume'} size="1.7rem" />
             </Pressable>
 
             <Slider
               value={player.muted ? 0 : player.volume}
               ariaLabel="Volume"
               readout={`${player.muted ? 0 : player.volume}%`}
+              size="lg"
               onChange={(v, final) => act.setVolume(player.id, v, final)}
             />
-
-            <Pressable
-              class="np-step p-sm"
-              onPress={() => act.nudgeVolume(player.id, -5)}
-              ariaLabel="Volume down"
-            >
-              <Icon name="minus" size="1.2rem" weight={2.2} />
-            </Pressable>
-            <Pressable
-              class="np-step p-sm"
-              onPress={() => act.nudgeVolume(player.id, 5)}
-              ariaLabel="Volume up"
-            >
-              <Icon name="plus" size="1.2rem" weight={2.2} />
-            </Pressable>
           </div>
         ) : null}
       </div>
     </div>
   );
+}
+
+function HandoffSheet({
+  player,
+  onMove,
+  onClose,
+}: {
+  player: SpeakerInfo;
+  onMove: (target: string) => void;
+  onClose: () => void;
+}) {
+  const current = new Set(player.members.length > 0 ? player.members : [player.id]);
+  const choices = speakers.value.filter((speaker) => !speaker.isGroup && speaker.available && !current.has(speaker.id));
+  return (
+    <div class="sheet-layer">
+      <div class="sheet-scrim" onPointerDown={onClose} />
+      <div class="sheet group-sheet" role="dialog" aria-label="Move playback" aria-modal="true">
+        <div class="sheet-head">
+          <div class="sheet-titles">
+            <h2 class="sheet-title">Move playback</h2>
+            <div class="sheet-subtitle">Keep the current queue and position</div>
+          </div>
+          <Pressable class="sheet-close p-sm" onPress={onClose} ariaLabel="Close">
+            <Icon name="close" size="1.3rem" weight={2} />
+          </Pressable>
+        </div>
+        <div class="sheet-body scroll">
+          {choices.length === 0 ? (
+            <div class="browse-state"><p class="browse-state-title">No other rooms available</p></div>
+          ) : choices.map((speaker) => (
+            <Pressable key={speaker.id} as="div" class="speaker-row" onPress={() => onMove(speaker.id)} ariaLabel={`Move to ${speaker.name}`}>
+              <div class="speaker-icon"><Icon name="speaker" size="1.4rem" weight={1.7} /></div>
+              <div class="speaker-meta">
+                <div class="speaker-name truncate">{speaker.name}</div>
+                <div class="speaker-sub truncate">Move queue here</div>
+              </div>
+              <Icon name="next" size="1.1rem" weight={2} />
+            </Pressable>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function nextRepeat(value: string): 'off' | 'one' | 'all' {
+  if (value === 'off') return 'all';
+  if (value === 'all') return 'one';
+  return 'off';
 }
 
 /**

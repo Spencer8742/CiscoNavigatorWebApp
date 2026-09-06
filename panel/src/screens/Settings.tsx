@@ -4,20 +4,18 @@ import { health, linkStatus, prefs, socketState } from '~/state/ui.ts';
 import { Pressable } from '~/components/Pressable.tsx';
 import { setPref } from '~/net/socket.ts';
 import { getPanelId } from '~/net/auth.ts';
-import type { PanelPrefs } from '@shared/protocol.ts';
+import { PANEL_PAGES, type PanelPage, type PanelPrefs } from '@shared/protocol.ts';
 import { entityCount } from '~/state/entities.ts';
 import { speakers } from '~/state/selectors.ts';
 import { formatRelative } from '~/lib/format.ts';
 import { deviceInfo } from '~/lib/device.ts';
 
 /**
- * Settings — read-only diagnostics.
+ * Settings and on-device diagnostics.
  *
- * There is intentionally nothing to edit here. Cisco's own documentation is
- * blunt about the RoomOS soft keyboard: it has no numeric, date or colour
- * modes and "does not encourage a lot of text input" (docs/ROOMOS.md §6).
- * Configuration therefore lives in `config/dashboard.yaml` on the server,
- * where it can be edited properly and version-controlled.
+ * Tap-only display preferences live here. Settings that need text input stay
+ * in `config/dashboard.yaml`, where a real keyboard exists and changes can be
+ * version-controlled.
  *
  * What this screen IS for: answering "why isn't it working?" while standing
  * in front of the panel. The viewport readout in particular is the fastest
@@ -74,6 +72,36 @@ export function Settings() {
         </p>
 
         <div class="section-head">
+          <h2 class="section-title">Clock visibility</h2>
+        </div>
+        <div class="settings-page-grid" role="group" aria-label="Clock visibility">
+          <ClockToggle pref="homeTime" label="Home" />
+          <ClockToggle pref="nowPlayingScreensaverTime" label="Now Playing" />
+          <ClockToggle pref="photoScreensaverTime" label="Photo screensaver" />
+        </div>
+        <p class="settings-note">
+          Hide the time independently on each full-screen view. Dates and other
+          information remain visible.
+        </p>
+
+        <div class="section-head">
+          <h2 class="section-title">Visible pages</h2>
+        </div>
+        <div class="settings-page-grid" role="group" aria-label="Visible pages">
+          {PANEL_PAGES.map((page) => (
+            <PageToggle key={page} page={page} />
+          ))}
+          <div class="settings-page is-active" aria-label="Settings, always visible">
+            <span>Settings</span>
+            <span class="settings-page-state">Always on</span>
+          </div>
+        </div>
+        <p class="settings-note">
+          Choose which pages appear in the navigation bar. Settings stays visible so
+          you can restore a page later. This choice applies to every panel using this app.
+        </p>
+
+        <div class="section-head">
           <h2 class="section-title">Connection</h2>
         </div>
         <div class="rows">
@@ -81,24 +109,25 @@ export function Settings() {
           <Row k="Backend → Home Assistant" v={h?.ha ?? '—'} tone={tone(h?.ha)} />
           <Row k="Backend → Immich" v={h?.immich ?? '—'} tone={tone(h?.immich)} />
           <Row
-            k="Backend → Music Assistant"
-            v={h?.mass ?? '—'}
-            tone={h?.mass === 'disabled' ? undefined : tone(h?.mass)}
-          />
-          {/* The specific reason, when there is one. A missing MASS_TOKEN and
-              an unreachable server both read as "disconnected" otherwise, and
-              only one of them is fixed by restarting anything. */}
-          {h?.massError ? <Row k="Music Assistant says" v={h.massError} tone="bad" /> : null}
-          <Row
             k="Backend → Sonos"
             v={h?.sonos ?? '—'}
             tone={h?.sonos === 'disabled' ? undefined : tone(h?.sonos)}
           />
-          {/* Same reasoning as the Music Assistant line above: a wrong
-              address, a network that blocks discovery and UPnP switched off
-              in the Sonos app all read as "disconnected", and each needs
-              something different done about it. */}
-          {h?.sonosError ? <Row k="Sonos says" v={h.sonosError} tone="bad" /> : null}
+          {/* The specific reason, when there is one. A wrong address, a
+              network that blocks discovery and UPnP switched off in the Sonos
+              app all read as "disconnected", and each needs something
+              different done about it. */}
+          {/* Live or polled is the difference between a panel that keeps up
+              with the house and one that lags behind it, and the cause is
+              always deployment rather than anything on this screen. */}
+          {h?.sonos === 'connected' ? (
+            <Row
+              k="Sonos updates"
+              v={h.sonosUpdates === 'live' ? 'live' : 'polling'}
+              tone={h.sonosUpdates === 'live' ? 'ok' : 'warn'}
+            />
+          ) : null}
+          {h?.sonosError ? <Row k="Sonos says" v={h.sonosError} tone="danger" /> : null}
           <Row k="Overall" v={linkStatus.value} tone={tone(linkStatus.value)} />
           <Row
             k="Last HA message"
@@ -171,6 +200,54 @@ export function Settings() {
         </p>
       </div>
     </div>
+  );
+}
+
+const PAGE_LABELS: Record<PanelPage, string> = {
+  home: 'Home',
+  rooms: 'Rooms',
+  controls: 'Controls',
+  'apple-tv': 'Apple TV',
+  media: 'Media',
+  photos: 'Photos',
+};
+
+function PageToggle({ page }: { page: PanelPage }) {
+  const active = prefs.value.visiblePages.includes(page);
+  const toggle = () => {
+    const visiblePages = active
+      ? prefs.value.visiblePages.filter((item) => item !== page)
+      : PANEL_PAGES.filter((item) => item === page || prefs.value.visiblePages.includes(item));
+    setPref('visiblePages', visiblePages);
+  };
+
+  return (
+    <Pressable
+      class={active ? 'settings-page is-active' : 'settings-page'}
+      onPress={toggle}
+      ariaPressed={active}
+      ariaLabel={`${PAGE_LABELS[page]} ${active ? 'visible' : 'hidden'}`}
+    >
+      <span>{PAGE_LABELS[page]}</span>
+      <span class="settings-page-state">{active ? 'On' : 'Off'}</span>
+    </Pressable>
+  );
+}
+
+type ClockPref = 'homeTime' | 'photoScreensaverTime' | 'nowPlayingScreensaverTime';
+
+function ClockToggle({ pref, label }: { pref: ClockPref; label: string }) {
+  const active = prefs.value[pref];
+  return (
+    <Pressable
+      class={active ? 'settings-page is-active' : 'settings-page'}
+      onPress={() => setPref(pref, !active)}
+      ariaPressed={active}
+      ariaLabel={`${label} time ${active ? 'visible' : 'hidden'}`}
+    >
+      <span>{label}</span>
+      <span class="settings-page-state">{active ? 'On' : 'Off'}</span>
+    </Pressable>
   );
 }
 

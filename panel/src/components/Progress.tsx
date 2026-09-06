@@ -7,7 +7,7 @@ import { formatDuration } from '~/lib/format.ts';
  *
  * ## Why the position is computed here rather than pushed
  *
- * Music Assistant emits `queue_time_updated` once a second per playing queue.
+ * A speaker reports its position only when something changes.
  * Forwarding that would mean a message per second per speaker, waking the
  * panel's render loop continuously to move a bar a pixel — on a device whose
  * CPU sits behind a video pipeline and which is meant to idle into a
@@ -25,12 +25,14 @@ export function Progress({
   duration,
   running,
   onSeek,
+  class: cls = '',
 }: {
   elapsed: number | null;
   elapsedAt: number | null;
-  duration: number;
+  duration: number | null;
   running: boolean;
-  onSeek: (seconds: number) => void;
+  onSeek?: (seconds: number) => void;
+  class?: string;
 }) {
   const [now, setNow] = useState(() => Date.now());
   /** Set while a finger is on the bar, so ticks cannot fight the drag. */
@@ -44,28 +46,46 @@ export function Progress({
 
   const base = elapsed ?? 0;
   const drift = running && elapsedAt ? Math.max(0, (now - elapsedAt) / 1000) : 0;
-  const position = scrubbing ?? Math.min(duration, base + drift);
+  const knownDuration = duration !== null && duration > 0;
+  const position = scrubbing ?? (knownDuration ? Math.min(duration, base + drift) : base + drift);
 
   return (
-    <div class="np-progress">
+    <div class={`np-progress ${cls}`}>
       <span class="np-time">{formatDuration(Math.round(position))}</span>
-      <Slider
-        value={Math.round(position)}
-        min={0}
-        max={Math.round(duration)}
-        step={1}
-        ariaLabel="Track position"
-        readout={formatDuration(Math.round(position))}
-        onChange={(v, final) => {
-          if (final) {
-            setScrubbing(null);
-            onSeek(v);
-          } else {
-            setScrubbing(v);
-          }
-        }}
-      />
-      <span class="np-time">{formatDuration(Math.round(duration))}</span>
+      {onSeek && knownDuration ? (
+        <Slider
+          value={Math.round(position)}
+          min={0}
+          max={Math.round(duration)}
+          step={1}
+          ariaLabel="Track position"
+          readout={formatDuration(Math.round(position))}
+          onChange={(v, final) => {
+            if (final) {
+              setScrubbing(null);
+              onSeek(v);
+            } else {
+              setScrubbing(v);
+            }
+          }}
+        />
+      ) : (
+        <div
+          class="np-progress-track"
+          role="progressbar"
+          aria-label="Track position"
+          aria-valuemin={0}
+          aria-valuemax={knownDuration ? Math.round(duration) : undefined}
+          aria-valuenow={knownDuration ? Math.round(position) : undefined}
+          data-indeterminate={knownDuration ? undefined : ''}
+        >
+          <div
+            class="np-progress-fill"
+            style={knownDuration ? { transform: `scaleX(${position / duration})` } : undefined}
+          />
+        </div>
+      )}
+      <span class="np-time">{knownDuration ? formatDuration(Math.round(duration)) : '--:--'}</span>
     </div>
   );
 }

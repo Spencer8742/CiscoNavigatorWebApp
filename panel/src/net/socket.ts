@@ -1,8 +1,8 @@
 import { Backoff } from '@shared/backoff.ts';
 import { socketUrl } from '~/net/auth.ts';
 import { applyPatch, applySnapshot } from '~/state/entities.ts';
-import { setPlayers } from '~/state/players.ts';
-import { clearPressed, keyLights, markPressed, tvs } from '~/state/controls.ts';
+import { setPlayers, sources } from '~/state/players.ts';
+import { appleTvs, clearPressed, keyLights, markPressed, tvs } from '~/state/controls.ts';
 import { setConfig } from '~/config/index.ts';
 import { connectionProblem, health, prefs, ready, showToast, socketState } from '~/state/ui.ts';
 import { diagnose } from '~/net/diagnose.ts';
@@ -12,6 +12,7 @@ import {
   HEARTBEAT_TIMEOUT_MS,
   type BrowseRequest,
   type BrowseResult,
+  type ServiceLink,
   type ClientMessage,
   type MusicCommand,
   type PanelPrefs,
@@ -49,8 +50,8 @@ const nextId = (): number => (seq += 1);
 /** Resolvers for in-flight photo requests, keyed by message id. */
 const photoWaiters = new Map<number, (photos: PhotoRef[]) => void>();
 
-interface BrowseWaiter {
-  resolve(result: BrowseResult): void;
+interface Waiter<T> {
+  resolve(result: T): void;
   reject(error: Error): void;
   timer: ReturnType<typeof setTimeout>;
 }
@@ -63,7 +64,16 @@ interface BrowseWaiter {
  * three requests before the first replies, and the answers can arrive in any
  * order.
  */
-const browseWaiters = new Map<number, BrowseWaiter>();
+const browseWaiters = new Map<number, Waiter<BrowseResult>>();
+
+/**
+ * In-flight service-link requests, keyed the same way.
+ *
+ * Separate from the browse map only so the two resolve with their own types.
+ * They share the error path below, which is what matters: a refused link and
+ * a refused browse both arrive as `t: 'error'` carrying the same `ref`.
+ */
+const linkWaiters = new Map<number, Waiter<ServiceLink>>();
 
 export function connect(): void {
   closed = false;
@@ -183,6 +193,8 @@ function handle(msg: ServerMessage): void {
       setPlayers(msg.players, msg.queues);
       keyLights.value = msg.keylights;
       tvs.value = msg.tvs;
+      appleTvs.value = msg.appleTvs;
+      sources.value = msg.sources;
       socketState.value = 'connected';
       ready.value = true;
       // Clear any diagnosis: whatever was wrong is now demonstrably fixed.
@@ -207,8 +219,16 @@ function handle(msg: ServerMessage): void {
       keyLights.value = msg.lights;
       break;
 
+    case 'sources':
+      sources.value = msg.sources;
+      break;
+
     case 'tvs':
       tvs.value = msg.tvs;
+      break;
+
+    case 'apple-tvs':
+      appleTvs.value = msg.appleTvs;
       break;
 
     case 'config':
@@ -247,6 +267,16 @@ function handle(msg: ServerMessage): void {
       break;
     }
 
+    case 'link': {
+      const waiter = linkWaiters.get(msg.ref);
+      if (waiter) {
+        linkWaiters.delete(msg.ref);
+        clearTimeout(waiter.timer);
+        waiter.resolve(msg.link);
+      }
+      break;
+    }
+
     case 'pong':
       clearTimeout(pongTimer);
       pongTimer = undefined;
@@ -256,9 +286,13 @@ function handle(msg: ServerMessage): void {
       // A failed browse is shown in the browser itself, where the user is
       // looking and where a Retry button can live. Toasting it as well would
       // put the same sentence on screen twice.
-      const waiter = msg.ref === undefined ? undefined : browseWaiters.get(msg.ref);
+      const waiter =
+        msg.ref === undefined
+          ? undefined
+          : (browseWaiters.get(msg.ref) ?? linkWaiters.get(msg.ref));
       if (waiter && msg.ref !== undefined) {
         browseWaiters.delete(msg.ref);
+        linkWaiters.delete(msg.ref);
         clearTimeout(waiter.timer);
         waiter.reject(new Error(msg.message));
         break;
@@ -299,10 +333,12 @@ function startHeartbeat(): void {
 }
 
 function failBrowseWaiters(): void {
-  for (const [id, waiter] of browseWaiters) {
-    browseWaiters.delete(id);
-    clearTimeout(waiter.timer);
-    waiter.reject(new Error('Connection lost'));
+  for (const map of [browseWaiters, linkWaiters]) {
+    for (const [id, waiter] of map) {
+      map.delete(id);
+      clearTimeout(waiter.timer);
+      waiter.reject(new Error('Connection lost'));
+    }
   }
 }
 
@@ -345,10 +381,10 @@ export function callService(
 }
 
 /**
- * Run a Music Assistant command.
+ * Drive a speaker.
  *
  * Fire-and-forget for the same reason `callService` is: the UI has already
- * moved, and Music Assistant pushes the authoritative state a moment later.
+ * moved, and the speakers push the authoritative state a moment later.
  * Waiting for the ack would add a round trip to every tap.
  */
 export function musicCommand(cmd: MusicCommand): boolean {
@@ -394,6 +430,22 @@ export function setKeyLight(light: string, op: KeyLightOp, value?: number): bool
   return send({ t: 'keylight', id: nextId(), light, op, value });
 }
 
+export function appleTvCommand(appleTv: string, op: import('@shared/protocol.ts').AppleTvCommand): boolean {
+  return send({ t: 'apple-tv', id: nextId(), appleTv, op });
+}
+
+export function appleTvSwipe(appleTv: string, gesture: import('@shared/protocol.ts').AppleTvSwipe): boolean {
+  return send({ t: 'apple-tv-swipe', id: nextId(), appleTv, ...gesture });
+}
+
+export function launchAppleTvApp(appleTv: string, app: string): boolean {
+  return send({ t: 'apple-tv-app', id: nextId(), appleTv, app });
+}
+
+export function pairAppleTv(appleTv: string, op: 'begin' | 'pin' | 'cancel', pin?: string): boolean {
+  return send({ t: 'apple-tv-pair', id: nextId(), appleTv, op, ...(pin ? { pin } : {}) });
+}
+
 /**
  * Choose an input on a `sources:` control key.
  *
@@ -415,9 +467,24 @@ export function selectControlSource(item: string, value: string): boolean {
  * refused. Preferences are stored server-side because RoomOS clears web
  * storage nightly (docs/ROOMOS.md §3).
  */
-export function setPref(key: 'homeSide', value: PanelPrefs['homeSide']): boolean {
+export function setPref(key: 'homeSide', value: PanelPrefs['homeSide']): boolean;
+export function setPref(key: 'visiblePages', value: PanelPrefs['visiblePages']): boolean;
+export function setPref(
+  key: 'homeTime' | 'photoScreensaverTime' | 'nowPlayingScreensaverTime',
+  value: boolean,
+): boolean;
+export function setPref(
+  key: 'homeSide' | 'visiblePages' | 'homeTime' | 'photoScreensaverTime' | 'nowPlayingScreensaverTime',
+  value: PanelPrefs['homeSide'] | PanelPrefs['visiblePages'] | boolean,
+): boolean {
   prefs.value = { ...prefs.value, [key]: value };
-  return send({ t: 'pref', id: nextId(), key, value });
+  if (key === 'homeSide') {
+    return send({ t: 'pref', id: nextId(), key, value: value as PanelPrefs['homeSide'] });
+  }
+  if (key === 'visiblePages') {
+    return send({ t: 'pref', id: nextId(), key, value: value as PanelPrefs['visiblePages'] });
+  }
+  return send({ t: 'pref', id: nextId(), key, value: value as boolean });
 }
 
 /**
@@ -434,11 +501,11 @@ export function setPlayerLayout(layout: PlayerLayout): boolean {
 }
 
 /**
- * Ask Music Assistant for something.
+ * Ask the backend for something to look at.
  *
  * The only call in this file the caller waits on. Rejects rather than
  * resolving empty, because "your library is empty" and "we could not reach
- * Music Assistant" must not look the same on a wall panel — the first is
+ * Sonos" must not look the same on a wall panel — the first is
  * information, the second is something to go and fix.
  */
 export function browse(req: BrowseRequest): Promise<BrowseResult> {
@@ -449,9 +516,30 @@ export function browse(req: BrowseRequest): Promise<BrowseResult> {
       return;
     }
     const timer = setTimeout(() => {
-      if (browseWaiters.delete(id)) reject(new Error('Music Assistant did not respond'));
+      if (browseWaiters.delete(id)) reject(new Error('Sonos did not respond'));
     }, 30_000);
     browseWaiters.set(id, { resolve, reject, timer });
+  });
+}
+
+/**
+ * Connect or disconnect a music service.
+ *
+ * Long-lived by nature — `poll` is answered only once the person has confirmed
+ * on their phone — but each call is its own short request. Holding one open
+ * would mean a dropped socket lost the whole flow instead of one tap.
+ */
+export function link(sid: number, op: 'begin' | 'poll' | 'forget'): Promise<ServiceLink> {
+  return new Promise((resolve, reject) => {
+    const id = nextId();
+    if (!send({ t: 'link', id, sid, op })) {
+      reject(new Error('Not connected'));
+      return;
+    }
+    const timer = setTimeout(() => {
+      if (linkWaiters.delete(id)) reject(new Error('The service did not respond'));
+    }, 30_000);
+    linkWaiters.set(id, { resolve, reject, timer });
   });
 }
 

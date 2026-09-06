@@ -749,9 +749,8 @@
 }
 
 /* ── Segmented control ────────────────────────────────────────────────────
-   The only editable control on the Settings screen. Two taps wide, no text
-   entry — the RoomOS soft keyboard is not somewhere to send anyone
-   (docs/ROOMOS.md §6). */
+   A compact tap-only setting. The RoomOS soft keyboard is not somewhere to
+   send anyone (docs/ROOMOS.md §6). */
 
 .segmented {
   display: flex;
@@ -1208,6 +1207,34 @@
   font-weight: 600;
 }
 
+.browse-filters {
+  flex: 0 0 auto;
+  display: flex;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-5);
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.browse-filter {
+  flex: 0 0 auto;
+  min-height: 2.35rem;
+  padding: 0 var(--s-3);
+  border-radius: var(--r-full);
+  background: var(--surface-1);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-dim);
+  font-size: 0.8125rem;
+  font-weight: 560;
+  white-space: nowrap;
+}
+
+.browse-filter.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent-dim);
+}
+
 /* ── Paging and states ────────────────────────────────────────────────── */
 
 .browse-pager {
@@ -1267,6 +1294,17 @@
   line-height: 1.6;
 }
 
+.browse-note {
+  margin: var(--s-3) var(--s-5);
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--surface-1);
+  color: var(--text-dim);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
 /* ── Play options ─────────────────────────────────────────────────────── */
 
 /* The nested sheet sits above the browser it was opened from. */
@@ -1296,6 +1334,98 @@
   border-color: var(--accent-dim);
   color: var(--accent);
   font-weight: 620;
+}
+
+/* A chip for a service nobody has connected yet: offered, not selected, and
+   carrying a + so the tap reads as "add this" rather than "search this". */
+.browse-source.is-offer {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  border-style: dashed;
+  color: var(--text-dim);
+}
+
+/* ── Speaker settings ─────────────────────────────────────────────────── */
+
+.tone-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-height: var(--touch);
+  margin-bottom: var(--s-2);
+  color: var(--text-dim);
+}
+
+/* Fixed width so the two sliders start at the same x and read as a pair. */
+.tone-label {
+  flex: 0 0 4rem;
+  font-size: 0.9375rem;
+  font-weight: 560;
+}
+
+.sheet-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: var(--touch);
+  padding: 0 var(--s-4);
+  margin-bottom: var(--s-3);
+  border-radius: var(--r-lg);
+  background: var(--surface-1);
+  border: 1px solid var(--border-subtle);
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 560;
+}
+
+.sheet-toggle.is-on {
+  background: var(--accent-soft);
+  border-color: var(--accent-dim);
+  color: var(--accent);
+}
+
+.sheet-toggle-state {
+  color: var(--text-faint);
+  font-weight: 500;
+}
+
+.sheet-toggle.is-on .sheet-toggle-state {
+  color: inherit;
+}
+
+/* Wraps rather than scrolls: five short targets fit a narrow panel in two
+   rows, and a horizontal scroller hides options nobody knows to look for. */
+.sleep-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  margin-bottom: var(--s-3);
+}
+
+.sleep-option {
+  flex: 1 1 4.5rem;
+  min-height: var(--touch);
+  padding: 0 var(--s-3);
+  border-radius: var(--r-lg);
+  background: var(--surface-1);
+  border: 1px solid var(--border-subtle);
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 560;
+}
+
+.sleep-option.is-on {
+  background: var(--accent-soft);
+  border-color: var(--accent-dim);
+  color: var(--accent);
+}
+
+.sleep-hint {
+  margin: 0 0 var(--s-3);
+  color: var(--text-faint);
+  font-size: 0.9375rem;
 }
 
 /* ── Up next ──────────────────────────────────────────────────────────── */
@@ -1397,6 +1527,44 @@
 }
 
 .np-time:last-child { text-align: right; }
+
+.np-progress-track {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 0.35rem;
+  overflow: hidden;
+  border-radius: var(--r-full);
+  background: var(--surface-4);
+}
+
+.np-progress-fill {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--accent);
+  transform-origin: left center;
+  transition: transform 1s linear;
+}
+
+.np-progress-track[data-indeterminate] .np-progress-fill {
+  inset-inline: 0 auto;
+  width: 32%;
+  animation: np-progress-wait 1.6s ease-in-out infinite;
+}
+
+@keyframes np-progress-wait {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(325%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .np-progress-track[data-indeterminate] .np-progress-fill {
+    animation: none;
+    opacity: 0.55;
+    transform: none;
+  }
+}
 
 /* ── Queue ────────────────────────────────────────────────────────────── */
 

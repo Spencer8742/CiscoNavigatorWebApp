@@ -8,6 +8,7 @@ import {
   openEntity,
   route,
   screensaverActive,
+  visibleRoutes,
 } from '~/state/ui.ts';
 
 /**
@@ -134,18 +135,19 @@ function tick(): void {
    * become due on the same tick, and without this the panel would screensave
    * still sitting on Controls and wake back onto it.
    */
+  const returnRoute = visibleRoutes.value[0] ?? 'settings';
   if (
     !holding &&
     cfg.returnHomeSeconds > 0 &&
     idleMs >= cfg.returnHomeSeconds * 1000 &&
-    route.value !== 'home'
+    route.value !== returnRoute
   ) {
     // Deliberately NOT navigate(): that marks activity, which would reset the
     // idle clock and mean the screensaver could never follow. Set the state
     // directly and let the clock keep running.
     activeRoom.value = null;
     openEntity.value = null;
-    route.value = 'home';
+    route.value = returnRoute;
   }
 
   if (!holding && cfg.timeoutSeconds > 0 && idleMs >= cfg.timeoutSeconds * 1000) {

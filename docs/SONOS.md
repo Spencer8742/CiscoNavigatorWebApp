@@ -1,23 +1,88 @@
 # Sonos: direct integration
 
-**Status: phases 1–3 are built and shipping. Phase 4 onward is still a plan.**
+**Status: built, with household browsing and the full speaker-control surface.
+Music Assistant has been removed.**
+
+## Household-first media update — September 2026
+
+The panel now acts as a controller for the Sonos household instead of asking
+people to connect every provider a second time. Favourites open first and
+**My Sonos** contains Sonos Favourites, Sonos Playlists, saved stations, and
+the local music library. Those records already carry the URI, metadata, and
+account number that the speakers need for playback.
+
+Provider catalog logins are no longer offered in the panel. Sonos does not
+expose the provider credentials stored on speakers to another controller, and
+many providers reject an unlicensed SMAPI client before returning a code. The
+SMAPI implementation remains in the backend for compatibility and diagnostics,
+but it is outside the supported panel flow.
+
+Streaming-service collections saved as favourites are playable records, but
+their provider track listings are not exposed through the local ContentDirectory.
+The panel therefore opens playback options when they are tapped instead of
+showing a chevron that leads to an empty folder. Local-library favourites still
+drill into their inner Sonos object id.
+
+Search can query everything available to this controller at once or one source
+at a time, with filters for songs, albums, artists, playlists, radio, and
+podcasts. The Music Library row is hidden when `A:` contains only Sonos's empty
+category shells and `A:TRACKS` contains no media.
+
+The app also keeps shared, persistent Pinned and Recent shelves. Recent means
+music successfully started through this app because Sonos publishes no full
+household play history. Now Playing includes shuffle and repeat, and Move
+transfers the current queue and position to another room.
+
+- AppLink requests use the documented client fields and read only the
+  `authorizeAccount/deviceLink` response. Both linking modes return the private
+  `linkDeviceId` to the service without exposing it to the panel.
+- SOAP faults are parsed even on HTTP 200 responses, preserving fault codes
+  alongside exception details. `Client.AuthTokenExpired` updates every panel;
+  `Client.TokenRefreshRequired` saves the replacement credentials and retries
+  once. Invalid HTML/XML responses no longer appear as empty catalogs.
+- Linking operations are serialized per service, polling does not overlap, and
+  credential writes are serialized and atomic. A failed disk write reports an
+  error instead of claiming the connection was saved.
+
+These linking details describe the retained backend compatibility path. The
+panel does not expose it as a normal user flow.
+
+Protocol references: [getAppLink](https://docs.sonos.com/docs/getapplink),
+[getDeviceAuthToken](https://docs.sonos.com/docs/getdeviceauthtoken), and
+[authentication tokens](https://docs.sonos.com/docs/use-authentication-tokens).
+
+These fixes improve this controller's protocol implementation; they do not
+establish support for every provider or every account. A household account on
+Sonos and a browsing token for this app are separate. Real service sign-in and
+playback must be checked on the deployed system. The integration still supports
+one selected account per service, uses conventional search category IDs, and
+constructs playback metadata using the existing service URI conventions.
 
 | Phase | | |
 |---|---|---|
-| 1 | Topology — the household, read-only | ✅ |
-| 2 | Events — GENA, no more polling | ✅ |
+| 1 | Topology — the household | ✅ |
+| 2 | Events — GENA, with a polling fallback | ✅ |
 | 3 | Control — transport, volume, grouping | ✅ |
-| 4 | Browse — favourites, playlists, library, queue | ⬜ |
-| 5 | Spotify search | ⬜ |
-| 6 | Cut over — delete `mass/`, rename the types | ⬜ |
-| 7–8 | SMAPI and play history *(optional)* | ⬜ |
+| 4 | Browse — favourites, playlists, library, radio, queue | ✅ |
+| 5 | Spotify search | ✅ |
+| 6 | Cut over — `mass/` deleted, types renamed | ✅ |
+| 7 | Music services — SMAPI browse, search and device-link | ✅ |
+| 8 | The rest of the app — sleep, EQ, inputs, group volume | ✅ |
 
-Sonos is now a working remote control: rooms, groups, live state, transport,
-volume, seek, shuffle, repeat and grouping. **What it is not yet is a music
-browser** — nothing can start something that is not already playing or queued,
-because that needs somewhere to browse from. That is phase 4.
+Sonos is the music system: rooms, groups, live state, transport, volume, seek,
+shuffle, repeat, grouping, the queue, favourites, playlists, the local library,
+radio, every music service the household has linked, and search across all of
+them — plus the sleep timer, tone controls, group volume and physical inputs.
 
-What each built phase delivered, and what it deliberately did not, is in §15.
+Sonos still has no household-wide history feed; §3 explains why Recent records
+plays started through this app.
+
+What each phase delivered, and what it deliberately did not, is in **§15**.
+
+> **§1–§14 are the plan as it was written**, kept in the present tense because
+> the reasoning is the point — why the cloud API was rejected, what removing
+> Music Assistant would cost, which failures are silent. Where building it
+> changed a decision, §15 says so and is authoritative.
 
 The goal, stated as the decision it is: **Sonos becomes the music system this
 panel talks to, and Music Assistant is removed.** The backend speaks the local
@@ -108,12 +173,10 @@ table only to record what it was doing well; §3 accounts for what goes with it.
 Three things go away. Two are replaceable, one is not, and pretending
 otherwise is how a plan gets found out on a wall six weeks later.
 
-**Recently played is gone and has no Sonos equivalent.** Sonos exposes no play
-history — not locally, not in the cloud API. The `Recent` tab is currently
-`music/recently_played_items`, a real history including things you streamed and
-do not own. *Mitigation:* the backend records what it itself enqueues to a
+**Recently played has no Sonos equivalent.** Sonos exposes no play history —
+not locally, not in the cloud API. The backend records what it itself enqueues to a
 small JSON file beside `dashboard.yaml`, the same place `panel-prefs.json` and
-`tv-keys.json` already live. That gives "recently played **from this panel**",
+`tv-keys.json` already live. That gives "recently played **from this app**",
 which is honestly a narrower thing, and the tab should be labelled to match.
 Anything played from the Sonos app will not appear. This is a real regression;
 it is small, and it is the price of the ask.
@@ -154,11 +217,12 @@ navigator-panel (Node 22)
         soap.ts        SOAP envelope, POST :1400, parse
         xml.ts         DIDL-Lite + LastChange decoding
         events.ts      GENA subscribe / renew / unsubscribe
-        store.ts       players + queues, debounced   (mirrors mass/store.ts)
-        commands.ts    the guard: verbs in, SOAP out (mirrors mass/commands.ts)
-        browse.ts      favourites, playlists, library, radio, search
-        smapi.ts       music-service search           (phase 5)
-        uris.ts        opaque id → playable URI + DIDL
+        didl.ts        DIDL-Lite: one track, and browse lists
+        store.ts       players + queues, debounced
+        commands.ts    the guard: verbs in, SOAP out
+        browse.ts      favourites, playlists, library, radio, queue, search
+        spotify.ts     catalog search + x-sonos-spotify URI construction
+        uris.ts        opaque key → playable URI + DIDL
 ```
 
 Every file in that list has a counterpart in `mass/` that already works,
@@ -566,6 +630,7 @@ SONOS_CALLBACK_HOST=
 # developer.spotify.com — client-credentials flow, no user login, no redirect.
 SPOTIFY_CLIENT_ID=
 SPOTIFY_CLIENT_SECRET=
+SPOTIFY_MARKET=US
 ```
 
 `MASS_URL`, `MASS_TOKEN` and `MASS_INSECURE_TLS` are removed from
@@ -632,9 +697,9 @@ the device, and no phase starts before the last is verified there.
 | **1** ✅ | Topology | `discovery.ts`, `soap.ts`, `xml.ts`, `didl.ts`, `topology.ts`, `client.ts`, `store.ts`. Players in `hello`, read-only | The Media screen lists your real zones with correct names, groups and volumes. Bonded subs and pair channels do not appear |
 | **2** | Events | `events.ts`: subscribe, renew, unsubscribe, `NOTIFY` route with all three guards | Change volume in the Sonos app → panel moves within ~200 ms. Restart the container → no orphaned subscriptions. Kill the network → the link goes degraded, not stale |
 | **3** | Control | `commands.ts` verbs, coordinator routing, grouping, `uris.ts` | Transport, volume, mute, seek and grouping all work from the panel. A transport command aimed at a follower is refused, not silently dropped |
-| **4** | Browse | `browse.ts`: `FV:2`, `SQ:`, `Q:0`, `A:*`, `R:0/0`, library search, queue editing | Every existing Browse and Queue interaction works against Sonos with no panel changes beyond the tab list |
-| **5** | Spotify search | Spotify Web API search + `x-sonos-spotify` URI construction + DIDL | Searching an artist on the panel plays them on a Sonos speaker through your own linked account |
-| **6** | Cut over | Delete `server/src/mass/`, rename `Mass*` types, strip `MASS_*` from env, compose, Dockerfile and the Unraid template | `npm test` green, bundle under budget, no reference to Music Assistant remains |
+| **4** ✅ | Browse | `browse.ts`, `uris.ts`: `FV:2`, `SQ:`, `Q:0`, `A:*`, `R:0/0`, library search, queue editing | Every existing Browse and Queue interaction works against Sonos with no panel changes beyond the tab list |
+| **5** ✅ | Spotify search | Spotify Web API search + `x-sonos-spotify` URI construction + DIDL | Searching an artist on the panel plays them on a Sonos speaker through your own linked account |
+| **6** ✅ | Cut over | Deleted `server/src/mass/`, renamed `Mass*` types, stripped `MASS_*` from env, compose and the Unraid template | `npm test` green, bundle under budget, no reference to Music Assistant remains |
 | **7** | SMAPI *(optional)* | `smapi.ts`, device-link with off-panel approval, Sonos Radio search | Sonos Radio and any other linked service are searchable |
 | **8** | History *(optional)* | Backend-recorded play history | The Recent tab shows what this panel played |
 
@@ -728,10 +793,244 @@ that must name a subscription this process created. It is matched *before* the
 method check, so an unknown path gets the same 405 as any other non-GET rather
 than revealing that a NOTIFY route exists.
 
-**Still absent after phase 3:** anything that starts new music. `playItem`,
-`favorite` and the queue-editing verbs answer "not available yet" on a Sonos
-player, because there is nowhere to browse from until phase 4. They work
-normally on a Music Assistant player.
+**Still absent after phase 3:** anything that starts new music. That arrived
+with phase 4.
+
+### What phases 4, 5 and 6 built
+
+**Events became a preference, not an assumption.** Reported from a real
+household: every speaker visible, volume and play/pause lagging or never
+updating. Subscriptions were being accepted while nothing came back —
+`SUBSCRIBE` is outbound and succeeds, `NOTIFY` is inbound and on a Docker
+bridge network never arrives. The store now polls every five seconds while
+events are absent, retries subscribing every minute, and recovers to push on
+its own. `Settings → Sonos updates` says which mode is live, because the
+symptom is otherwise impossible to attribute.
+
+**The URI registry generalised the artwork one.** Sonos plays whatever URI it
+is handed, so the panel is handed none: a browse registers each URI plus the
+`r:resMD` that goes with it and returns an opaque key. That closes the hole the
+Music Assistant guard closed differently — it required a library URI with a
+non-network scheme, which does not port, because Sonos's playable URIs *are*
+network URIs.
+
+**Streams and tracks are two playback paths.** A radio favourite goes through
+`SetAVTransportURI`; a track goes through `AddURIToQueue` and then needs the
+player pointed at `x-rincon-queue:<uuid>#0`, without which a speaker on a radio
+station stays on it while the album sits in a queue nothing is reading.
+`r:resMD` is not optional either: play a favourite without it and the speaker
+accepts the command and plays silence.
+
+**"Recently played" is gone, as predicted in §3.** No Sonos equivalent exists,
+and synthesising one from what this panel happened to start would be a narrower
+thing wearing the same label. The Favorites tab took its place at the front.
+
+**Spotify search took the Web API route** (§8 option B). The `sid` and `sn` in
+a Sonos Spotify URI belong to the household, so they are learned from it — any
+existing Spotify favourite is a URI Sonos itself built, carrying the right
+values — with `ListAvailableServices` as the fallback.
+
+**One thing found by CI rather than by review:** `parseDidlList` collected all
+items and then all containers, which silently re-sorted every mixed result.
+Favorites holds playlists, stations and albums interleaved in the order
+somebody chose in the Sonos app, and that order is the whole value of the list.
+It walks in document order now.
+
+### What phases 7 and 8 built
+
+**A favourite that would not play, and the reason the tests missed it.**
+Reported from the real household: `Play … failed (UPnP 701)`. 701 is
+"transition not available", and the transition it could not make was into an
+empty queue. A favourited playlist is a *container* — the speaker resolves it
+for itself — and it was going down the path built for single tracks:
+`AddURIToQueue`, point the transport at `x-rincon-queue:`, `Play`. The service
+answered that enqueue with **200 OK and `NumTracksAdded: 0`**, a refusal
+wearing a success, so the transport was aimed at nothing.
+
+Underneath was a smaller mistake with a wide blast radius. Every row in `FV:2`
+carries `object.itemobject.item.sonos-favorite` — the class of *being* a
+favourite, which says nothing about the content. What the row points at is
+stated one level down, inside `r:resMD`. Reading the outer class made every
+favourite look like a track.
+
+Playback is now classified into **three** styles rather than two:
+
+| Style | Play now | Add to queue |
+|---|---|---|
+| `stream` | `SetAVTransportURI` | impossible |
+| `container` | `SetAVTransportURI` | `AddURIToQueue` |
+| `track` | `AddURIToQueue`, then point at the queue | `AddURIToQueue` |
+
+Only the last was ever right for the others. §8's "two paths" was wrong, and
+the mock's fixtures were what hid it: they carried the inner class on the outer
+row, which is tidier than reality and made a favourite that could not play in a
+real household play perfectly in CI. The fixtures now say what a speaker says.
+
+**Music services arrived (SMAPI).** Favourites carry everything needed to play
+anything from any service with no login on this side — but they cannot be
+searched, and they cannot answer "what else does this artist have". Three
+layers: `services.ts` learns which services the household *has*
+(`ListAvailableServices` for the catalog of hundreds, `/status/accounts` for
+the handful somebody actually added, favourite URIs to confirm the account
+number); `smapi.ts` speaks the protocol; `music.ts` owns the tokens.
+
+Connecting is a URL and a short code typed on a phone — Sonos's own
+device-link flow, and the only one that can work here at all, because RoomOS
+gives the panel a single tab and an OAuth redirect would navigate away from the
+dashboard and never come back. This is §8's option A, which was deferred as
+"needs a browser"; the device-link flow turns out not to.
+
+All of it fails soft. A service that is down, a token that expired, a catalog
+row in an unanticipated shape — each loses that service and nothing else.
+
+**Two bugs found on the way.** Spotify albums and playlists were being built as
+`x-sonos-spotify:` *track* URIs; they are containers and need
+`x-rincon-cpcontainer:` with Sonos's type prefix — the same mistake as the 701.
+And `#learnFromServices` stringified a parsed XML node to JSON and searched for
+`"Name": "Spotify"` followed by `"Id"`, a pattern that cannot occur in the XML
+or in its JSON form in either order, so that fallback had never once returned
+an account.
+
+**The rest of the Sonos app.** Sleep timer, bass, treble, loudness, crossfade,
+group volume and the physical inputs, behind one more tap on the Media screen
+because each is real but occasional.
+
+Two distinctions are load-bearing. Tone is **per speaker** — it describes the
+room the speaker stands in, and two grouped speakers in different rooms want
+different bass and the same music. Group volume is **per group**, and goes to
+`GroupRenderingControl` rather than to each member in turn: Sonos scales the
+members proportionally, so a speaker somebody deliberately turned down stays
+quieter, which setting each one to the same number would destroy.
+
+The `input` verb is the one command routed to the speaker the panel *named*
+rather than to its coordinator: a TV socket is on one box, and routing it to
+the group leader would select the wrong speaker's input. Inputs are offered to
+every speaker rather than only to the ones that have them — the speaker's own
+refusal is both accurate and permanently up to date, where a table of models
+would be wrong the day after the next one ships.
+
+An empty `NewSleepTimerDuration` cancels a timer; `0:00:00` is what an obvious
+implementation sends and what a real speaker rejects. And the sleep-timer read
+is tolerated separately from the other four in `#readGroup`, because
+`Promise.all` rejects as a unit and an older speaker that does not implement it
+would otherwise lose its transport state, its track and its queue — a blank
+Media screen because of a timer nobody set.
+
+### What the first real use changed
+
+Reported after living with it: four tabs empty, search finding nothing, and
+Services showing "a ton of lists I can't make sense of".
+
+**The tab strip was asserting what a household has.** Favorites, Playlists,
+Albums, Artists, Radio — five fixed tabs, and in a house with no NAS share and
+nothing saved in the Sonos app, four of them were correctly and permanently
+blank. There is now **one Browse tab** that opens on the household's own list
+of sources, each with a real count, and an empty source is left out rather than
+offered as a row leading nowhere. It is how the Sonos app's Browse screen
+works, and it turns "which of these six tabs has anything in it" into a list
+you can read.
+
+**`ListAvailableServices` is the catalog, not the household.** It returns every
+service Sonos supports in the region — hundreds — and the filter let all the
+`Anonymous` ones through, so the Services list became every podcast aggregator
+Sonos has ever heard of. The bar is now an ACCOUNT: `/status/accounts`, plus
+the `sid`/`sn` pairs found inside the household's own favourites, which is the
+source that keeps working on firmware that does not serve the status page.
+
+**An empty list now says why.** A container this household does not have
+answers with a UPnP fault rather than an empty list — `R:0/0` on a house that
+never used TuneIn — and that fault was being flattened into "Sonos could not
+answer that". The speaker *answered*; that is a fact about the household, not a
+failure. It now becomes the same empty list, with the same explanation, as a
+container that exists and holds nothing. A transport failure still throws,
+because "could not answer" is the right thing to say when nothing did.
+
+Search defaults to a connected service rather than the library, for the same
+reason: searching an empty shelf reads as a broken search.
+
+### Discovery, and the three things it could not see
+
+Three reports from the household, each a different hole in reading a household
+from the outside.
+
+**`&amp;` survives one decode.** Sonos escapes a URI's own `&` writing the
+DIDL, then escapes the DIDL again putting it in `<Result>`, so one decode
+leaves `?sid=200&amp;flags=8300&amp;sn=4`. A scanner wanting a literal `&`
+matched nothing, anywhere, and the household appeared to have no services at
+all. Third bug in this integration from Sonos's layered escaping, and the first
+two were caught because `xml.ts` exists for exactly this — these scanners
+bypassed it with a regex. No fixture carried a query string, so the mock's
+correct double-escaping had nothing to escape.
+
+**`sn` is optional.** A third-party service names the account it plays through;
+Sonos's own do not, because there is no separate login — Sonos Radio and TuneIn
+are `?sid=254&flags=32` with no `sn`. Insisting on the pair lost every one of
+them. An absent `sn` now means account 0, which is Sonos's own value for it,
+and saved stations (`R:0/0`) are scanned as well as favourites, because that is
+where a station somebody listens to daily but never favourited appears.
+
+**Some services leave no trace at all.** Detection reads accounts, favourites
+and saved stations. A service set up in the Sonos app with none of those — and
+on firmware that does not serve `/status/accounts` — is invisible, and was
+therefore unreachable. `Add a service…` at the foot of Browse lists the whole
+catalog: hundreds of rows nobody has to look at unless something they know they
+have is missing, which is the shape that keeps the everyday screen readable.
+
+**An explanation is not an affordance.** "Connect SoundCloud first" was shown on
+a screen with nothing to press. A service that refuses now comes back as an
+empty list carrying `connect: <sid>`, and the empty state draws the button. It
+is typed rather than matched on the text of an error, because deciding to draw
+a button by reading a message is the kind of thing that quietly stops working
+when the wording changes.
+
+That path also covers a service whose catalog entry claims `Anonymous` and then
+demands a login anyway — SoundCloud does exactly this, and believing the
+catalog is what produced the dead end.
+
+**Spotify's Premium requirement is Spotify's.** Linking a third-party
+controller needs Premium, and nothing here can waive it. The Web API path
+(`SPOTIFY_CLIENT_ID`/`SECRET`) reads the public catalog with no user login and
+no Premium requirement, and playback still runs through the household's own
+linked account — so it remains the better option for Spotify specifically, and
+the only one that works on a free account.
+
+### What SMAPI turned out not to be
+
+A real household answered `Client.NOT_AUTHORIZED` to the **first** call of a
+device link — `getDeviceLinkCode`, before anybody had been asked for anything.
+Not an account problem, and not a missing parameter.
+
+**A SMAPI endpoint is contracted between Sonos and each service.** Several
+validate that the caller is a licensed Sonos client, and there is no field to
+fill in that changes the answer. Dressing the request up as a real speaker to
+get past it would be circumventing an access control rather than fixing a bug,
+so it is not done here.
+
+§8 read this the other way round. It treated SMAPI as an open protocol whose
+only obstacle was the device-link handshake needing a browser — and the
+handshake was never the hard part. Getting the service to talk to a controller
+that Sonos has not licensed is, and for some services the answer is no.
+
+What that costs is **catalog search and browsing** for those services, and
+nothing else. Every one of these still works with no linking at all:
+
+| | |
+|---|---|
+| Favourites (`FV:2`) | anything starred in the Sonos app, from any service |
+| Sonos playlists (`SQ:`) | including ones mixing services |
+| Saved stations (`R:0/0`) | Sonos Radio, TuneIn |
+| The local library (`A:*`) | a NAS or computer share |
+| Spotify search | via the Web API — no linking, no Premium |
+
+So a service that refuses is now recorded, the Connect button is withdrawn
+rather than offered again, and the row says why. A button that walks somebody
+into the same wall is worse than the reason it cannot work.
+
+**Spotify is the exception worth setting up.** Its Web API needs no SMAPI, no
+device link and no Premium account: server-to-server credentials read the
+public catalog, and playback still runs through the household's own linked
+account. It is the one service where full catalog search is available here, and
+it costs two environment variables.
 
 ---
 

@@ -55,7 +55,9 @@ ui:
 
 # ─── Idle / screensaver behaviour ──────────────────────────────────────────
 idle:
-  # Seconds of no touch before the photo screensaver takes over. 0 disables.
+  # Seconds of no touch before the screensaver takes over. While Sonos is
+  # playing it shows artwork, title, artist and time; otherwise it shows the
+  # photo slideshow. 0 disables.
   timeoutSeconds: 180
 
   # Seconds of no touch before returning to the Home screen from any other
@@ -265,9 +267,9 @@ home:
 
 # ─── Media players ─────────────────────────────────────────────────────────
 #
-# Speakers, the queue and the whole library come from Music Assistant
-# DIRECTLY — set MASS_URL and MASS_TOKEN in your .env and there is nothing to
-# configure here. Players are discovered, groups are whatever Music Assistant
+# Speakers, the queue and the whole library come from Sonos DIRECTLY — set
+# SONOS_HOST in your .env to any one speaker's address and there is nothing to
+# configure here. Rooms are discovered, groups are whatever Sonos
 # says they are, and Browse offers Recent, Favorites, Albums, Artists,
 # Playlists, Radio and Search with no library copied into this file.
 media:
@@ -280,9 +282,9 @@ media:
     - Outside
     - TVs
 
-  # Optional, and only a RENAME. Identity comes from Music Assistant, so there
+  # Optional, and only a RENAME. Identity comes from Sonos, so there
   # is nothing to keep in sync — an entry here just relabels a speaker whose
-  # Music Assistant name you do not like. Match by Music Assistant player id
+  # Sonos room name you do not like. Match by Sonos zone id
   # or by its current name.
   players:
     - entity: kitchen_speaker
@@ -383,7 +385,7 @@ cast:
   # Play a silent loop to hold the cast session open.
   #
   # OFF by default. It takes the device's audio focus, so on a Nest Hub that
-  # is ALSO a Music Assistant speaker it may interrupt playback on that
+  # is ALSO a speaker it may interrupt playback on that
   # speaker. Only turn it on if the session is being dropped without it.
   audioKeepAlive: false
 
@@ -505,6 +507,22 @@ controls:
   #     actions:
   #       - { companion: 1/2/4 }
   #       - { tv: office_lg, action: on }
+
+  # Apple TVs appear on their own page in the bottom navigation.
+  # Give each one a fixed DHCP lease. The first Pair tap displays a PIN on the
+  # television; enter it on the panel once. Credentials are encrypted by the
+  # Apple protocol and persisted in /config/apple-tv.json.
+  appleTvs: []
+  #  - id: living_room_apple_tv
+  #    name: Living Room Apple TV
+  #    host: 192.168.1.80
+  #    # identifier: optional; normally the address is enough
+  #    # Shortcuts appear below Back, Home and volume. Only these bundle ids
+  #    # can be launched by the panel.
+  #    shortcuts:
+  #      - { name: Plex,    app: com.plexapp.plex }
+  #      - { name: YouTube, app: com.google.ios.youtube }
+  #      - { name: Music,   app: com.apple.TVMusic }
 
   # Seconds between key light state polls. 0 stops polling.
   #

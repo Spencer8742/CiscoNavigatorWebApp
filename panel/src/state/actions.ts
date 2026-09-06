@@ -3,7 +3,7 @@ import { optimistic, peekEntity } from '~/state/entities.ts';
 import { players } from '~/state/players.ts';
 import { markActivity, showToast } from '~/state/ui.ts';
 import { domainOf } from '~/lib/format.ts';
-import type { Enqueue, MassPlayer, MusicCommand } from '@shared/protocol.ts';
+import type { Enqueue, Player, MusicCommand } from '@shared/protocol.ts';
 
 /**
  * Every command the panel can send.
@@ -317,14 +317,13 @@ export function setEntityOption(entityId: string, option: string): void {
 /* ── Music ────────────────────────────────────────────────────────────────
    None of this goes through Home Assistant. It also does not name a music
    system: the panel sends a player id and an INTENTION, and the backend
-   routes it to whichever system owns that speaker — Sonos or Music Assistant.
+   the backend turns into whatever the speaker actually needs.
 
-   That is not indirection for its own sake. It is what lets both run at once
-   while docs/SONOS.md migrates from one to the other, and it is why the panel
-   contains no branch on which one is in use. It also makes the backend guard
-   stronger: with a verb on the wire, an action this app never wrote simply
+   That is not indirection for its own sake: it makes the backend guard
+   stronger. With a verb on the wire, an action this app never wrote simply
    does not exist, where an upstream command name only ever gets an
-   allow-list that somebody has to keep complete.
+   allow-list that somebody has to keep complete. Sonos's local API has no
+   authentication and the same port that pauses a track can rename rooms.
 
    Volume here is 0-100. Both systems use that scale; converting anywhere is
    exactly how a slider ends up setting a speaker to 1% of what was asked. */
@@ -336,12 +335,12 @@ function music(cmd: MusicCommand): void {
   }
 }
 
-function player(playerId: string): MassPlayer | undefined {
+function player(playerId: string): Player | undefined {
   return players.peek().find((p) => p.id === playerId);
 }
 
 /** Optimistically patch one player, so a tap moves the UI in the same frame. */
-function patchPlayer(playerId: string, changes: Partial<MassPlayer>): void {
+function patchPlayer(playerId: string, changes: Partial<Player>): void {
   players.value = players.value.map((p) => (p.id === playerId ? { ...p, ...changes } : p));
 }
 
@@ -374,10 +373,6 @@ export function setVolume(playerId: string, level: number, final: boolean): void
   }
 }
 
-export function nudgeVolume(playerId: string, delta: number): void {
-  setVolume(playerId, (player(playerId)?.volume ?? 0) + delta, true);
-}
-
 export function setMuted(playerId: string, muted: boolean): void {
   patchPlayer(playerId, { muted });
   music({ verb: 'mute', player: playerId, muted });
@@ -400,25 +395,130 @@ export function setRepeat(playerId: string, mode: 'off' | 'one' | 'all'): void {
   music({ verb: 'repeat', player: playerId, mode });
 }
 
+/**
+ * Volume for a whole group at once.
+ *
+ * Sonos scales the members proportionally, so a speaker somebody turned down
+ * on purpose stays quieter than the rest. The optimistic write is deliberately
+ * only to `groupVolume` and not to each member's own `volume`: we do not know
+ * the ratios Sonos will apply, and guessing them would make every slider in
+ * the group jump to a wrong number and then correct itself.
+ */
+export function setGroupVolume(playerId: string, level: number, final: boolean): void {
+  const clamped = Math.max(0, Math.min(100, Math.round(level)));
+  patchPlayer(playerId, { groupVolume: clamped });
+
+  const fire = () => music({ verb: 'groupVolume', player: playerId, level: clamped });
+  if (final) {
+    cancelThrottle(playerId + ':gvol');
+    fire();
+  } else {
+    throttle(playerId + ':gvol', DRAG_INTERVAL_MS, fire);
+  }
+}
+
+/** Bass or treble, −10 to +10. Per speaker, like volume. */
+export function setTone(
+  playerId: string,
+  which: 'bass' | 'treble',
+  level: number,
+  final: boolean,
+): void {
+  const clamped = Math.max(-10, Math.min(10, Math.round(level)));
+  patchPlayer(playerId, { [which]: clamped });
+
+  const fire = () => music({ verb: which, player: playerId, level: clamped });
+  if (final) {
+    cancelThrottle(playerId + ':' + which);
+    fire();
+  } else {
+    throttle(playerId + ':' + which, DRAG_INTERVAL_MS, fire);
+  }
+}
+
+export function setLoudness(playerId: string, on: boolean): void {
+  patchPlayer(playerId, { loudness: on });
+  music({ verb: 'loudness', player: playerId, on });
+}
+
+export function setCrossfade(playerId: string, on: boolean): void {
+  music({ verb: 'crossfade', player: playerId, on });
+}
+
+/**
+ * Stop this group after `minutes`. Zero cancels.
+ *
+ * Written optimistically as an instant so the countdown starts on the tap
+ * rather than a round trip later — the speaker holds the real timer, and its
+ * next report is the authority.
+ */
+export function setSleep(playerId: string, minutes: number): void {
+  patchPlayer(playerId, { sleepAt: minutes > 0 ? Date.now() + minutes * 60_000 : null });
+  music({ verb: 'sleep', player: playerId, minutes });
+}
+
+/** Play a physical input — a soundbar's TV socket, a line-in — or the queue. */
+export function setInput(playerId: string, source: 'tv' | 'line' | 'queue'): void {
+  music({ verb: 'input', player: playerId, source });
+}
+
 /* ── Speaker grouping ─────────────────────────────────────────────────────
    Absolute rather than incremental: the group is set to exactly the speakers
    named, which is what makes removing one the same operation as adding one,
    and what stops two panels racing into a group neither asked for. */
 
-/** Set the group led by `leader` to exactly these members. */
+/**
+ * Set the group led by `leader` to exactly these members.
+ *
+ * Written optimistically, like every other control here. Grouping is the one
+ * that most needs it: the backend has to tell each speaker separately and then
+ * wait for the household to announce the result, so without this the sheet
+ * sits unchanged for a moment while somebody stands there wondering whether
+ * the tap registered. The real topology arrives a beat later and overwrites
+ * this — normally with the identical answer.
+ */
 export function setGroupMembers(leader: string, members: string[]): void {
-  music({ verb: 'group', player: leader, members });
+  const wanted = members.includes(leader) ? members : [leader, ...members];
+  regroup(leader, wanted);
+  music({ verb: 'group', player: leader, members: wanted });
 }
 
 /** Take one speaker out of whatever group it is in. */
 export function unjoinPlayer(playerId: string): void {
+  const current = player(playerId);
+  if (current) {
+    // Everyone else keeps playing together; this one stands alone.
+    const rest = current.members.filter((id) => id !== playerId);
+    const leader = current.syncedTo ?? rest[0];
+    if (leader) regroup(leader, rest);
+    regroup(playerId, []);
+  }
   music({ verb: 'ungroup', player: playerId });
 }
 
+/**
+ * Apply a grouping locally: `members` becomes exactly this set.
+ *
+ * A group of one is drawn as no group at all, which is why an empty result
+ * clears `members` rather than leaving the speaker listed as its own member.
+ */
+function regroup(leader: string, members: string[]): void {
+  const group = members.length > 1 ? members : [];
+
+  players.value = players.value.map((p) => {
+    if (!members.includes(p.id)) return p;
+    return {
+      ...p,
+      members: group,
+      syncedTo: p.id === leader ? null : leader,
+      queueId: leader,
+    };
+  });
+}
+
 /* ── The queue ────────────────────────────────────────────────────────────
-   Addressed by SPEAKER, not by queue. The two music systems disagree about
-   what a queue id is — Sonos has one per group, Music Assistant one per
-   player — and resolving that is the backend's job, not the panel's. */
+   Addressed by SPEAKER, not by queue. A Sonos queue belongs to a GROUP
+   rather than to a speaker, and resolving that is the backend's job. */
 
 /** Jump to a track already in the queue. */
 export function playQueueIndex(playerId: string, index: number): void {
@@ -457,7 +557,7 @@ export type { Enqueue };
 export function playItem(
   playerId: string,
   uri: string,
-  opts: { enqueue?: Enqueue; radio?: boolean } = {},
+  opts: { enqueue?: Enqueue; radio?: boolean; media?: import('@shared/protocol.ts').MediaItem } = {},
 ): void {
   music({
     verb: 'playItem',
@@ -465,7 +565,22 @@ export function playItem(
     item: uri,
     enqueue: opts.enqueue ?? 'replace',
     ...(opts.radio ? { radio: true } : {}),
+    ...(opts.media ? { media: opts.media } : {}),
   });
+}
+
+export function pinItem(
+  playerId: string,
+  item: import('@shared/protocol.ts').MediaItem,
+  on: boolean,
+): void {
+  music({ verb: 'pin', player: playerId, item: item.u, media: item, on });
+  showToast(on ? 'Pinned' : 'Unpinned');
+}
+
+export function handoff(playerId: string, target: string): void {
+  music({ verb: 'handoff', player: playerId, target });
+  showToast('Moving playback…');
 }
 
 /** Mark something a favourite, or unmark it. */

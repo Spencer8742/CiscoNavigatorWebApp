@@ -40,20 +40,6 @@ export interface Env {
   };
 
   /**
-   * Music Assistant, spoken to directly rather than through Home Assistant.
-   *
-   * The token is required by Music Assistant from API schema 28 onward and
-   * ignored by older servers, so it is always sent when present and its
-   * absence is only an error if the server asks for it.
-   */
-  mass: {
-    url: string;
-    token: string;
-    insecureTls: boolean;
-    enabled: boolean;
-  };
-
-  /**
    * Sonos, spoken to directly on the LAN.
    *
    * No token and no URL: control is unauthenticated SOAP on port 1400 of every
@@ -73,6 +59,22 @@ export interface Env {
      * Docker's bridge NAT, which is the one case this exists for.
      */
     callbackHost: string;
+    enabled: boolean;
+  };
+
+  /**
+   * Spotify, for SEARCH ONLY.
+   *
+   * Playback runs through the household's own linked Spotify account — these
+   * credentials never touch it. They are a free developer app used with the
+   * client-credentials flow: server to server, no user login, no redirect,
+   * and no access to anybody's account. See docs/SONOS.md §8.
+   */
+  spotify: {
+    clientId: string;
+    clientSecret: string;
+    /** ISO country used for availability-filtered podcast results. */
+    market: string;
     enabled: boolean;
   };
 
@@ -143,11 +145,12 @@ export function loadEnv(): Env {
   const haToken = str('HA_TOKEN');
   const immichUrl = normalizeUrl(str('IMMICH_URL'));
   const immichKey = str('IMMICH_API_KEY');
-  const massUrl = normalizeUrl(str('MASS_URL'));
   const companionUrl = normalizeUrl(str('COMPANION_URL'));
   // A bare address, not a URL: the port and paths are fixed by Sonos.
   const sonosHost = str('SONOS_HOST').trim();
   const sonosDiscovery = bool('SONOS_DISCOVERY');
+  const spotifyId = str('SPOTIFY_CLIENT_ID').trim();
+  const spotifySecret = str('SPOTIFY_CLIENT_SECRET').trim();
 
   const env: Env = {
     port: int('PORT', 8099),
@@ -164,17 +167,6 @@ export function loadEnv(): Env {
       unavailableGraceMs: int('HA_UNAVAILABLE_GRACE_MS', 30_000),
     },
 
-    mass: {
-      url: massUrl,
-      token: str('MASS_TOKEN'),
-      insecureTls: bool('MASS_INSECURE_TLS'),
-      // A URL is enough to try. Whether a token is REQUIRED depends on the
-      // server's schema version, which we only learn once connected — so
-      // refusing to start without one here would lock out older servers that
-      // do not use tokens at all.
-      enabled: Boolean(massUrl),
-    },
-
     sonos: {
       host: sonosHost,
       discovery: sonosDiscovery,
@@ -183,6 +175,15 @@ export function loadEnv(): Env {
       // existing deployment start multicasting the moment it updates, to find
       // speakers nobody asked it to look for.
       enabled: Boolean(sonosHost) || sonosDiscovery,
+    },
+
+    spotify: {
+      clientId: spotifyId,
+      clientSecret: spotifySecret,
+      market: /^[A-Za-z]{2}$/.test(str('SPOTIFY_MARKET', 'US'))
+        ? str('SPOTIFY_MARKET', 'US').toUpperCase()
+        : 'US',
+      enabled: Boolean(spotifyId && spotifySecret),
     },
 
     immich: {
@@ -220,28 +221,14 @@ export function loadEnv(): Env {
     );
   }
 
-  if (!env.mass.enabled) {
-    log.info(
-      'MASS_URL not set — media falls back to Home Assistant media_player entities. ' +
-        'Set it to browse your library, edit the queue and control speakers directly.',
-    );
-  }
-
   if (!env.sonos.enabled) {
     log.info(
       'SONOS_HOST not set — Sonos speakers will not appear. Set it to the IP address ' +
         'of one Sonos speaker, or set SONOS_DISCOVERY=1 to search the network.',
     );
-  } else if (env.mass.enabled) {
-    // Expected during the migration in docs/SONOS.md and confusing if it is
-    // not: a household reachable both ways is listed twice, once per source.
-    log.warn(
-      'Both MASS_URL and Sonos are configured. Speakers that Music Assistant also ' +
-        'knows about will appear twice until Music Assistant is removed.',
-    );
   }
 
-  if (env.ha.insecureTls || env.immich.insecureTls || env.mass.insecureTls) {
+  if (env.ha.insecureTls || env.immich.insecureTls) {
     log.warn(
       'TLS certificate verification is disabled for one or more upstreams. ' +
         'Prefer mounting your CA bundle into the container instead.',

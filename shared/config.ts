@@ -227,7 +227,7 @@ export interface CastConfig {
    * Play a silent audio loop to hold the cast session open.
    *
    * OFF by default, and worth understanding before turning on: it takes the
-   * device's audio focus, which on a Nest Hub that is ALSO a Music Assistant
+   * device's audio focus, which on a Nest Hub that is ALSO a
    * speaker may interrupt or block playback on that speaker. Only reach for
    * it if `disableIdleTimeout` alone is not holding the session.
    */
@@ -663,10 +663,30 @@ export interface TvConfig {
   inputs: SourceRef[];
 }
 
+/** One launchable app deliberately exposed as a shortcut on the wall panel. */
+export interface AppleTvShortcutConfig {
+  name: string;
+  /** The bundle identifier reported by Apple TV, such as com.plexapp.plex. */
+  bundleId: string;
+}
+
+/** An Apple TV controlled locally with Apple's Companion/MRP protocols. */
+export interface AppleTvConfig {
+  id: string;
+  name: string;
+  /** A bare LAN address. A fixed DHCP lease is strongly recommended. */
+  host: string;
+  /** Optional pyatv identifier when more than one device answers at this address. */
+  identifier?: string;
+  /** Apps shown directly below this Apple TV's remote controls. */
+  shortcuts: AppleTvShortcutConfig[];
+}
+
 export interface ControlsConfig {
   pages: ControlPage[];
   keylights: KeyLightConfig[];
   tvs: TvConfig[];
+  appleTvs: AppleTvConfig[];
   /**
    * Seconds between key light state polls. 0 stops polling.
    *

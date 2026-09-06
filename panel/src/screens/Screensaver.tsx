@@ -19,8 +19,17 @@ import {
   releaseImages,
   setPairing,
 } from '~/media/photos.ts';
-import { nowPlaying, weather } from '~/state/selectors.ts';
+import {
+  defaultPlayerId,
+  nowPlaying,
+  speakers,
+  weather,
+  type SpeakerInfo,
+} from '~/state/selectors.ts';
 import { Icon } from '~/components/Icon.tsx';
+import { Progress } from '~/components/Progress.tsx';
+import { getToken } from '~/net/auth.ts';
+import { prefs } from '~/state/ui.ts';
 import type { PhotoRef } from '@shared/protocol.ts';
 
 /**
@@ -48,6 +57,89 @@ import type { PhotoRef } from '@shared/protocol.ts';
  * overlays.
  */
 export function Screensaver() {
+  const all = speakers.value;
+  const preferred = all.find((speaker) => speaker.id === defaultPlayerId.value);
+  const player =
+    (preferred?.state === 'playing' && preferred.media ? preferred : undefined) ??
+    all.find((speaker) => speaker.state === 'playing' && !speaker.syncedTo && speaker.media) ??
+    all.find((speaker) => speaker.state === 'playing' && speaker.media);
+
+  if (player?.media) return <PlayingScreensaver player={player} />;
+  return <PhotoScreensaver />;
+}
+
+/** Music takes over the idle screen while Sonos is actively playing. */
+function PlayingScreensaver({ player }: { player: SpeakerInfo }) {
+  const media = player.media;
+  const d = now.value;
+  const t = timeOpts.value;
+  const token = getToken();
+  const [artFailed, setArtFailed] = useState(false);
+  const art = media?.art;
+  const artUrl = art ? `${art}${token ? `&t=${encodeURIComponent(token)}` : ''}` : null;
+
+  useEffect(() => setArtFailed(false), [art]);
+
+  return (
+    <div class="saver saver-now-playing">
+      {artUrl && !artFailed ? (
+        <img class="saver-np-backdrop" src={artUrl} alt="" aria-hidden="true" />
+      ) : null}
+      <div class="saver-np-shade" />
+
+      <div class="saver-np-layout">
+        <div class="saver-np-art" data-empty={!artUrl || artFailed ? '' : undefined}>
+          {artUrl && !artFailed ? (
+            <img
+              key={artUrl}
+              src={artUrl}
+              alt={media?.title ?? 'Album artwork'}
+              decoding="async"
+              onError={() => setArtFailed(true)}
+            />
+          ) : (
+            <Icon name="media" size="6rem" weight={1.1} />
+          )}
+        </div>
+
+        <div class="saver-np-info">
+          {prefs.value.nowPlayingScreensaverTime ? (
+            <div class="saver-np-clock tnum">
+              {formatTime(d, t)}
+              {ui.value.clock === '12h' ? (
+                <span class="saver-np-meridiem">{formatMeridiem(d, t)}</span>
+              ) : null}
+            </div>
+          ) : null}
+          <div class="saver-np-date">{formatDate(d, t)}</div>
+
+          <div class="saver-np-track">
+            <div class="saver-np-title">{media?.title ?? 'Now playing'}</div>
+            {media?.artist ? <div class="saver-np-artist">{media.artist}</div> : null}
+            {media?.album ? <div class="saver-np-album">{media.album}</div> : null}
+          </div>
+
+          {media && (media.duration !== null || media.elapsed !== null) ? (
+            <Progress
+              class="saver-np-progress"
+              elapsed={media.elapsed}
+              elapsedAt={media.elapsedAt}
+              duration={media.duration}
+              running
+            />
+          ) : null}
+
+          <div class="saver-np-room">
+            <Icon name="speaker" size="1.1rem" weight={1.7} />
+            <span class="truncate">Playing on {player.name}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PhotoScreensaver() {
   const cfg = idleConfig.value;
   const immich = immichConfig.value;
   const t = timeOpts.value;
@@ -185,7 +277,7 @@ function SaverClock({
 
   return (
     <div class={big ? 'saver-info saver-info-big' : 'saver-info'} data-corner={corner}>
-      {cfg.overlays.clock ? (
+      {cfg.overlays.clock && prefs.value.photoScreensaverTime ? (
         <div class="saver-time tnum">
           {formatTime(d, t)}
           {ui.value.clock === '12h' ? (

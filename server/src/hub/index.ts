@@ -7,13 +7,18 @@ import type { ConfigStore } from '~/config/load.ts';
 import { panelIdOf } from '@shared/protocol.ts';
 import type {
   BackendHealth,
+  AppleTvCommand,
+  AppleTvSwipe,
+  AppleTvState,
   BrowseRequest,
   BrowseResult,
   KeyLightState,
   TvState,
-  MassPlayer,
-  MassQueue,
+  Player,
+  PlayerQueue,
   MusicCommand,
+  MusicSource,
+  ServiceLink,
   PanelPrefs,
   ClientMessage,
   EntityState,
@@ -56,25 +61,39 @@ export interface HubDeps {
   onPhotos?: (count: number) => Promise<ServerMessage | null>;
   /** Answer a music browse request, or throw with a user-visible reason. */
   onBrowse?: (req: BrowseRequest) => Promise<BrowseResult>;
-  /** Current Music Assistant players and queues, sent in `hello`. */
-  getPlayers: () => { players: MassPlayer[]; queues: MassQueue[] };
+  /** Current speakers and queues, sent in `hello`. */
+  getPlayers: () => { players: Player[]; queues: PlayerQueue[] };
   /**
    * Drive a speaker. Returns an error string, or null.
    *
-   * Routed by player id inside the backend — Sonos zones to Sonos, everything
-   * else to Music Assistant — so the panel never has to know which music
-   * system owns which speaker.
+   * Carries a verb rather than an upstream command name, which is what makes
+   * "no other action exists" a property of the wire format rather than of an
+   * allow-list somebody has to keep complete. See `MusicCommand`.
    */
   onMusic?: (cmd: MusicCommand) => Promise<string | null>;
   /** This panel's preferences, sent in `hello`. */
   getPrefs: (panelId: string | null) => PanelPrefs;
   /** Apply a preference change, for the panel that asked. */
-  onPref?: (key: string, value: string, panelId: string | null) => string | null;
+  onPref?: (key: string, value: unknown, panelId: string | null) => string | null;
   /** Apply a player-layout change, for the panel that asked. */
   onLayout?: (layout: unknown, panelId: string | null) => string | null;
   /** Current Elgato Key Light states, sent in `hello`. */
   getKeyLights: () => KeyLightState[];
   getTvs: () => TvState[];
+  getAppleTvs: () => AppleTvState[];
+  onAppleTv?: (device: string, op: AppleTvCommand) => Promise<string | null>;
+  onAppleTvSwipe?: (device: string, gesture: AppleTvSwipe) => Promise<string | null>;
+  onAppleTvApp?: (device: string, app: string) => Promise<string | null>;
+  onAppleTvPair?: (device: string, op: 'begin' | 'pin' | 'cancel', pin?: string) => Promise<string | null>;
+  /** Music services the household has, sent in `hello`. */
+  getSources: () => MusicSource[];
+  /**
+   * Connect or disconnect a music service.
+   *
+   * Separate from `onMusic` because it is not a speaker command: nothing here
+   * reaches a speaker, and the thing it changes is a stored credential.
+   */
+  onLink?: (sid: number, op: 'begin' | 'poll' | 'forget') => Promise<ServiceLink>;
   /** Run a macro button by id. Returns an error string, or null. */
   onControl?: (button: string) => Promise<string | null>;
   /** Drive a key light. Returns an error string, or null. */
@@ -176,6 +195,8 @@ export class Hub {
       queues: music.queues,
       keylights: this.#deps.getKeyLights(),
       tvs: this.#deps.getTvs(),
+      appleTvs: this.#deps.getAppleTvs(),
+      sources: this.#deps.getSources(),
     });
   }
 
@@ -228,6 +249,64 @@ export class Hub {
         const problem = await this.#deps.onMusic(msg.cmd);
         if (problem) {
           this.#send(panel, { t: 'error', ref: msg.id, code: 'music_failed', message: problem });
+        }
+        break;
+      }
+
+      case 'apple-tv': {
+        if (!this.#deps.onAppleTv) return;
+        const problem = await this.#deps.onAppleTv(msg.appleTv, msg.op);
+        if (problem) this.#send(panel, { t: 'error', ref: msg.id, code: 'apple_tv_failed', message: problem });
+        break;
+      }
+
+      case 'apple-tv-swipe': {
+        if (!this.#deps.onAppleTvSwipe) return;
+        const problem = await this.#deps.onAppleTvSwipe(msg.appleTv, msg);
+        if (problem) this.#send(panel, { t: 'error', ref: msg.id, code: 'apple_tv_swipe_failed', message: problem });
+        break;
+      }
+
+      case 'apple-tv-app': {
+        if (!this.#deps.onAppleTvApp) return;
+        const problem = await this.#deps.onAppleTvApp(msg.appleTv, msg.app);
+        if (problem) this.#send(panel, { t: 'error', ref: msg.id, code: 'apple_tv_app_failed', message: problem });
+        break;
+      }
+
+      case 'apple-tv-pair': {
+        if (!this.#deps.onAppleTvPair) return;
+        const problem = await this.#deps.onAppleTvPair(msg.appleTv, msg.op, msg.pin);
+        if (problem) this.#send(panel, { t: 'error', ref: msg.id, code: 'apple_tv_pair_failed', message: problem });
+        break;
+      }
+
+      case 'link': {
+        if (!this.#deps.onLink) {
+          this.#send(panel, {
+            t: 'error',
+            ref: msg.id,
+            code: 'link_unavailable',
+            message: 'No music system is configured',
+          });
+          return;
+        }
+        /*
+         * A link is the one panel request that can take minutes: somebody has
+         * to pick up a phone. So each poll is its own request/reply and the
+         * backend holds nothing open — a socket that dropped halfway through
+         * costs the person one more tap, not a stuck flow.
+         */
+        try {
+          const link = await this.#deps.onLink(msg.sid, msg.op);
+          this.#send(panel, { t: 'link', ref: msg.id, link });
+        } catch (err) {
+          this.#send(panel, {
+            t: 'error',
+            ref: msg.id,
+            code: 'link_failed',
+            message: err instanceof Error ? err.message : 'That did not work',
+          });
         }
         break;
       }
@@ -346,8 +425,12 @@ export class Hub {
     }
   }
 
-  broadcastPlayers(players: MassPlayer[], queues: MassQueue[]): void {
+  broadcastPlayers(players: Player[], queues: PlayerQueue[]): void {
     this.broadcast({ t: 'players', players, queues });
+  }
+
+  broadcastSources(sources: MusicSource[]): void {
+    this.broadcast({ t: 'sources', sources });
   }
 
   broadcastKeyLights(lights: KeyLightState[]): void {
@@ -356,6 +439,10 @@ export class Hub {
 
   broadcastTvs(tvs: TvState[]): void {
     this.broadcast({ t: 'tvs', tvs });
+  }
+
+  broadcastAppleTvs(appleTvs: AppleTvState[]): void {
+    this.broadcast({ t: 'apple-tvs', appleTvs });
   }
 
   #send(panel: Panel, msg: ServerMessage): void {

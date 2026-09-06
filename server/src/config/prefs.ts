@@ -2,15 +2,19 @@ import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { logger } from '~/lib/log.ts';
 import {
+  BOOLEAN_PREFS,
   DEFAULT_PREFS,
   LAYOUT_LIMITS,
+  PANEL_PAGES,
   PREF_VALUES,
   panelIdOf,
   type PanelPrefs,
+  type PanelPage,
   type PlayerLayout,
 } from '@shared/protocol.ts';
 
 const log = logger('prefs');
+const PREFS_SCHEMA = 2;
 
 /**
  * The handful of settings a panel can change by tapping.
@@ -18,8 +22,8 @@ const log = logger('prefs');
  * **Why these live on the server.** RoomOS deletes web storage daily by
  * default (docs/ROOMOS.md §3), so anything kept in the browser silently
  * reverts overnight — the worst kind of setting, one that appears to work.
- * Holding them here also means a panel reconnecting after a reboot comes back
- * to the same screen it had.
+ * Holding them here also means several panels agree, and that a panel
+ * reconnecting after a reboot comes back to the same screen it had.
  *
  * **Why a separate file from dashboard.yaml.** That file is the user's,
  * hand-written and commented, and quite possibly in version control.
@@ -86,11 +90,20 @@ export class PrefsStore {
     for (const fn of this.#listeners) fn();
   }
 
+  /** Write one preference into a scope and persist. */
+  #apply(panelId: string | null, patch: Partial<PanelPrefs>): void {
+    const scope = panelId ?? SHARED;
+    this.#scopes.set(scope, { ...(this.#scopes.get(scope) ?? {}), ...patch });
+    this.#save();
+    this.#announce();
+  }
+
   #load(): void {
     try {
       const raw: unknown = JSON.parse(readFileSync(this.#path, 'utf8'));
       if (!raw || typeof raw !== 'object') return;
       const file = raw as Record<string, unknown>;
+      const version = Number(file['version'] ?? 1);
 
       /*
        * The file used to be one flat object of preferences, before panels
@@ -100,35 +113,47 @@ export class PrefsStore {
        * anywhere saying why.
        */
       const legacy = !('default' in file) && !('panels' in file);
+      let migrated = false;
+
       if (legacy) {
-        this.#scopes.set(SHARED, readScope(file));
+        const { scope, changed } = readScope(file, version);
+        this.#scopes.set(SHARED, scope);
+        migrated = changed;
         log.info(`Loaded panel preferences from ${this.#path} (shared, pre-per-panel format)`);
-        return;
-      }
+      } else {
+        const shared = readScope(file['default'], version);
+        this.#scopes.set(SHARED, shared.scope);
+        migrated = shared.changed;
 
-      this.#scopes.set(SHARED, readScope(file['default']));
-
-      const panels = file['panels'];
-      if (panels && typeof panels === 'object' && !Array.isArray(panels)) {
-        for (const [name, value] of Object.entries(panels as Record<string, unknown>)) {
-          const id = panelIdOf(name);
-          // A key that is not a legal panel id can never be matched by a
-          // connecting panel, so keeping it would just be a scope nothing
-          // reads. Say so rather than dropping it silently — it is almost
-          // certainly a typo in a URL somewhere.
-          if (!id) {
-            log.warn(`Ignoring "${name}" in ${this.#path}: not a valid panel id`);
-            continue;
+        const panels = file['panels'];
+        if (panels && typeof panels === 'object' && !Array.isArray(panels)) {
+          for (const [name, value] of Object.entries(panels as Record<string, unknown>)) {
+            const id = panelIdOf(name);
+            // A key that is not a legal panel id can never be matched by a
+            // connecting panel, so keeping it would just be a scope nothing
+            // reads. Say so rather than dropping it silently — it is almost
+            // certainly a typo in a URL somewhere.
+            if (!id) {
+              log.warn(`Ignoring "${name}" in ${this.#path}: not a valid panel id`);
+              continue;
+            }
+            const { scope, changed } = readScope(value, version);
+            this.#scopes.set(id, scope);
+            migrated = migrated || changed;
           }
-          this.#scopes.set(id, readScope(value));
         }
+
+        const named = [...this.#scopes.keys()].filter((k) => k !== SHARED);
+        log.info(
+          `Loaded panel preferences from ${this.#path}` +
+            (named.length ? ` (shared, plus ${named.join(', ')})` : ''),
+        );
       }
 
-      const named = [...this.#scopes.keys()].filter((k) => k !== SHARED);
-      log.info(
-        `Loaded panel preferences from ${this.#path}` +
-          (named.length ? ` (shared, plus ${named.join(', ')})` : ''),
-      );
+      // Either the schema-2 page migration fired, or the file is in the old
+      // flat shape. Both are worth writing back once, so the next start has
+      // nothing left to migrate.
+      if (migrated || legacy) this.#save();
     } catch (err) {
       // Missing is the normal first-run case, and defaults are correct then.
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
@@ -145,23 +170,48 @@ export class PrefsStore {
    * fact that it can only reach a small enum is what keeps it uninteresting
    * to an attacker who has the panel token.
    */
-  set(key: string, value: string, panelId: string | null = null): string | null {
-    const allowed = (PREF_VALUES as Record<string, readonly string[]>)[key];
-    if (!allowed) return `Unknown preference "${key}"`;
-    if (!allowed.includes(value)) {
-      return `"${value}" is not valid for ${key} (expected ${allowed.join(' or ')})`;
-    }
-
-    const scope = panelId ?? SHARED;
+  set(key: string, value: unknown, panelId: string | null = null): string | null {
     // Compared against what this panel currently SEES, not against what its
     // own block holds: a panel inheriting the shared value has not asked for
     // anything to change by choosing the value it is already showing.
-    if ((this.for(panelId) as unknown as Record<string, string>)[key] === value) return null;
+    const current = this.for(panelId);
+    const who = panelId ?? 'all panels';
 
-    this.#scopes.set(scope, { ...(this.#scopes.get(scope) ?? {}), [key]: value });
-    this.#save();
-    this.#announce();
-    log.info(`Preference ${key} = ${value} (${panelId ?? 'all panels'})`);
+    if (key === 'visiblePages') {
+      const visiblePages = sanitizeVisiblePages(value);
+      if (!visiblePages) {
+        return `Invalid visiblePages (expected only ${PANEL_PAGES.join(', ')})`;
+      }
+      if (sameStrings(current.visiblePages, visiblePages)) return null;
+
+      this.#apply(panelId, { visiblePages });
+      log.info(`Preference visiblePages = ${visiblePages.join(', ') || '(none)'} (${who})`);
+      return null;
+    }
+
+    if ((BOOLEAN_PREFS as readonly string[]).includes(key)) {
+      if (typeof value !== 'boolean') {
+        return `"${value}" is not valid for ${key} (expected true or false)`;
+      }
+      if ((current as unknown as Record<string, unknown>)[key] === value) return null;
+
+      this.#apply(panelId, { [key]: value } as Partial<PanelPrefs>);
+      log.info(`Preference ${key} = ${value} (${who})`);
+      return null;
+    }
+
+    const allowed = Object.prototype.hasOwnProperty.call(PREF_VALUES, key)
+      ? (PREF_VALUES as Record<string, readonly string[]>)[key]
+      : undefined;
+    if (!allowed) return `Unknown preference "${key}"`;
+    if (typeof value !== 'string' || !allowed.includes(value)) {
+      return `"${value}" is not valid for ${key} (expected ${allowed.join(' or ')})`;
+    }
+
+    if ((current as unknown as Record<string, string>)[key] === value) return null;
+
+    this.#apply(panelId, { [key]: value } as Partial<PanelPrefs>);
+    log.info(`Preference ${key} = ${value} (${who})`);
     return null;
   }
 
@@ -180,10 +230,7 @@ export class PrefsStore {
     const layout = sanitizeLayout(raw, sections);
     if (!layout) return 'Invalid layout';
 
-    const scope = panelId ?? SHARED;
-    this.#scopes.set(scope, { ...(this.#scopes.get(scope) ?? {}), players: layout });
-    this.#save();
-    this.#announce();
+    this.#apply(panelId, { players: layout });
     return null;
   }
 
@@ -192,7 +239,7 @@ export class PrefsStore {
     for (const [id, scope] of this.#scopes) {
       if (id !== SHARED && Object.keys(scope).length > 0) panels[id] = scope;
     }
-    const file = { default: this.#scopes.get(SHARED) ?? {}, panels };
+    const file = { version: PREFS_SCHEMA, default: this.#scopes.get(SHARED) ?? {}, panels };
 
     try {
       mkdirSync(dirname(this.#path), { recursive: true });
@@ -215,27 +262,65 @@ export class PrefsStore {
  * Validated on the way IN as well as on the way out. The file is
  * machine-written, but it sits in a user-mounted volume and a half-written or
  * hand-edited one must not take the panel down.
+ *
+ * `changed` reports that the schema-2 page migration rewrote this scope, so
+ * the caller knows the file is worth saving back.
  */
-function readScope(raw: unknown): Partial<PanelPrefs> {
-  const out: Partial<PanelPrefs> = {};
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
-  const input = raw as Record<string, unknown>;
+function readScope(
+  raw: unknown,
+  version: number,
+): { scope: Partial<PanelPrefs>; changed: boolean } {
+  const scope: Partial<PanelPrefs> = {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { scope, changed: false };
+  const stored = raw as Record<string, unknown>;
+  let changed = false;
 
   for (const [key, allowed] of Object.entries(PREF_VALUES)) {
-    const value = input[key];
+    const value = stored[key];
     if (typeof value === 'string' && allowed.includes(value)) {
-      (out as Record<string, unknown>)[key] = value;
+      (scope as Record<string, unknown>)[key] = value;
     }
   }
+
+  for (const key of BOOLEAN_PREFS) {
+    if (typeof stored[key] === 'boolean') {
+      (scope as Record<string, unknown>)[key] = stored[key];
+    }
+  }
+
+  let visiblePages = sanitizeVisiblePages(stored['visiblePages']);
+  if (visiblePages && version < PREFS_SCHEMA) {
+    // Apple TV became a first-class page in schema 2. Existing panels
+    // should see it once; later user choices are stored with version 2
+    // and are respected, including deliberately hiding it.
+    visiblePages = PANEL_PAGES.filter(
+      (page) => page === 'apple-tv' || visiblePages!.includes(page),
+    );
+    changed = true;
+  }
+  if (visiblePages) scope.visiblePages = visiblePages;
 
   // The layout is shape-checked rather than enum-checked. Section names are
   // NOT validated here: the config may legitimately have changed since this
   // was written, and dropping a whole arrangement because a heading was
   // renamed would be worse than carrying a stale key the panel ignores.
-  const layout = sanitizeLayout(input['players'], null);
-  if (layout) out.players = layout;
+  const layout = sanitizeLayout(stored['players'], null);
+  if (layout) scope.players = layout;
 
-  return out;
+  return { scope, changed };
+}
+
+function sanitizeVisiblePages(raw: unknown): PanelPage[] | null {
+  if (!Array.isArray(raw) || raw.length > PANEL_PAGES.length) return null;
+  if (raw.some((page) => typeof page !== 'string' || !PANEL_PAGES.includes(page as PanelPage))) {
+    return null;
+  }
+  if (new Set(raw).size !== raw.length) return null;
+  return PANEL_PAGES.filter((page) => raw.includes(page));
+}
+
+function sameStrings(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
 /**

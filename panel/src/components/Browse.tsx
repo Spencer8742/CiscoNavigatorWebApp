@@ -14,23 +14,16 @@ import type {
 } from '@shared/protocol.ts';
 
 /**
- * The music browser.
+ * Search and saved music for one Sonos player.
  *
- * Everything here comes from Music Assistant's own services — this app keeps
- * no library, no cache of album names and no search index of its own. Which
- * means whatever you added to Music Assistant this morning is here, and the
- * panel never disagrees with the Music Assistant app about what exists.
+ * Everything here comes off the speakers themselves — this app keeps no
+ * library, no cache of album names and no search index of its own. Which means
+ * whatever you favourited in the Sonos app this morning is here, and the panel
+ * never disagrees with the Sonos app about what exists.
  *
- * ## Why tabs rather than a folder tree
- *
- * Home Assistant's media browser is a hierarchy you walk down: source, then
- * category, then letter, then album. That is fine with a mouse. On a wall
- * panel it is four taps and a soft keyboard before you hear anything, and
- * every one of those taps is a round trip.
- *
- * These are seven flat views over the same library call, with the two you
- * actually use — what you played recently, and what you marked as a favorite —
- * first and needing no typing at all.
+ * Sonos exposes no household play-history API, so Recent records successful
+ * plays started through this app. It is persisted by the backend and shared
+ * by every panel rather than disappearing with RoomOS browser storage.
  *
  * ## Memory
  *
@@ -41,8 +34,11 @@ import type {
  * — and nobody scrolls a wall panel for ten minutes anyway.
  */
 
-/** A tab is a library view or a search — never a queue lookup. */
-type TabRequest = Extract<BrowseRequest, { kind: 'library' } | { kind: 'search' }>;
+/** A tab is a household view or local-library search — never a queue lookup. */
+type TabRequest = Extract<
+  BrowseRequest,
+  { kind: 'library' } | { kind: 'search' } | { kind: 'sources' } | { kind: 'shelf' }
+>;
 
 interface Tab {
   id: string;
@@ -52,41 +48,53 @@ interface Tab {
 }
 
 const TABS: Tab[] = [
+  { id: 'recent', label: 'Recent', icon: 'clock', request: { kind: 'shelf', shelf: 'recent' } },
+  { id: 'pinned', label: 'Pinned', icon: 'pin', request: { kind: 'shelf', shelf: 'pinned' } },
+  { id: 'favorites', label: 'Favourites', icon: 'heart', request: { kind: 'library', media: 'track', favorite: true } },
   {
-    id: 'recent',
-    label: 'Recent',
-    icon: 'clock',
-    // A real play history from Music Assistant, not the library sorted by
-    // last-played — so a radio station or a streamed track you do not own
-    // still shows up here.
-    request: { kind: 'library', media: 'track', recent: true },
-  },
-  {
-    id: 'favorites',
-    label: 'Favorites',
-    icon: 'heart',
-    request: { kind: 'library', media: 'album', favorite: true },
-  },
-  { id: 'albums', label: 'Albums', icon: 'disc', request: { kind: 'library', media: 'album' } },
-  { id: 'artists', label: 'Artists', icon: 'media', request: { kind: 'library', media: 'artist' } },
-  {
-    id: 'playlists',
-    label: 'Playlists',
+    /*
+     * ONE browse tab, opening on the household's own saved Sonos content.
+     *
+     * There used to be six — Favorites, Playlists, Albums, Artists, Radio,
+     * Services — and five of them were empty in a house with no NAS share and
+     * nothing saved in the Sonos app. A fixed tab strip asserts what a
+     * household has; this asks. What comes back is Favourites, Sonos
+     * Playlists, the library and saved stations if they exist, each with a
+     * count, in one list you can read.
+     */
+    id: 'browse',
+    label: 'My Sonos',
     icon: 'list',
-    request: { kind: 'library', media: 'playlist' },
+    request: { kind: 'sources' },
   },
-  { id: 'radio', label: 'Radio', icon: 'radio', request: { kind: 'library', media: 'radio' } },
-  { id: 'search', label: 'Search', icon: 'search', request: { kind: 'search', text: '' } },
 ];
+
+const SEARCH: Tab = {
+  id: 'search',
+  label: 'Search',
+  icon: 'search',
+  request: { kind: 'search', text: '' },
+};
 
 /** One level of the drill-down: what we opened, and what it was called. */
 interface Crumb {
   uri: string;
   name: string;
+  /** False for a place rather than a record — no "Play all" for Favourites. */
+  playable: boolean;
 }
 
-export function Browse({ playerId, onClose }: { playerId: string; onClose: () => void }) {
-  const [tab, setTab] = useState('recent');
+export function Browse({
+  playerId,
+  view,
+  onClose,
+}: {
+  playerId: string;
+  view: 'search' | 'library';
+  onClose: () => void;
+}) {
+  const [tab, setTab] = useState(view === 'search' ? 'search' : 'recent');
+  const [mediaFilter, setMediaFilter] = useState<MediaKind | undefined>(undefined);
   const [offset, setOffset] = useState(0);
   const [query, setQuery] = useState('');
   const [result, setResult] = useState<BrowseResult | null>(null);
@@ -102,7 +110,7 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
    */
   const [path, setPath] = useState<Crumb[]>([]);
 
-  const current = TABS.find((t) => t.id === tab) ?? (TABS[0] as Tab);
+  const current = view === 'search' ? SEARCH : (TABS.find((t) => t.id === tab) ?? (TABS[0] as Tab));
   const here = path[path.length - 1] ?? null;
   const playerName = speakers.value.find((s) => s.id === playerId)?.name ?? playerId;
 
@@ -121,8 +129,13 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
     const req: BrowseRequest = here
       ? { kind: 'item', uri: here.uri, offset }
       : current.request.kind === 'search'
-        ? { kind: 'search', text: query }
-        : { ...current.request, offset };
+        ? { kind: 'search', text: query, source: 'all', media: mediaFilter }
+        : current.request.kind === 'sources'
+          ? // The service list is short by construction and does not page.
+            { kind: 'sources' }
+          : current.request.kind === 'shelf'
+            ? current.request
+            : { ...current.request, offset };
 
     // An empty search box is not a request; it is the state before one.
     if (req.kind === 'search' && req.text.trim().length === 0) {
@@ -151,7 +164,7 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
     return () => {
       stale = true;
     };
-  }, [tab, offset, query, here?.uri]);
+  }, [tab, offset, query, mediaFilter, here?.uri]);
 
   const pick = (t: string): void => {
     setTab(t);
@@ -161,7 +174,14 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
 
   /** Open an item's contents — an album's tracks, an artist's albums. */
   const open = (item: MediaItem): void => {
-    setPath((p) => [...p, { uri: item.u, name: item.n }]);
+    setPath((p) => [
+      ...p,
+      {
+        uri: item.u,
+        name: item.n,
+        playable: item.o !== true,
+      },
+    ]);
     setOffset(0);
   };
 
@@ -174,7 +194,12 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
     <div class="sheet-layer">
       <div class="sheet-scrim" onPointerDown={onClose} />
 
-      <div class="sheet browse-sheet" role="dialog" aria-label="Browse music" aria-modal="true">
+      <div
+        class="sheet browse-sheet"
+        role="dialog"
+        aria-label={view === 'search' ? 'Search music' : 'Recently played music'}
+        aria-modal={!chosen}
+      >
         <div class="sheet-head">
           {here ? (
             <Pressable class="sheet-back p-sm" onPress={back} ariaLabel="Back">
@@ -182,10 +207,12 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
             </Pressable>
           ) : null}
           <div class="sheet-titles">
-            <h2 class="sheet-title truncate">{here ? here.name : 'Browse'}</h2>
+            <h2 class="sheet-title truncate">
+              {here ? here.name : view === 'search' ? 'Search' : 'Recently Played'}
+            </h2>
             <div class="sheet-subtitle truncate">Play on {playerName}</div>
           </div>
-          {here ? (
+          {here?.playable ? (
             <Pressable
               class="sheet-edit p-sm"
               onPress={() => setChosen({ u: here.uri, n: here.name, k: 'album' })}
@@ -202,7 +229,7 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
         {/* The tab strip disappears while drilled in: it would offer to jump
             somewhere else from a screen whose whole job is "you are inside
             this album", and Back is the only navigation that makes sense there. */}
-        {here ? null : (
+        {view === 'library' && !here ? (
           <div class="browse-tabs" role="tablist">
             {TABS.map((t) => (
               <Pressable
@@ -217,16 +244,37 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
               </Pressable>
             ))}
           </div>
-        )}
+        ) : null}
 
-        {tab === 'search' && !here ? <SearchBox value={query} onSearch={setQuery} /> : null}
+        {view === 'search' && !here ? (
+          <>
+            <SearchBox value={query} onSearch={setQuery} placeholder="Search Spotify and Sonos" />
+            <div class="browse-filters scroll" aria-label="Result type">
+              <FilterChip
+                label="All types"
+                active={!mediaFilter}
+                onPress={() => setMediaFilter(undefined)}
+              />
+              {(['track', 'album', 'artist', 'playlist', 'radio', 'podcast'] as MediaKind[]).map(
+                (kind) => (
+                  <FilterChip
+                    key={kind}
+                    label={KIND_LABEL[kind]}
+                    active={mediaFilter === kind}
+                    onPress={() => setMediaFilter(kind)}
+                  />
+                ),
+              )}
+            </div>
+          </>
+        ) : null}
 
         <div class="sheet-body scroll browse-body">
           <Results
             loading={loading}
             error={error}
             result={result}
-            searching={tab === 'search' && !here}
+            searching={view === 'search' && !here}
             query={query}
             onPick={setChosen}
             onOpen={open}
@@ -244,8 +292,8 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
               <Icon name="chevronLeft" size="1.1rem" weight={2.2} />
               <span>Back</span>
             </Pressable>
-            {/* `offset` counts ITEMS, as Music Assistant does. The page number
-                is a display detail derived from it, not the thing being sent. */}
+            {/* `offset` counts ITEMS, as Sonos does. The page number is a
+                display detail derived from it, not the thing being sent. */}
             <span class="pager-count">Page {Math.floor(offset / BROWSE_PAGE) + 1}</span>
             <Pressable
               class="pager-btn"
@@ -272,6 +320,7 @@ export function Browse({ playerId, onClose }: { playerId: string; onClose: () =>
           onCancel={() => setChosen(null)}
         />
       ) : null}
+
     </div>
   );
 }
@@ -309,8 +358,7 @@ function Results({
         <Icon name="alert" size="2rem" weight={1.6} />
         <p class="browse-state-title">{error}</p>
         <p class="browse-state-hint">
-          Browsing needs the Music Assistant integration in Home Assistant. Speakers and
-          playback work without it.
+          Transport and volume still work — this is only the library.
         </p>
       </div>
     );
@@ -322,7 +370,7 @@ function Results({
         <div class="browse-state">
           <Icon name="search" size="2rem" weight={1.6} />
           <p class="browse-state-title">
-            {searching && query.trim().length > 0 ? 'Nothing found' : 'Search your library'}
+            {searching && query.trim().length > 0 ? 'Nothing found' : 'Search saved Sonos music'}
           </p>
         </div>
       );
@@ -343,18 +391,32 @@ function Results({
 
   if (result?.kind === 'list') {
     if (result.items.length === 0) {
+      /*
+       * The backend says WHY. An empty list and a broken one look identical on
+       * a wall panel, and the commonest empty list here is entirely correct —
+       * a household with no NAS share has no albums — so the difference has to
+       * be stated rather than left to be guessed at.
+       */
+      /*
+       * A service that needs connecting gets a BUTTON, not a sentence. Telling
+       * somebody "connect SoundCloud first" on a screen with nothing to press
+       * is the whole complaint this answers.
+       */
       return (
         <div class="browse-state">
-          <Icon name="disc" size="2rem" weight={1.6} />
-          <p class="browse-state-title">Nothing here yet</p>
-          <p class="browse-state-hint">
-            Music Assistant has no items of this kind in its library.
+          <Icon name={searching ? 'search' : 'disc'} size="2rem" weight={1.6} />
+          <p class="browse-state-title">
+            {searching && query.trim().length > 0
+                ? 'Nothing found'
+                : 'Nothing here yet'}
           </p>
+          {result.note ? <p class="browse-state-hint">{result.note}</p> : null}
         </div>
       );
     }
     return (
       <>
+        {result.note ? <p class="browse-note">{result.note}</p> : null}
         {result.items.map((item) => (
           <ItemRow key={item.u} item={item} onPick={onPick} onOpen={onOpen} />
         ))}
@@ -384,7 +446,9 @@ function ItemRow({
   onPick: (item: MediaItem) => void;
   onOpen: (item: MediaItem) => void;
 }) {
-  const expandable = EXPANDABLE.has(item.k) && item.u !== '';
+  // `o` says the row is a place rather than a record — a source, a category.
+  const openOnly = item.o === true;
+  const expandable = openOnly || (item.b !== false && EXPANDABLE.has(item.k) && item.u !== '');
 
   return (
     <div class="browse-row">
@@ -403,14 +467,16 @@ function ItemRow({
         {expandable ? <Icon name="chevronRight" size="1.1rem" weight={2} /> : null}
       </Pressable>
 
-      <Pressable
-        class="browse-play p-sm"
-        onPress={() => onPick(item)}
-        ariaLabel={`Play ${item.n}`}
-        disabled={item.u === ''}
-      >
-        <Icon name="play" size="1.1rem" />
-      </Pressable>
+      {openOnly ? null : (
+        <Pressable
+          class="browse-play p-sm"
+          onPress={() => onPick(item)}
+          ariaLabel={`Play ${item.n}`}
+          disabled={item.u === ''}
+        >
+          <Icon name="play" size="1.1rem" />
+        </Pressable>
+      )}
     </div>
   );
 }
@@ -425,11 +491,19 @@ function ItemRow({
  * the last tab rather than the first, and why nothing else here needs it.
  *
  * The query is submitted rather than live: searching on every keystroke would
- * fire a request per letter through Home Assistant to Music Assistant to
- * whichever streaming provider is behind it, and the answers would arrive out
- * of order on a link this app cannot assume is fast.
+ * fire a request per letter at the speakers or at a streaming service, and
+ * the answers would arrive out of order on a link this app cannot assume is
+ * fast.
  */
-function SearchBox({ value, onSearch }: { value: string; onSearch: (text: string) => void }) {
+function SearchBox({
+  value,
+  onSearch,
+  placeholder = 'Artist, album or song',
+}: {
+  value: string;
+  onSearch: (text: string) => void;
+  placeholder?: string;
+}) {
   const [text, setText] = useState(value);
   const input = useRef<HTMLInputElement | null>(null);
 
@@ -453,8 +527,8 @@ function SearchBox({ value, onSearch }: { value: string; onSearch: (text: string
         class="browse-input"
         type="search"
         value={text}
-        placeholder="Artist, album or song"
-        aria-label="Search music"
+        placeholder={placeholder}
+        aria-label={placeholder}
         enterkeyhint="search"
         autocomplete="off"
         autocorrect="off"
@@ -466,6 +540,27 @@ function SearchBox({ value, onSearch }: { value: string; onSearch: (text: string
         Search
       </Pressable>
     </form>
+  );
+}
+
+function FilterChip({
+  label,
+  active,
+  onPress,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      class={active ? 'browse-filter is-active' : 'browse-filter'}
+      onPress={onPress}
+      ariaPressed={active}
+      ariaLabel={label}
+    >
+      {label}
+    </Pressable>
   );
 }
 
@@ -516,7 +611,7 @@ function PlayOptions({
         <div class="sheet-body">
           <Pressable
             class="play-option is-primary"
-            onPress={() => choose(() => act.playItem(playerId, item.u, { enqueue: 'replace' }))}
+            onPress={() => choose(() => act.playItem(playerId, item.u, { enqueue: 'replace', media: item }))}
             ariaLabel={`Play on ${playerName}`}
           >
             <Icon name="play" size="1.3rem" />
@@ -527,7 +622,7 @@ function PlayOptions({
             <>
               <Pressable
                 class="play-option"
-                onPress={() => choose(() => act.playItem(playerId, item.u, { enqueue: 'next' }))}
+                onPress={() => choose(() => act.playItem(playerId, item.u, { enqueue: 'next', media: item }))}
                 ariaLabel="Play next"
               >
                 <Icon name="next" size="1.3rem" />
@@ -536,20 +631,20 @@ function PlayOptions({
 
               <Pressable
                 class="play-option"
-                onPress={() => choose(() => act.playItem(playerId, item.u, { enqueue: 'add' }))}
+                onPress={() => choose(() => act.playItem(playerId, item.u, { enqueue: 'add', media: item }))}
                 ariaLabel="Add to queue"
               >
                 <Icon name="plus" size="1.3rem" weight={2.2} />
                 <span>Add to queue</span>
               </Pressable>
 
-              {/* Music Assistant keeps going with similar music once this
-                  finishes — the difference between hearing one artist and
-                  hearing an evening of them. */}
+              {/* Keeps going with similar music once this finishes — the
+                  difference between hearing one artist and hearing an evening
+                  of them. */}
               <Pressable
                 class="play-option"
                 onPress={() =>
-                  choose(() => act.playItem(playerId, item.u, { enqueue: 'replace', radio: true }))
+                  choose(() => act.playItem(playerId, item.u, { enqueue: 'replace', radio: true, media: item }))
                 }
                 ariaLabel="Start a radio station"
               >
@@ -559,10 +654,9 @@ function PlayOptions({
             </>
           ) : null}
 
-          {/* Favouriting writes to Music Assistant's library, so it shows up
-              in the Favorites tab and in the Music Assistant app alike. Only
-              offered when we actually know the current state — otherwise the
-              button would be a guess at which way it toggles. */}
+          {/* Only offered when the current state is actually known —
+              otherwise the button would be a guess at which way it toggles.
+              Sonos never sets it: favourites are managed in the Sonos app. */}
           {item.f !== undefined ? (
             <Pressable
               class="play-option"
@@ -576,6 +670,14 @@ function PlayOptions({
               <span>{item.f ? 'Remove from favorites' : 'Add to favorites'}</span>
             </Pressable>
           ) : null}
+          <Pressable
+            class="play-option"
+            onPress={() => choose(() => act.pinItem(playerId, item, item.p !== true))}
+            ariaLabel={item.p ? 'Unpin' : 'Pin for quick access'}
+          >
+            <Icon name="pin" size="1.3rem" weight={1.9} />
+            <span>{item.p ? 'Remove from Pinned' : 'Pin for quick access'}</span>
+          </Pressable>
         </div>
       </div>
     </div>

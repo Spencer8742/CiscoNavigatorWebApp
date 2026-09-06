@@ -69,7 +69,8 @@ ENV NODE_ENV=production \
     APP_VERSION=${APP_VERSION} \
     PORT=8099 \
     HOST=0.0.0.0 \
-    CONFIG_PATH=/config/dashboard.yaml
+    CONFIG_PATH=/config/dashboard.yaml \
+    PYTHON=/opt/pyatv/bin/python
 
 WORKDIR /app
 
@@ -77,7 +78,9 @@ WORKDIR /app
 # graceful shutdown path runs (panels then reconnect immediately on the new
 # container instead of waiting out a heartbeat timeout).
 # su-exec drops privileges in the entrypoint; wget backs the healthcheck.
-RUN apk add --no-cache tini su-exec wget
+RUN apk add --no-cache tini su-exec wget python3 py3-pip \
+ && python3 -m venv /opt/pyatv \
+ && /opt/pyatv/bin/pip install --no-cache-dir pyatv==0.18.0
 
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=build /app/server/dist ./dist

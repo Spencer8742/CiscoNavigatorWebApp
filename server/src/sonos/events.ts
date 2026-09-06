@@ -11,7 +11,7 @@ const log = logger('sonos-events');
  * UPnP event subscriptions — the reason nothing polls any more.
  *
  * This is the one place in the whole app where an upstream connects **to us**.
- * Home Assistant, Immich, Music Assistant and Companion are all outbound; a
+ * Home Assistant, Immich and Companion are all outbound; a
  * Sonos speaker instead takes a callback URL and POSTs `NOTIFY` to it whenever
  * something changes. That inverts the trust and the networking, and both cost
  * something:
@@ -136,6 +136,7 @@ export class SonosEvents {
   #closed = false;
   #silenceTimer: ReturnType<typeof setTimeout> | undefined;
   #reportedSilence = false;
+  #lastEventAt: number | null = null;
 
   constructor(deps: SonosEventsDeps) {
     this.#deps = deps;
@@ -150,7 +151,24 @@ export class SonosEvents {
     return this.#subs.size;
   }
 
-  /** True once any subscription has delivered an event. */
+  /** The address we asked the speakers to POST to, once it is known. */
+  get callbackUrl(): string | null {
+    return this.#callbackUrl;
+  }
+
+  /** When a speaker last told us anything. Null if one never has. */
+  get lastEventAt(): number | null {
+    return this.#lastEventAt;
+  }
+
+  /**
+   * Whether pushed events are actually reaching us.
+   *
+   * A speaker sends its current state the moment you subscribe, without being
+   * asked — so having heard nothing from ANY subscription is a reliable
+   * verdict on the callback path rather than a guess about how quiet the
+   * house is. That is what makes it safe to switch to polling on.
+   */
   get healthy(): boolean {
     for (const sub of this.#subs.values()) {
       if (sub.heard) return true;
@@ -297,9 +315,14 @@ export class SonosEvents {
       res.writeHead(200, { 'content-type': 'text/plain' });
       res.end('OK');
 
+      this.#lastEventAt = Date.now();
+
       if (!sub.heard) {
         sub.heard = true;
-        log.debug(`First ${sub.service} event from ${sub.uuid}`);
+        // Info rather than debug: the FIRST event is the one that proves the
+        // callback path works at all, and it is the single fact anyone
+        // debugging a stale panel needs from the log.
+        log.info(`Sonos events are arriving (${sub.service} from ${sub.uuid})`);
       }
 
       const properties = parsePropertySet(body);
@@ -354,7 +377,7 @@ export class SonosEvents {
 
       const sid = reply.headers['sid'];
       if (!sid) {
-        log.debug(`${host} accepted a ${service} subscription but sent no SID`);
+        log.warn(`${host} accepted a ${service} subscription but sent no SID`);
         this.#subs.delete(k);
         return;
       }
@@ -363,7 +386,11 @@ export class SonosEvents {
       this.#bySid.set(sid, k);
       this.#scheduleRenew(k, sub, secondsOf(reply.headers['timeout']));
     } catch (err) {
-      log.debug(`Could not subscribe to ${service} on ${host}:`, err);
+      // Warn, not debug: a subscription that never happened is the difference
+      // between a live panel and one that quietly stops keeping up, and the
+      // reason is worth having in the log without raising the level.
+      const detail = err instanceof Error ? err.message : String(err);
+      log.warn(`Could not subscribe to ${service} on ${host}: ${detail}`);
       this.#subs.delete(k);
     }
   }
@@ -428,10 +455,10 @@ export class SonosEvents {
 
       this.#reportedSilence = true;
       this.#deps.onSilence(
-        `Subscribed to ${this.#subs.size} Sonos event streams but nothing has arrived. ` +
-          `The speakers cannot reach ${this.#callbackUrl ?? 'this backend'} — on Docker this ` +
-          'usually means bridge networking. Use host networking, or set SONOS_CALLBACK_HOST ' +
-          'to an address the speakers can reach.',
+        `The speakers cannot reach ${this.#callbackUrl ?? 'this backend'}, so live updates ` +
+          'are off and the panel is polling instead. On Docker this means bridge ' +
+          'networking: use host networking, or set SONOS_CALLBACK_HOST to an address the ' +
+          'speakers can reach (your Docker host’s LAN IP) and publish the port.',
       );
     }, FIRST_EVENT_GRACE_MS);
     this.#silenceTimer.unref();

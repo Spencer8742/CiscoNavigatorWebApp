@@ -573,6 +573,14 @@ describe('panel preferences', () => {
 
     assert.equal(t.panel.config.ui.title, 'Photos Test', 'sanity: config arrived');
     assert.equal(t.panel.prefs.homeSide, 'media', 'the default is Now Playing');
+    assert.deepEqual(
+      t.panel.prefs.visiblePages,
+      ['home', 'rooms', 'controls', 'apple-tv', 'media', 'photos'],
+      'every app page is visible by default',
+    );
+    assert.equal(t.panel.prefs.homeTime, true);
+    assert.equal(t.panel.prefs.nowPlayingScreensaverTime, true);
+    assert.equal(t.panel.prefs.photoScreensaverTime, true);
 
     // A second panel must learn about a change made on the first, or two
     // panels on the same wall disagree about what they are showing.
@@ -583,6 +591,19 @@ describe('panel preferences', () => {
 
     await waitFor(() => observer.prefs.homeSide === 'photos', 'the other panel to be told');
     assert.equal(observer.prefs.homeSide, 'photos');
+
+    t.panel.send({ t: 'pref', id: 2, key: 'visiblePages', value: ['home', 'media'] });
+    await waitFor(
+      () => observer.prefs.visiblePages.length === 2,
+      'the visible page list to be broadcast',
+    );
+    assert.deepEqual(observer.prefs.visiblePages, ['home', 'media']);
+
+    t.panel.send({ t: 'pref', id: 3, key: 'nowPlayingScreensaverTime', value: false });
+    await waitFor(
+      () => observer.prefs.nowPlayingScreensaverTime === false,
+      'the clock choice to be broadcast',
+    );
     observer.close();
     await t.stop();
   });
@@ -591,6 +612,9 @@ describe('panel preferences', () => {
     rmSync(PREFS_FILE, { force: true });
     const first = await isolated();
     first.panel.send({ t: 'pref', id: 1, key: 'homeSide', value: 'photos' });
+    first.panel.send({ t: 'pref', id: 2, key: 'visiblePages', value: ['controls'] });
+    first.panel.send({ t: 'pref', id: 3, key: 'homeTime', value: false });
+    first.panel.send({ t: 'pref', id: 4, key: 'photoScreensaverTime', value: false });
     await sleep(300);
     await first.stop();
 
@@ -598,6 +622,9 @@ describe('panel preferences', () => {
     // put the panel back to a setting the user changed away from.
     const second = await isolated();
     assert.equal(second.panel.prefs.homeSide, 'photos', 'the choice outlived the process');
+    assert.deepEqual(second.panel.prefs.visiblePages, ['controls'], 'visible pages also persisted');
+    assert.equal(second.panel.prefs.homeTime, false, 'the Home clock choice persisted');
+    assert.equal(second.panel.prefs.photoScreensaverTime, false, 'the photo clock choice persisted');
     await second.stop();
   });
 
@@ -726,6 +753,35 @@ describe('panel preferences', () => {
     await t.stop();
   });
 
+  test('a panel keeps its own clock and page choices too', async () => {
+    /*
+     * The scoping is per preference, not per kind of preference: the booleans
+     * and the page list arrived separately from panel ids and have to be
+     * per panel as well. A clock hidden on one wall must stay visible on the
+     * other.
+     */
+    rmSync(PREFS_FILE, { force: true });
+    const t = await isolated();
+
+    const office = new PhotoPanel(t.panel.port, 'office');
+    const kitchen = new PhotoPanel(t.panel.port, 'kitchen');
+    await office.connect();
+    await kitchen.connect();
+
+    office.send({ t: 'pref', id: 1, key: 'homeTime', value: false });
+    office.send({ t: 'pref', id: 2, key: 'visiblePages', value: ['home', 'media'] });
+    await waitFor(() => office.prefs.homeTime === false, 'the office clock to go');
+    await waitFor(() => office.prefs.visiblePages.length === 2, 'the office pages to narrow');
+
+    await sleep(200);
+    assert.equal(kitchen.prefs.homeTime, true, 'the kitchen clock stayed');
+    assert.ok(kitchen.prefs.visiblePages.length > 2, 'and its pages were untouched');
+
+    office.close();
+    kitchen.close();
+    await t.stop();
+  });
+
   test('a panel id that is not one falls back to the shared settings', async () => {
     // The id ends up as a key in a JSON file on disk. Anything that could
     // confuse that is not an id, and a panel offering one is treated as a
@@ -807,10 +863,16 @@ media:
       ['homeSide', 'rm -rf'],
       ['homeSide', '../../etc/passwd'],
       ['homeSide', ''],
+      ['homeTime', 'false'],
+      ['photoScreensaverTime', 0],
+      ['nowPlayingScreensaverTime', null],
       ['__proto__', 'polluted'],
       ['haToken', 'stolen'],
     ]) {
       t.panel.send({ t: 'pref', id: 2, key, value });
+    }
+    for (const value of [['home', 'home'], ['home', 'settings'], ['home', 42], 'home']) {
+      t.panel.send({ t: 'pref', id: 3, key: 'visiblePages', value });
     }
     await sleep(400);
 
@@ -821,7 +883,14 @@ media:
     // happened when the player layout arrived.
     assert.deepEqual(
       Object.keys(t.panel.prefs).sort(),
-      ['homeSide', 'players'],
+      [
+        'homeSide',
+        'homeTime',
+        'nowPlayingScreensaverTime',
+        'photoScreensaverTime',
+        'players',
+        'visiblePages',
+      ],
       'no extra keys were introduced by a hostile payload',
     );
     await t.stop();

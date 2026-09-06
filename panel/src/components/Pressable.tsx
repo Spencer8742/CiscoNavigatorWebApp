@@ -150,6 +150,17 @@ export function Pressable({
     onPointerMove,
     onPointerUp,
     onPointerCancel: end,
+    onClick: (e: JSX.TargetedMouseEvent<HTMLElement>) => {
+      // Pointer activation already happened on release. Keyboard/AT clicks have no detail.
+      if (e.detail === 0 && !disabled) onPress?.();
+    },
+    onKeyDown: (e: JSX.TargetedKeyboardEvent<HTMLElement>) => {
+      if (as !== 'div' || disabled || e.repeat) return;
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        onPress?.();
+      }
+    },
     'aria-label': ariaLabel,
     'data-tone': tone,
     /*
