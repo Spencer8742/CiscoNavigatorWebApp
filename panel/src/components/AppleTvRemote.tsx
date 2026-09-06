@@ -6,6 +6,7 @@ import { appleTvCommand, launchAppleTvApp, pairAppleTv } from '~/net/socket.ts';
 import { markActivity } from '~/state/ui.ts';
 import { getToken } from '~/net/auth.ts';
 import { controlsConfig } from '~/config/index.ts';
+import { AppleTvServiceLogo } from '~/components/AppleTvServiceLogo.tsx';
 import type { AppleTvCommand, AppleTvState } from '@shared/protocol.ts';
 
 export function AppleTvRemote({ tv }: { tv: AppleTvState }) {
@@ -96,8 +97,7 @@ export function AppleTvRemote({ tv }: { tv: AppleTvState }) {
                   onPress={() => { launchAppleTvApp(tv.id, shortcut.bundleId); markActivity(); }}
                   ariaLabel={`Open ${shortcut.name}`}
                 >
-                  <span aria-hidden="true">{shortcut.name.slice(0, 1).toUpperCase()}</span>
-                  <strong>{shortcut.name}</strong>
+                  <AppleTvServiceLogo name={shortcut.name} bundleId={shortcut.bundleId} />
                 </Pressable>
               ))}
             </div>
