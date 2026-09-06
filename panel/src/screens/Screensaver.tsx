@@ -111,7 +111,9 @@ function PlayingScreensaver({ player }: { player: SpeakerInfo }) {
               ) : null}
             </div>
           ) : null}
-          <div class="saver-np-date">{formatDate(d, t)}</div>
+          {prefs.value.nowPlayingScreensaverDate ? (
+            <div class="saver-np-date">{formatDate(d, t)}</div>
+          ) : null}
 
           <div class="saver-np-track">
             <div class="saver-np-title">{media?.title ?? 'Now playing'}</div>
@@ -286,10 +288,12 @@ function SaverClock({
         </div>
       ) : null}
 
-      {cfg.overlays.date ? <div class="saver-date">{formatDate(d, t)}</div> : null}
+      {cfg.overlays.date && prefs.value.photoScreensaverDate ? (
+        <div class="saver-date">{formatDate(d, t)}</div>
+      ) : null}
 
       <div class="saver-row">
-        {cfg.overlays.weather && wx && !wx.unavailable ? (
+        {cfg.overlays.weather && prefs.value.photoScreensaverWeather && wx && !wx.unavailable ? (
           <span class="saver-chip">
             <Icon name={wx.icon} size="1.1rem" weight={1.6} />
             {wx.value}

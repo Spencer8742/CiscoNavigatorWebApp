@@ -8,6 +8,7 @@ import { connectionProblem, health, prefs, ready, showToast, socketState } from 
 import { diagnose } from '~/net/diagnose.ts';
 import type { KeyLightOp } from '@shared/config.ts';
 import {
+  BOOLEAN_PREFS,
   HEARTBEAT_MS,
   HEARTBEAT_TIMEOUT_MS,
   type BrowseRequest,
@@ -467,14 +468,18 @@ export function selectControlSource(item: string, value: string): boolean {
  * refused. Preferences are stored server-side because RoomOS clears web
  * storage nightly (docs/ROOMOS.md §3).
  */
+/**
+ * Every boolean preference, taken from the shared list rather than spelled
+ * out again — a new toggle added to the protocol is then a type error here
+ * until it is handled, instead of silently unsendable.
+ */
+type BooleanPref = (typeof BOOLEAN_PREFS)[number];
+
 export function setPref(key: 'homeSide', value: PanelPrefs['homeSide']): boolean;
 export function setPref(key: 'visiblePages', value: PanelPrefs['visiblePages']): boolean;
+export function setPref(key: BooleanPref, value: boolean): boolean;
 export function setPref(
-  key: 'homeTime' | 'photoScreensaverTime' | 'nowPlayingScreensaverTime',
-  value: boolean,
-): boolean;
-export function setPref(
-  key: 'homeSide' | 'visiblePages' | 'homeTime' | 'photoScreensaverTime' | 'nowPlayingScreensaverTime',
+  key: 'homeSide' | 'visiblePages' | BooleanPref,
   value: PanelPrefs['homeSide'] | PanelPrefs['visiblePages'] | boolean,
 ): boolean {
   prefs.value = { ...prefs.value, [key]: value };
