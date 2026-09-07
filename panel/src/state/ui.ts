@@ -17,6 +17,32 @@ import type { ConnectionProblem } from '~/net/diagnose.ts';
  * `route.value` updates exactly the subscribers that read it.
  */
 
+/**
+ * Is the viewport too narrow for a left rail?
+ *
+ * 34rem matches the breakpoint in base.css, and the two must agree: the CSS
+ * moves the nav to the bottom row of the shell grid, and this decides that
+ * the nav should be DRAWN as a bottom bar.
+ *
+ * It is a signal rather than a media query alone because the difference is
+ * not cosmetic. The rail and the bar size their items by opposite axes, and
+ * restyling one into the other from CSS produced seven items 375px wide laid
+ * out in a row inside a 390px screen -- every destination but the first off
+ * the right edge. The component already models both layouts as first-class;
+ * this picks the one that fits instead of describing a third.
+ */
+export const narrow = signal(false);
+
+if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+  const mq = window.matchMedia('(max-width: 34rem)');
+  narrow.value = mq.matches;
+  // addEventListener on a MediaQueryList is Chrome 39+, so it is safe on the
+  // RoomOS floor of 102 -- no addListener fallback needed.
+  mq.addEventListener('change', (e) => {
+    narrow.value = e.matches;
+  });
+}
+
 export type Route = PanelPage | 'settings';
 
 export const ROUTES: readonly Route[] = [...PANEL_PAGES, 'settings'];

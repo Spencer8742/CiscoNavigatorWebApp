@@ -1,7 +1,7 @@
 import { Icon } from '~/components/Icon.tsx';
 import { Pressable } from '~/components/Pressable.tsx';
 import { ui } from '~/config/index.ts';
-import { linkStatus, navigate, route, visibleRoutes, type Route } from '~/state/ui.ts';
+import { linkStatus, narrow, navigate, route, visibleRoutes, type Route } from '~/state/ui.ts';
 
 /**
  * Primary navigation.
@@ -41,7 +41,10 @@ const ICONS: Record<Route, string> = {
 };
 
 export function Nav() {
-  const pos = ui.value.navPosition;
+  // A narrow screen overrides the configured position. `navPosition` is
+  // describing a preference for a wall panel; on a phone a left rail costs a
+  // fifth of the width and cannot fit seven destinations across.
+  const pos = narrow.value ? 'bottom' : ui.value.navPosition;
   const active = route.value;
   const status = linkStatus.value;
 

@@ -20,6 +20,7 @@ import { castConfig, ui } from '~/config/index.ts';
 import {
   connectionProblem,
   kiosk,
+  narrow,
   navHidden,
   prefs,
   ready,
@@ -108,7 +109,7 @@ export function App() {
 
       <div
         class="shell"
-        data-nav={ui.value.navPosition}
+        data-nav={narrow.value ? 'bottom' : ui.value.navPosition}
         /* Kiosk collapses the nav track entirely rather than hiding the bar
            inside it — a hidden bar would leave its row in the grid and a
            strip of dead space along the bottom of the screen. */
