@@ -1790,7 +1790,13 @@
   grid-template-columns: minmax(0, 1fr) minmax(26rem, 36rem);
   align-items: center;
   gap: clamp(var(--s-5), 4vw, var(--s-8));
-  min-height: clamp(30rem, 62vh, 42rem);
+  /*
+   * A floor, not a reservation. It used to be 62vh, which on a 10" panel
+   * pushed the transport row below the fold once the media side stacked --
+   * play/pause reachable only by scrolling past the remote, on the screen
+   * whose whole point is not having to.
+   */
+  min-height: clamp(16rem, 30vh, 24rem);
 }
 
 /*
@@ -1799,6 +1805,15 @@
  */
 .apple-tv-content[data-remote='closed'] {
   grid-template-columns: minmax(0, 1fr) auto;
+}
+
+/*
+ * Open, the remote gets roughly seven-tenths. Percentages rather than rem so
+ * the split holds its shape across a 10" panel and a desktop instead of the
+ * remote hitting a fixed ceiling and leaving the rest to whitespace.
+ */
+.apple-tv-content[data-remote='open'] {
+  grid-template-columns: minmax(0, 30%) minmax(0, 1fr);
 }
 
 /*
@@ -1841,11 +1856,31 @@
    */
   grid-template-columns: minmax(20rem, min(40rem, 58vh)) minmax(0, 1fr);
 }
+/*
+ * Open, the media side stacks: artwork, then the title, then the transport
+ * row underneath it. Side by side it wanted a text column of its own, and
+ * that column was the width the remote needed -- the artwork got smaller and
+ * the touchpad never got any bigger, which is not the trade that was asked
+ * for. One narrow column gives the whole remainder to the remote.
+ */
 .apple-tv-content[data-remote='open'] .apple-tv-media {
-  grid-template-columns: minmax(0, 15rem) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  align-content: center;
+  gap: var(--s-4);
 }
 .apple-tv-content[data-remote='closed'] .apple-tv-art {
   max-width: min(100%, 58vh);
+}
+
+/*
+ * Open, the artwork is capped by HEIGHT as well, because it is now the top of
+ * a stack rather than a column of its own: at the full column width the
+ * square plus the title plus the transport row came to 716px and pushed
+ * play/pause off the bottom of a 10" panel, where reaching it would mean
+ * scrolling past the remote.
+ */
+.apple-tv-content[data-remote='open'] .apple-tv-art {
+  max-width: min(100%, 30vh);
 }
 .apple-tv-art {
   display: grid;
@@ -1870,7 +1905,12 @@
 .apple-tv-remote {
   box-sizing: border-box;
   width: 100%;
-  max-width: 30rem;
+  /*
+   * No cap. It used to be 30rem, which is why widening the remote's COLUMN
+   * changed nothing you could see: the column grew, the remote stayed 30rem
+   * and the space went to the margins. The grid column is the constraint now.
+   */
+  max-width: none;
   margin: 0 auto;
   padding-left: clamp(var(--s-4), 3vw, var(--s-7));
   border-left: 1px solid var(--border-subtle);
@@ -1881,7 +1921,7 @@
   width: 100%;
   /* Taller now that the remote is the wide half while it is open: a touchpad
      you swipe on wants area, and this is the control being used. */
-  height: clamp(14rem, 34vh, 22rem);
+  height: clamp(12rem, 32vh, 26rem);
   overflow: hidden;
   border-radius: var(--r-xl);
   border: 1px solid var(--border);
@@ -2042,26 +2082,21 @@
  */
 @media (max-width: 1100px) {
   .apple-tv-content[data-remote='open'] {
-    grid-template-columns: minmax(0, 1fr) minmax(16rem, 22rem);
     /* Less reserved height once the columns are this narrow: at the old
        figure the card was mostly empty above and below the content. */
     min-height: clamp(20rem, 40vh, 28rem);
   }
   .apple-tv-remote { padding-left: var(--s-4); }
-  .apple-tv-content[data-remote='open'] .apple-tv-media {
-    grid-template-columns: minmax(0, 11rem) minmax(0, 1fr);
-  }
   .apple-tv-keys { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 820px) {
-  .apple-tv-content[data-remote='open'] {
-    grid-template-columns: minmax(0, 1fr) 15rem;
+  /* The CLOSED media block stacks too by this width: side by side it leaves
+     the title a strip too narrow to read. (Open already stacks, at every
+     size.) */
+  .apple-tv-content[data-remote='closed'] .apple-tv-media {
+    grid-template-columns: minmax(0, 1fr);
   }
-  /* Art above the text rather than beside it: below this the two-column media
-     block leaves the title a strip too narrow to read. */
-  .apple-tv-media { grid-template-columns: minmax(0, 1fr); }
-  .apple-tv-content[data-remote='open'] .apple-tv-art { width: min(9rem, 22vw); }
 }
 
 /*
@@ -2090,6 +2125,35 @@
   }
   .apple-tv-content[data-remote='open'] .apple-tv-art { width: 100%; }
   .apple-tv-content[data-remote='open'] .apple-tv-now { display: none; }
+}
+
+/*
+ * Short screens. 480px of height has to hold a header, the device row and
+ * both halves of this screen, so the artwork gives up the most: it is the
+ * half nobody is touching, and the transport row beneath it has to stay
+ * reachable without scrolling past the remote to get to it.
+ */
+@media (max-height: 34rem) {
+  .apple-tv-content {
+    min-height: 0;
+  }
+  .apple-tv-content[data-remote='open'] .apple-tv-art {
+    max-width: min(100%, 22vh);
+  }
+  .apple-tv-touchpad {
+    height: clamp(8rem, 26vh, 14rem);
+  }
+  .apple-tv-keys > button {
+    min-height: var(--touch-min);
+  }
+  /* The card's own chrome is worth reclaiming at this height: padding and the
+     gap under the device row are ~40px that the content can use instead. */
+  .apple-tv-card {
+    padding: var(--s-4);
+  }
+  .apple-tv-head {
+    margin-bottom: var(--s-3);
+  }
 }
 
 /* Closed on any screen: the artwork gets everything back. */
