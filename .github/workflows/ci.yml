@@ -47,26 +47,54 @@ jobs:
         env:
           APP_VERSION: ci-${{ github.sha }}
 
-      # The panel ships to a device with a small, unpublished memory budget
-      # and a CPU deprioritised behind a video pipeline. Bundle size is a
-      # correctness concern here, not a nicety, so a regression fails the
-      # build rather than being noticed six months later.
+      # A self-imposed budget, NOT a device limit -- worth being exact about,
+      # because the previous comment here claimed otherwise and the number
+      # then got treated as a hardware ceiling it never was.
+      #
+      # What Cisco actually documents (quoted in docs/ROOMOS.md §2) is a
+      # RUNTIME MEMORY constraint: the web engine is "restricted, both in
+      # memory and CPU usage", and a page that exceeds it is TERMINATED. They
+      # publish no figure, and nothing they publish constrains bundle size.
+      # The two are different axes and, here, three orders of magnitude apart
+      # -- this bundle is ~50 KB gzipped against a device with 4 GB of RAM.
+      #
+      # So this gate does not protect against the documented failure mode.
+      # What it does is make weight a deliberate decision: pulling in a date
+      # library or a chart package should be a conversation, not a diff
+      # nobody notices. The budget is set well above current usage for that
+      # reason -- it should catch a step change, not tax ordinary work.
+      #
+      # The constraint that DOES map to the real failure mode is the heap,
+      # and the only place it can honestly be measured is the device. The
+      # panel reports it in Settings -> Device for exactly that reason.
       - name: Enforce bundle budget
         run: |
           set -euo pipefail
 
-          JS_BUDGET=51200   # 50 KB gzipped
-          CSS_BUDGET=12288  # 12 KB gzipped
+          JS_BUDGET=122880  # 120 KB gzipped
+          CSS_BUDGET=24576  # 24 KB gzipped
+          WARN_PCT=80       # report early, so growth is visible before it fails
 
           js=$(cat panel/dist/a/*.js | gzip -9 | wc -c)
           css=$(cat panel/dist/a/*.css | gzip -9 | wc -c)
 
-          printf 'JS  %6d bytes gzipped (budget %d)\n' "$js" "$JS_BUDGET"
-          printf 'CSS %6d bytes gzipped (budget %d)\n' "$css" "$CSS_BUDGET"
+          report() {
+            name=$1; used=$2; budget=$3
+            pct=$(( used * 100 / budget ))
+            printf '%-4s %6d bytes gzipped  %3d%% of %d\n' "$name" "$used" "$pct" "$budget"
+            if [ "$used" -gt "$budget" ]; then
+              echo "::error::$name bundle over budget ($used > $budget)"
+              return 1
+            fi
+            if [ "$pct" -ge "$WARN_PCT" ]; then
+              echo "::warning::$name bundle at ${pct}% of budget -- worth a look before it fails"
+            fi
+            return 0
+          }
 
           fail=0
-          [ "$js"  -le "$JS_BUDGET"  ] || { echo "::error::JS bundle over budget";  fail=1; }
-          [ "$css" -le "$CSS_BUDGET" ] || { echo "::error::CSS bundle over budget"; fail=1; }
+          report JS  "$js"  "$JS_BUDGET"  || fail=1
+          report CSS "$css" "$CSS_BUDGET" || fail=1
           exit "$fail"
 
   docker:

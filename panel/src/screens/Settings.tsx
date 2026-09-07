@@ -8,7 +8,7 @@ import { BOOLEAN_PREFS, PANEL_PAGES, type PanelPage, type PanelPrefs } from '@sh
 import { entityCount } from '~/state/entities.ts';
 import { speakers } from '~/state/selectors.ts';
 import { formatRelative } from '~/lib/format.ts';
-import { deviceInfo } from '~/lib/device.ts';
+import { deviceInfo, heapInfo } from '~/lib/device.ts';
 
 /**
  * Settings and on-device diagnostics.
@@ -38,6 +38,18 @@ export function Settings() {
       });
     window.addEventListener('resize', onResize, { passive: true });
     return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  /*
+   * Re-read rather than sampled once. A panel runs for weeks and the failure
+   * this guards against is a slow climb, which a single reading on mount
+   * cannot show -- standing in front of the panel watching the number hold
+   * steady is the actual test.
+   */
+  const [heap, setHeap] = useState(() => heapInfo());
+  useEffect(() => {
+    const id = setInterval(() => setHeap(heapInfo()), 2000);
+    return () => clearInterval(id);
   }, []);
 
   const cfg = config.value;
@@ -262,6 +274,14 @@ export function Settings() {
           <Row k="Model" v={dev.model ?? '—'} />
           <Row k="Chromium" v={dev.chromeVersion ?? '—'} tone={chromeTone(dev.chromeVersion)} />
           <Row k="JSXAPI available" v={dev.hasXapi ? 'yes' : 'no'} />
+          {/* The figure Cisco does not publish, read off the engine itself.
+              The limit varies by device and with system load, so it is worth
+              reading here rather than assuming anything from a datasheet. */}
+          <Row
+            k="JS heap"
+            v={heap ? `${heap.usedMb.toFixed(1)} MB of ${Math.round(heap.limitMb)} MB` : '—'}
+            tone={heap && heap.usedMb / heap.limitMb > 0.8 ? 'warn' : undefined}
+          />
           <Row k="Touch points" v={String(navigator.maxTouchPoints || 0)} />
           <Row k="Language" v={navigator.language} />
         </div>

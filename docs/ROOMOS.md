@@ -87,7 +87,30 @@ web app consumes excessive memory, leading to crashes in the integrated web
 engine."*
 
 Cisco's exact memory/CPU budget is **not published** and varies by device and
-current system load. **[unverified]**
+current system load. **[unverified]** Their own wording, from the same guide:
+
+> The exact amount of cores and memory available depends on the device type -
+> typically newer devices offer more - as well as the current load on the
+> system, such as a call with many participants, machine learning features
+> etc.
+
+and their advice, which is the honest conclusion:
+
+> Test as early as possible on the hardware you are developing for - the
+> performance is usually never as good as a developer expects.
+
+**So we read it off the device instead.** Settings → Device shows the engine's
+own `usedJSHeapSize` and `jsHeapSizeLimit`. That limit IS the unpublished
+figure, for that device, under that load. It is worth checking on a panel that
+has been up for days rather than one just reloaded.
+
+Secondary sources (Cisco Community, **[unverified]**) report Room Navigators
+shipping with 2 GB of RAM early on and 4 GB later, and one developer seeing
+crashes with an app around 150-200 MB. Useful for scale, not to be relied on.
+Note what that scale means: a ~50 KB gzipped bundle is nowhere near it. **The
+risk here is runtime memory -- decoded images and unbounded caches -- not code
+size**, and the two should not be confused when deciding what this panel can
+afford.
 
 **Consequences, all of which are load-bearing in this design:**
 

@@ -673,15 +673,40 @@ heap and DOM node count against hour one. If either grew, phase 10 is not done.
 
 ## Performance budget
 
-Enforced, not aspirational. Phase 10 fails the build if these regress.
+Two different things live in this table and they were conflated for a while,
+so they are now labelled.
 
-| Metric | Budget |
-|---|---|
-| Shell JS, gzipped | **< 50 KB** |
-| CSS, gzipped | < 12 KB |
-| Cold load → interactive (LAN) | **< 1.5 s** |
-| Touch → visual feedback | **< 100 ms** (one frame is the target) |
-| Screen transition | < 250 ms |
-| Steady-state JS heap | **< 60 MB**, flat over 24 h |
-| Requests after first paint | 0 until the user acts |
-| Idle CPU (dashboard, clock ticking) | ~0% between seconds |
+**The device constraint** is real and unquantified. Cisco documents that the
+web engine is "restricted, both in memory and CPU usage" and that a page
+exceeding its allowance is *terminated*, not slowed -- but publishes no
+figure, and says it varies by device and with current load
+(`docs/ROOMOS.md` §2). It is about RUNTIME MEMORY. Nothing Cisco publishes
+constrains bundle size. The panel reports the engine's own
+`jsHeapSizeLimit` in Settings -> Device, which is the only honest way to
+learn the number for a given device.
+
+**The bundle budget** is ours, not Cisco's. On a 4 GB Navigator a ~50 KB
+gzipped bundle is three orders of magnitude below the documented failure
+mode, so this gate does not protect against it. What it does is keep weight
+a deliberate choice: adding a chart package or a date library should be a
+decision somebody made, not a diff nobody noticed. It is set well above
+current usage on purpose -- it should catch a step change, not tax ordinary
+work -- and CI warns at 80% so growth is visible before it fails.
+
+| Metric | Budget | Kind |
+|---|---|---|
+| Shell JS, gzipped | **< 120 KB** | ours |
+| CSS, gzipped | < 24 KB | ours |
+| Cold load → interactive (LAN) | **< 1.5 s** | ours |
+| Touch → visual feedback | **< 100 ms** (one frame is the target) | ours |
+| Screen transition | < 250 ms | ours |
+| Steady-state JS heap | **< 60 MB**, flat over 24 h | maps to the device constraint |
+| Requests after first paint | 0 until the user acts | ours |
+| Idle CPU (dashboard, clock ticking) | ~0% between seconds | maps to the device constraint |
+
+Only the first two are enforced in CI, because only they can be measured
+without a browser and a device. The heap row is the one that matters most
+and the one nothing checks automatically -- read it in Settings on a panel
+that has been up for a while, which is the only place the answer is real.
+`flat` is the property to watch, not the absolute figure: a number that
+climbs over days ends in a terminated web view, and a steady one does not.
