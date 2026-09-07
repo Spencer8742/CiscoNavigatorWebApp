@@ -96,6 +96,28 @@ export function Settings() {
         </p>
 
         <div class="section-head">
+          <h2 class="section-title">Screensaver</h2>
+        </div>
+        <div class="rows">
+          <div class="rows-row">
+            <span class="rows-key">Show</span>
+            <div class="segmented" role="group" aria-label="Screensaver contents">
+              <SaverItem value="photos" label="Photos" />
+              <SaverItem value="music" label="Music" />
+              <SaverItem value="both" label="Both" />
+            </div>
+          </div>
+        </div>
+        <p class="settings-note">
+          What the panel shows once it goes idle. <strong>Photos</strong> is the
+          slideshow and nothing else — the current track never appears.{' '}
+          <strong>Music</strong> gives the whole screen to the album art while
+          something is playing, and falls back to the slideshow when nothing is.{' '}
+          <strong>Both</strong> keeps the slideshow up and puts the track in a
+          corner while it plays.
+        </p>
+
+        <div class="section-head">
           <h2 class="section-title">Clock visibility</h2>
         </div>
         <div class="settings-page-grid" role="group" aria-label="Clock visibility">
@@ -384,6 +406,33 @@ function SegItem({ value, label }: { value: PanelPrefs['homeSide']; label: strin
       onPress={() => setPref('homeSide', value)}
       ariaPressed={active}
       ariaLabel={label}
+    >
+      {label}
+    </Pressable>
+  );
+}
+
+/**
+ * One option in the screensaver picker.
+ *
+ * Separate from `SegItem` rather than generic over the key: two components of
+ * six lines each read better than one with a type parameter, and the two
+ * pickers are free to diverge.
+ */
+function SaverItem({
+  value,
+  label,
+}: {
+  value: PanelPrefs['screensaverMode'];
+  label: string;
+}) {
+  const active = prefs.value.screensaverMode === value;
+  return (
+    <Pressable
+      class={active ? 'seg-item is-active' : 'seg-item'}
+      onPress={() => setPref('screensaverMode', value)}
+      ariaPressed={active}
+      ariaLabel={`Screensaver: ${label}`}
     >
       {label}
     </Pressable>
