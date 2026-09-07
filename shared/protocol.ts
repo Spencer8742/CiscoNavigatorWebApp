@@ -736,6 +736,20 @@ export type ServerMessage =
   | { t: 'photos'; photos: PhotoRef[] }
   /** Answer to a `browse` request. `ref` matches the request's id. */
   | { t: 'browse'; ref: number; result: BrowseResult }
+  /**
+   * Reload the page.
+   *
+   * Sent to every panel when one of them asks. A new container image means
+   * the panels are running the JavaScript of the PREVIOUS build until they
+   * reload, and a panel in Persistent Web App mode has no refresh gesture and
+   * no browser chrome — without this the only way to pick up a new version is
+   * the device's admin interface, one device at a time.
+   *
+   * A plain `location.reload()` is enough to land on new code: the shell is
+   * served `no-cache` so it revalidates, and it names hashed asset files that
+   * change with every build (server/src/http/static.ts).
+   */
+  | { t: 'reload' }
   /** A command the panel sent failed. `ref` matches the command's id. */
   | { t: 'error'; ref?: number; code: string; message: string }
   /** Heartbeat response. */
@@ -849,7 +863,19 @@ export type ClientMessage =
    * once cannot interleave into a state neither of them asked for — the last
    * one simply wins, which is the right outcome for a display preference.
    */
-  | { t: 'layout'; id: number; layout: PlayerLayout };
+  | { t: 'layout'; id: number; layout: PlayerLayout }
+  /**
+   * Ask the backend to tell every panel to reload.
+   *
+   * Deliberately carries no target: reloading one panel needs no server at
+   * all, and the case this exists for — a new version was deployed — is true
+   * of every panel at once.
+   *
+   * Any authenticated panel may send it. That is the same trust level the
+   * shared preferences already have (one panel can change what all of them
+   * display), and the worst outcome is a second of blank screens.
+   */
+  | { t: 'reload'; id: number };
 
 /* ── Panel preferences ─────────────────────────────────────────────────── */
 

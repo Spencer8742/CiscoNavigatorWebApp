@@ -283,6 +283,13 @@ function handle(msg: ServerMessage): void {
       pongTimer = undefined;
       break;
 
+    case 'reload':
+      // No confirmation and no delay. This only arrives because somebody
+      // stood at a panel and asked for it, and a dashboard has no unsaved
+      // work to lose.
+      window.location.reload();
+      break;
+
     case 'error': {
       // A failed browse is shown in the browser itself, where the user is
       // looking and where a Retry button can live. Toasting it as well would
@@ -468,6 +475,18 @@ export function selectControlSource(item: string, value: string): boolean {
  * refused. Preferences are stored server-side because RoomOS clears web
  * storage nightly (docs/ROOMOS.md §3).
  */
+/**
+ * Ask every panel, including this one, to reload.
+ *
+ * The reload arrives back over the socket rather than being done locally
+ * first: one code path, and the panel that asked reloads on the same message
+ * as the rest, so if the broadcast did not go out this panel does not reload
+ * either and the failure is visible instead of silent.
+ */
+export function reloadAllPanels(): boolean {
+  return send({ t: 'reload', id: nextId() });
+}
+
 /**
  * Every boolean preference, taken from the shared list rather than spelled
  * out again — a new toggle added to the protocol is then a type error here
