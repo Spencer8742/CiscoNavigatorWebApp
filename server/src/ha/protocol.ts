@@ -75,6 +75,11 @@ export interface HaEntityEvent {
  * `HaClient.#handle` — since Home Assistant sends plenty of types we never
  * subscribed to and ignoring them is correct, not an error.
  */
+export interface HaPipelineEvent {
+  type: string;
+  data?: Record<string, unknown>;
+}
+
 export type HaIncoming =
   | { type: 'auth_required'; ha_version?: string }
   | { type: 'auth_ok'; ha_version?: string }
@@ -86,7 +91,7 @@ export type HaIncoming =
       result?: unknown;
       error?: { code: string; message: string };
     }
-  | { id: number; type: 'event'; event: HaEntityEvent }
+  | { id: number; type: 'event'; event: HaEntityEvent | HaPipelineEvent }
   | { id: number; type: 'pong' };
 
 /** HA epoch-seconds float → epoch milliseconds integer. */

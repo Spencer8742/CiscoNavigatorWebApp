@@ -169,3 +169,42 @@ test('Assist rejects empty text before it reaches Home Assistant', async () => {
     panel.close();
   }
 });
+
+test('Assist audio is streamed through Home Assistant pipeline STT', async () => {
+  const pcm = Buffer.alloc(16_000 * 2, 0);
+  const res = await fetch(
+    `http://127.0.0.1:${PANEL_PORT}/api/assist/audio?conversationId=existing-voice`,
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${TOKEN}`,
+        'content-type': 'application/octet-stream',
+      },
+      body: pcm,
+    },
+  );
+
+  assert.equal(res.status, 200);
+  const body = await res.json();
+
+  assert.equal(ha.assistPipelineRuns.length, 1);
+  assert.equal(ha.assistPipelineRuns[0].type, 'assist_pipeline/run');
+  assert.equal(ha.assistPipelineRuns[0].start_stage, 'stt');
+  assert.equal(ha.assistPipelineRuns[0].end_stage, 'intent');
+  assert.equal(ha.assistPipelineRuns[0].input.sample_rate, 16_000);
+  assert.equal(ha.assistPipelineRuns[0].conversation_id, 'existing-voice');
+  assert.ok(Buffer.concat(ha.assistAudioChunks).equals(pcm));
+  assert.equal(body.text, ha.assistTranscript);
+  assert.equal(body.speech, 'The desk lights are on');
+  assert.equal(body.conversationId, 'mock-voice-conversation');
+  assert.equal(body.success, true);
+});
+
+test('Assist audio upload requires the panel token', async () => {
+  const res = await fetch(`http://127.0.0.1:${PANEL_PORT}/api/assist/audio`, {
+    method: 'POST',
+    body: Buffer.alloc(16_000 * 2, 0),
+  });
+
+  assert.equal(res.status, 401);
+});
