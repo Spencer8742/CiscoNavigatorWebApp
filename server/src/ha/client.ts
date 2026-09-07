@@ -2,7 +2,7 @@ import { WebSocket } from 'ws';
 import { Backoff } from '@shared/backoff.ts';
 import { logger } from '~/lib/log.ts';
 import type { Env } from '~/env.ts';
-import type { HaEntityEvent, HaIncoming } from '~/ha/protocol.ts';
+import type { HaEntityEvent, HaIncoming, HaPipelineEvent } from '~/ha/protocol.ts';
 import type { AssistResult } from '@shared/protocol.ts';
 
 const log = logger('ha');
@@ -46,6 +46,19 @@ interface Pending {
   timer: ReturnType<typeof setTimeout>;
 }
 
+interface PendingPipeline {
+  resolve(result: AssistResult): void;
+  reject(error: Error): void;
+  timer: ReturnType<typeof setTimeout>;
+  pcm: Buffer;
+  sampleRate: number;
+  binaryHandlerId: number | null;
+  sentAudio: boolean;
+  sttText: string | null;
+  intentOutput: unknown;
+  conversationId: string | null;
+}
+
 /** A service call that hasn't come back in this long is not coming back. */
 const CALL_TIMEOUT_MS = 10_000;
 /**
@@ -57,6 +70,7 @@ const CALL_TIMEOUT_MS = 10_000;
  * error on a screen that was about to fill with albums.
  */
 const RESPONSE_TIMEOUT_MS = 25_000;
+const PIPELINE_TIMEOUT_MS = 45_000;
 /** Application-level ping interval — catches half-open sockets. */
 const PING_INTERVAL_MS = 30_000;
 const PING_TIMEOUT_MS = 10_000;
@@ -80,6 +94,7 @@ export class HaClient {
   #seq = 0;
   #subscriptionId = 0;
   #pending = new Map<number, Pending>();
+  #pipelines = new Map<number, PendingPipeline>();
 
   #reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   #pingTimer: ReturnType<typeof setInterval> | undefined;
@@ -239,8 +254,10 @@ export class HaClient {
       }
 
       case 'event':
-        if ('event' in msg && msg.id === this.#subscriptionId) {
-          this.#events.onEntityEvent(msg.event);
+        if (this.#pipelines.has(msg.id)) {
+          this.#handlePipelineEvent(msg.id, msg.event);
+        } else if ('event' in msg && msg.id === this.#subscriptionId) {
+          this.#events.onEntityEvent(msg.event as HaEntityEvent);
         }
         break;
 
@@ -251,6 +268,17 @@ export class HaClient {
 
       case 'result': {
         if (!('id' in msg)) break;
+        const pipeline = this.#pipelines.get(msg.id);
+        if (pipeline) {
+          if (!msg.success) {
+            const error = msg.error;
+            this.#finishPipeline(
+              msg.id,
+              new Error(error ? `${error.code}: ${error.message}` : 'Assist pipeline failed'),
+            );
+          }
+          break;
+        }
         const pending = this.#pending.get(msg.id);
         if (!pending) break;
         this.#pending.delete(msg.id);
@@ -335,6 +363,17 @@ export class HaClient {
       return true;
     } catch (err) {
       log.warn('Send failed:', err);
+      return false;
+    }
+  }
+
+  #sendBinary(data: Buffer): boolean {
+    if (!this.#ws || this.#ws.readyState !== WebSocket.OPEN) return false;
+    try {
+      this.#ws.send(data);
+      return true;
+    } catch (err) {
+      log.warn('Binary send failed:', err);
       return false;
     }
   }
@@ -450,6 +489,138 @@ export class HaClient {
     return normalizeAssistResult(text, result);
   }
 
+  processAssistAudio(input: {
+    pcm: Buffer;
+    sampleRate: number;
+    conversationId?: string;
+  }): Promise<AssistResult> {
+    return new Promise((resolve, reject) => {
+      if (this.#state !== 'connected') {
+        reject(new Error('Home Assistant is not connected'));
+        return;
+      }
+
+      const id = this.#nextId();
+      const timer = setTimeout(() => {
+        this.#pipelines.delete(id);
+        reject(new Error('Assist did not respond'));
+      }, PIPELINE_TIMEOUT_MS);
+
+      this.#pipelines.set(id, {
+        resolve,
+        reject,
+        timer,
+        pcm: input.pcm,
+        sampleRate: input.sampleRate,
+        binaryHandlerId: null,
+        sentAudio: false,
+        sttText: null,
+        intentOutput: null,
+        conversationId: input.conversationId ?? null,
+      });
+
+      const sent = this.#send({
+        id,
+        type: 'assist_pipeline/run',
+        start_stage: 'stt',
+        end_stage: 'intent',
+        input: { sample_rate: input.sampleRate },
+        ...(input.conversationId ? { conversation_id: input.conversationId } : {}),
+        timeout: PIPELINE_TIMEOUT_MS / 1000,
+      });
+
+      if (!sent) {
+        clearTimeout(timer);
+        this.#pipelines.delete(id);
+        reject(new Error('Home Assistant is not connected'));
+      }
+    });
+  }
+
+  #handlePipelineEvent(id: number, raw: HaEntityEvent | HaPipelineEvent): void {
+    const pending = this.#pipelines.get(id);
+    if (!pending) return;
+    const event = objectOf(raw);
+    const type = stringOf(event?.['type']);
+    const data = objectOf(event?.['data']);
+
+    if (type === 'run-start') {
+      const runner = objectOf(data?.['runner_data']);
+      const handler = numberOf(runner?.['stt_binary_handler_id']);
+      if (handler !== null && handler >= 0 && handler <= 255) {
+        pending.binaryHandlerId = handler;
+      }
+      return;
+    }
+
+    if (type === 'stt-start') {
+      this.#sendPipelineAudio(id, pending);
+      return;
+    }
+
+    if (type === 'stt-end') {
+      const output = objectOf(data?.['stt_output']);
+      pending.sttText = stringOf(output?.['text']);
+      return;
+    }
+
+    if (type === 'intent-end') {
+      pending.intentOutput = data?.['intent_output'] ?? null;
+      const output = objectOf(pending.intentOutput);
+      pending.conversationId =
+        stringOf(output?.['conversation_id']) ??
+        pending.conversationId;
+      return;
+    }
+
+    if (type === 'error') {
+      this.#finishPipeline(id, new Error(stringOf(data?.['message']) ?? 'Assist failed'));
+      return;
+    }
+
+    if (type === 'run-end') {
+      const spoken = pending.sttText ?? 'Voice command';
+      const result = normalizeAssistResult(spoken, pending.intentOutput ?? {});
+      this.#finishPipeline(id, null, {
+        ...result,
+        text: spoken,
+        conversationId: result.conversationId ?? pending.conversationId,
+      });
+    }
+  }
+
+  #sendPipelineAudio(id: number, pending: PendingPipeline): void {
+    if (pending.sentAudio) return;
+    const handler = pending.binaryHandlerId;
+    if (handler === null) {
+      this.#finishPipeline(id, new Error('Home Assistant did not provide an audio handler'));
+      return;
+    }
+
+    pending.sentAudio = true;
+    const chunkSize = 8192;
+    for (let offset = 0; offset < pending.pcm.length; offset += chunkSize) {
+      const chunk = pending.pcm.subarray(offset, offset + chunkSize);
+      if (!this.#sendBinary(Buffer.concat([Buffer.from([handler]), chunk]))) {
+        this.#finishPipeline(id, new Error('Home Assistant is not connected'));
+        return;
+      }
+    }
+    this.#sendBinary(Buffer.from([handler]));
+  }
+
+  #finishPipeline(id: number, error: Error | null, result?: AssistResult): void {
+    const pending = this.#pipelines.get(id);
+    if (!pending) return;
+    this.#pipelines.delete(id);
+    clearTimeout(pending.timer);
+    if (error) {
+      pending.reject(error);
+      return;
+    }
+    pending.resolve(result ?? normalizeAssistResult(pending.sttText ?? 'Voice command', pending.intentOutput));
+  }
+
   #request(msg: Record<string, unknown>, timeoutMs: number): Promise<unknown> {
     return new Promise((resolve, reject) => {
       if (this.#state !== 'connected') {
@@ -478,6 +649,11 @@ export class HaClient {
       pending.reject(error);
     }
     this.#pending.clear();
+    for (const [, pending] of this.#pipelines) {
+      clearTimeout(pending.timer);
+      pending.reject(error);
+    }
+    this.#pipelines.clear();
   }
 }
 
@@ -523,4 +699,8 @@ function objectOf(value: unknown): Record<string, unknown> | null {
 
 function stringOf(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
+function numberOf(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }

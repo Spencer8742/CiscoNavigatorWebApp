@@ -1,5 +1,5 @@
 import { Backoff } from '@shared/backoff.ts';
-import { socketUrl } from '~/net/auth.ts';
+import { authHeaders, socketUrl } from '~/net/auth.ts';
 import { applyPatch, applySnapshot } from '~/state/entities.ts';
 import { setPlayers, sources } from '~/state/players.ts';
 import { appleTvs, clearPressed, keyLights, markPressed, tvs } from '~/state/controls.ts';
@@ -618,6 +618,30 @@ export function askAssist(req: {
     }, 30_000);
     assistWaiters.set(id, { resolve, reject, timer });
   });
+}
+
+export async function askAssistAudio(audio: ArrayBuffer, req: {
+  conversationId?: string | null;
+} = {}): Promise<AssistResult> {
+  const query = new URLSearchParams();
+  if (req.conversationId) query.set('conversationId', req.conversationId);
+  const res = await fetch(`/api/assist/audio${query.toString() ? `?${query}` : ''}`, {
+    method: 'POST',
+    headers: {
+      ...authHeaders(),
+      'content-type': 'application/octet-stream',
+    },
+    body: audio,
+  });
+  const body = (await res.json().catch(() => null)) as { error?: unknown } | AssistResult | null;
+  if (!res.ok) {
+    const message =
+      body && 'error' in body && typeof body.error === 'string'
+        ? body.error
+        : 'Assist did not respond';
+    throw new Error(message);
+  }
+  return body as AssistResult;
 }
 
 /** Request the next batch of slideshow photos. Resolves empty on timeout. */
