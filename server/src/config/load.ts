@@ -89,6 +89,7 @@ export const FALLBACK_CONFIG: DashboardConfig = {
   rooms: [],
   home: { favorites: [], scenes: [], status: [], alerts: [] },
   media: { players: [], default: 'active', volumeStep: 0.05, sections: ['Speakers', 'TVs'] },
+  assist: { wakePhrases: ['okay nabu', 'ok nabu'] },
   cast: {
     baseUrl: '',
     displays: [],
@@ -237,6 +238,23 @@ function sectionList(v: unknown): string[] {
   return out.length ? out.slice(0, 12) : fallback;
 }
 
+function phraseList(v: unknown, fallback: string[], path: string): string[] {
+  if (v === undefined || v === null) return fallback;
+  if (!Array.isArray(v)) {
+    warn(path, 'list of phrases', v);
+    return fallback;
+  }
+
+  const out: string[] = [];
+  for (const item of v) {
+    if (typeof item !== 'string') continue;
+    const phrase = item.trim().toLowerCase().replace(/\s+/g, ' ');
+    if (phrase && !out.includes(phrase)) out.push(phrase);
+  }
+
+  return out.length ? out : fallback;
+}
+
 function warn(path: string, expected: string, got: unknown): void {
   log.warn(`${path}: expected ${expected}, got ${JSON.stringify(got)} — using default`);
 }
@@ -272,6 +290,7 @@ function validate(raw: unknown): DashboardConfig {
   const immichRaw = obj(root['immich']);
   const homeRaw = obj(root['home']);
   const mediaRaw = obj(root['media']);
+  const assistRaw = obj(root['assist']);
   const castRaw = obj(root['cast']);
   const controlsRaw = obj(root['controls']);
 
@@ -361,6 +380,10 @@ function validate(raw: unknown): DashboardConfig {
       default: str(mediaRaw['default'], 'active', 'media.default'),
       volumeStep: num(mediaRaw['volumeStep'], 0.05, 'media.volumeStep', 0.01, 0.5),
       sections: sectionList(mediaRaw['sections']),
+    },
+
+    assist: {
+      wakePhrases: phraseList(assistRaw['wakePhrases'], d.assist.wakePhrases, 'assist.wakePhrases'),
     },
 
     cast: {

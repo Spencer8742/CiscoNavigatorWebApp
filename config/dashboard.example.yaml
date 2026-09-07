@@ -295,6 +295,14 @@ media:
   # Volume step for the +/- buttons, as a fraction (0.05 = 5%).
   volumeStep: 0.05
 
+# ─── Assist ────────────────────────────────────────────────────────────────
+assist:
+  # Hands-free wake phrases for the panel-side STT fallback.
+  # The default accepts both spellings because STT may hear "ok" or "okay".
+  wakePhrases:
+    - okay nabu
+    - ok nabu
+
 # ─── How the controls behave ───────────────────────────────────────────────
 #
 #  Tap a tile           does the obvious thing:

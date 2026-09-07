@@ -660,6 +660,33 @@ export async function askAssistAudio(audio: ArrayBuffer, req: {
   return body as AssistResult;
 }
 
+export type AssistWakeAudioResponse =
+  | { matched: false; text: string }
+  | { matched: true; text: string; command: string; result: AssistResult };
+
+export async function askAssistWakeAudio(audio: ArrayBuffer): Promise<AssistWakeAudioResponse> {
+  const res = await fetch('/api/assist/wake-audio', {
+    method: 'POST',
+    headers: {
+      ...authHeaders(),
+      'content-type': 'application/octet-stream',
+    },
+    body: audio,
+  });
+  const body = (await res.json().catch(() => null)) as
+    | { error?: unknown }
+    | AssistWakeAudioResponse
+    | null;
+  if (!res.ok) {
+    const message =
+      body && 'error' in body && typeof body.error === 'string'
+        ? body.error
+        : 'Assist did not respond';
+    throw new Error(message);
+  }
+  return body as AssistWakeAudioResponse;
+}
+
 /** Request the next batch of slideshow photos. Resolves empty on timeout. */
 export function requestPhotos(count: number): Promise<PhotoRef[]> {
   return new Promise((resolve) => {

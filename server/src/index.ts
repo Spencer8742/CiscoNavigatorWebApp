@@ -639,6 +639,54 @@ async function main(): Promise<void> {
       return;
     }
 
+    if (req.method === 'POST' && path === '/api/assist/wake-audio') {
+      if (!auth.check(req)) {
+        res.writeHead(401, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: 'unauthorized' }));
+        return;
+      }
+
+      try {
+        const audio = await readLimitedBody(req, MAX_ASSIST_AUDIO_BYTES);
+        if (audio.length < ASSIST_AUDIO_SAMPLE_RATE / 2) {
+          res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+          res.end(JSON.stringify({ matched: false, text: '' }));
+          return;
+        }
+
+        const text = await haClient.transcribeAssistAudio({
+          pcm: audio,
+          sampleRate: ASSIST_AUDIO_SAMPLE_RATE,
+        });
+        const command = commandAfterWakePhrase(text, config.current.assist.wakePhrases);
+        if (!command) {
+          res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+          res.end(JSON.stringify({ matched: false, text }));
+          return;
+        }
+
+        const result = await haClient.processAssistText({ text: command });
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        res.end(JSON.stringify({
+          matched: true,
+          text,
+          command,
+          result: proxyAssistAudio(result),
+        }));
+      } catch (err) {
+        if (err instanceof AssistPipelineError && err.code === 'stt-no-text-recognized') {
+          res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+          res.end(JSON.stringify({ matched: false, text: '' }));
+          return;
+        }
+        const message = err instanceof Error ? err.message : 'Assist did not respond';
+        const status = message === 'Request body too large' ? 413 : 502;
+        res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        res.end(JSON.stringify({ error: message }));
+      }
+      return;
+    }
+
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.writeHead(405, { allow: 'GET, HEAD' });
       res.end();
@@ -898,6 +946,31 @@ function resolvePanelRoot(): string {
     if (existsSync(join(dir, 'index.html'))) return dir;
   }
   return candidates[0] as string;
+}
+
+function commandAfterWakePhrase(text: string, phrases: string[]): string | null {
+  const heard = normalizeSpokenText(text);
+  if (!heard) return null;
+
+  for (const phrase of phrases) {
+    const wake = normalizeSpokenText(phrase);
+    if (!wake) continue;
+    if (heard === wake) return null;
+    if (heard.startsWith(`${wake} `)) {
+      const command = heard.slice(wake.length).trim();
+      return command || null;
+    }
+  }
+
+  return null;
+}
+
+function normalizeSpokenText(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
 }
 
 function readLimitedBody(req: IncomingMessage, limit: number): Promise<Buffer> {

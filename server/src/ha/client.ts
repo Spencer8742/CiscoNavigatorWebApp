@@ -572,6 +572,25 @@ export class HaClient {
     sampleRate: number;
     conversationId?: string;
   }): Promise<AssistResult> {
+    return this.#processAssistAudio(input, 'tts');
+  }
+
+  async transcribeAssistAudio(input: {
+    pcm: Buffer;
+    sampleRate: number;
+  }): Promise<string> {
+    const result = await this.#processAssistAudio(input, 'stt');
+    return result.text.trim();
+  }
+
+  #processAssistAudio(
+    input: {
+      pcm: Buffer;
+      sampleRate: number;
+      conversationId?: string;
+    },
+    endStage: 'stt' | 'tts',
+  ): Promise<AssistResult> {
     return new Promise((resolve, reject) => {
       if (this.#state !== 'connected') {
         reject(new Error('Home Assistant is not connected'));
@@ -606,7 +625,7 @@ export class HaClient {
         id,
         type: 'assist_pipeline/run',
         start_stage: 'stt',
-        end_stage: 'tts',
+        end_stage: endStage,
         input: { sample_rate: input.sampleRate },
         ...(input.conversationId ? { conversation_id: input.conversationId } : {}),
         timeout: PIPELINE_TIMEOUT_MS / 1000,

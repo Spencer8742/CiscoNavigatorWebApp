@@ -120,6 +120,7 @@ before(async () => {
 });
 
 beforeEach(() => {
+  ha.assistTranscript = 'turn on the desk lights';
   ha.conversations = [];
   ha.assistPipelineRuns = [];
   ha.assistAudioChunks = [];
@@ -255,6 +256,54 @@ test('Assist wake socket streams through Home Assistant wake word pipeline', asy
   } finally {
     ws.close();
   }
+});
+
+test('Assist wake audio fallback runs a command only after the wake phrase', async () => {
+  ha.assistTranscript = 'Okay Nabu turn on the desk lights';
+  const res = await fetch(`http://127.0.0.1:${PANEL_PORT}/api/assist/wake-audio`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${TOKEN}`,
+      'content-type': 'application/octet-stream',
+    },
+    body: Buffer.alloc(16_000, 1),
+  });
+
+  assert.equal(res.status, 200);
+  const body = await res.json();
+
+  assert.equal(body.matched, true);
+  assert.equal(body.text, 'Okay Nabu turn on the desk lights');
+  assert.equal(body.command, 'turn on the desk lights');
+  assert.equal(body.result.speech, 'The desk lights are on');
+  assert.equal(body.result.audioUrl, '/api/assist/tts?p=%2Fapi%2Ftts_proxy%2Fmock.mp3');
+  assert.equal(ha.assistPipelineRuns.length, 2);
+  assert.equal(ha.assistPipelineRuns[0].start_stage, 'stt');
+  assert.equal(ha.assistPipelineRuns[0].end_stage, 'stt');
+  assert.equal(ha.assistPipelineRuns[1].start_stage, 'intent');
+  assert.equal(ha.assistPipelineRuns[1].end_stage, 'tts');
+  assert.equal(ha.assistPipelineRuns[1].input.text, 'turn on the desk lights');
+});
+
+test('Assist wake audio fallback ignores speech without the wake phrase', async () => {
+  ha.assistTranscript = 'turn on the desk lights';
+  const res = await fetch(`http://127.0.0.1:${PANEL_PORT}/api/assist/wake-audio`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${TOKEN}`,
+      'content-type': 'application/octet-stream',
+    },
+    body: Buffer.alloc(16_000, 1),
+  });
+
+  assert.equal(res.status, 200);
+  const body = await res.json();
+
+  assert.equal(body.matched, false);
+  assert.equal(body.text, 'turn on the desk lights');
+  assert.equal(ha.assistPipelineRuns.length, 1);
+  assert.equal(ha.assistPipelineRuns[0].start_stage, 'stt');
+  assert.equal(ha.assistPipelineRuns[0].end_stage, 'stt');
 });
 
 test('Assist audio upload requires the panel token', async () => {
