@@ -538,7 +538,7 @@ export class SonosStore {
           const position = await this.#client.call(zone.host, 'AVTransport', 'GetPositionInfo', {
             InstanceID: 0,
           });
-          this.#anchorPosition(zone.uuid, position);
+          this.#anchorPosition(zone.uuid, position, zone.host);
         } catch (err) {
           log.debug(`Position for ${zone.name} failed:`, err);
         }
@@ -549,9 +549,35 @@ export class SonosStore {
     this.#touch();
   }
 
-  #anchorPosition(uuid: string, position: XmlNode): void {
+  #anchorPosition(uuid: string, position: XmlNode, host: string): void {
     const group = this.#groups.get(uuid);
-    if (!group?.media) return;
+    if (!group) return;
+
+    /*
+     * The same response also carries the track itself, and reading it is what
+     * keeps the panel current.
+     *
+     * A `LastChange` does not always include `CurrentTrackMetaData` -- some
+     * services send the transport state and the track NUMBER and nothing
+     * else. When that happened `#applyTransport` kept the previous track
+     * (correctly: an absent field means unchanged, not empty) and the title,
+     * artist and artwork on screen stayed stale until the next full read --
+     * which, while events are healthy, is RECONCILE_MS away. Five minutes.
+     *
+     * The position read that a track change already schedules answers this
+     * for free: `GetPositionInfo` returns `TrackMetaData` and we were reading
+     * only the clock out of it. Nothing new is asked of the speaker, and the
+     * worst case drops to POSITION_DEBOUNCE_MS.
+     */
+    const fresh = this.#mediaFromPosition(position, host);
+    if (fresh && fresh.title !== group.media?.title) {
+      // A different track than the event left us holding, so this response is
+      // the newer truth -- and it already carries its own position anchor.
+      group.media = fresh;
+      return;
+    }
+
+    if (!group.media) return;
 
     const elapsed = seconds(textOf(position, 'RelTime'));
     group.media = {

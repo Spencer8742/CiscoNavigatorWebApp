@@ -57,6 +57,16 @@ import type { PhotoRef } from '@shared/protocol.ts';
  * overlays.
  */
 export function Screensaver() {
+  const mode = prefs.value.screensaverMode;
+
+  /*
+   * `photos` does not look at the speakers at all, rather than finding a
+   * player and then declining to draw it. "Never automatically display now
+   * playing" is the whole point of the setting, and the cheapest way to keep
+   * that true is to have no player in hand to draw.
+   */
+  if (mode === 'photos') return <PhotoScreensaver />;
+
   const all = speakers.value;
   const preferred = all.find((speaker) => speaker.id === defaultPlayerId.value);
   const player =
@@ -64,7 +74,10 @@ export function Screensaver() {
     all.find((speaker) => speaker.state === 'playing' && !speaker.syncedTo && speaker.media) ??
     all.find((speaker) => speaker.state === 'playing' && speaker.media);
 
-  if (player?.media) return <PlayingScreensaver player={player} />;
+  // `both` keeps the slideshow and lets PhotoScreensaver overlay the track;
+  // only `music` gives the whole screen over. Either way, nothing playing
+  // means photos -- the idle screen is never blank.
+  if (mode === 'music' && player?.media) return <PlayingScreensaver player={player} />;
   return <PhotoScreensaver />;
 }
 
@@ -298,7 +311,12 @@ function SaverClock({
           </span>
         ) : null}
 
-        {cfg.overlays.nowPlaying && playing ? (
+        {/* Owned by the screensaver mode, not by `overlays.nowPlaying` in the
+            YAML. `both` is a request for exactly this overlay, so honouring a
+            config flag that could switch it off would make the setting lie;
+            `photos` never reaches here with a track in hand, and `music` only
+            renders photos when nothing is playing. */}
+        {prefs.value.screensaverMode === 'both' && playing ? (
           <span class="saver-chip truncate">
             <Icon name="media" size="1.1rem" weight={1.6} />
             {playing}

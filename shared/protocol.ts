@@ -845,6 +845,12 @@ export type ClientMessage =
    * revert overnight.
    */
   | { t: 'pref'; id: number; key: 'homeSide'; value: PanelPrefs['homeSide'] }
+  | {
+      t: 'pref';
+      id: number;
+      key: 'screensaverMode';
+      value: PanelPrefs['screensaverMode'];
+    }
   | { t: 'pref'; id: number; key: 'visiblePages'; value: PanelPage[] }
   | { t: 'pref'; id: number; key: 'homeTime'; value: boolean }
   | { t: 'pref'; id: number; key: 'photoScreensaverTime'; value: boolean }
@@ -897,6 +903,21 @@ export interface PanelPrefs {
    * never empty — which is the entire reason it exists.
    */
   homeSide: 'media' | 'photos';
+  /**
+   * What the idle screen shows.
+   *
+   * `photos`  the slideshow, and only the slideshow. Now-playing never
+   *           appears, not even as an overlay, however loud the house is.
+   * `music`   the full-screen now-playing art while something is playing,
+   *           and the slideshow when nothing is. The screen is never empty,
+   *           which is why the fallback is not optional.
+   * `both`    the slideshow throughout, with the track overlaid in a corner
+   *           while something plays. Music never takes the whole screen.
+   *
+   * `music` is the default because it is what the panel did before this
+   * setting existed, and an upgrade should not change what is on a wall.
+   */
+  screensaverMode: 'photos' | 'music' | 'both';
   /** Pages shown in primary navigation. */
   visiblePages: PanelPage[];
   /**
@@ -983,6 +1004,7 @@ export function panelIdOf(value: unknown): string | null {
 
 export const DEFAULT_PREFS: PanelPrefs = {
   homeSide: 'media',
+  screensaverMode: 'music',
   visiblePages: [...PANEL_PAGES],
   homeTime: true,
   photoScreensaverTime: true,
@@ -1008,6 +1030,7 @@ export const LAYOUT_LIMITS = { sections: 12, playersPerSection: 100, hidden: 200
  */
 export const PREF_VALUES: Record<string, readonly string[]> = {
   homeSide: ['media', 'photos'],
+  screensaverMode: ['photos', 'music', 'both'],
 };
 
 /** Boolean preferences accepted from a panel and persisted by the backend. */

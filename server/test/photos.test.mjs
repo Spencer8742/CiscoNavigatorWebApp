@@ -984,6 +984,7 @@ media:
         'photoScreensaverTime',
         'photoScreensaverWeather',
         'players',
+        'screensaverMode',
         'showSettings',
         'visiblePages',
       ],

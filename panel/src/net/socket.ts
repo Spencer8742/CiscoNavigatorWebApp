@@ -495,15 +495,31 @@ export function reloadAllPanels(): boolean {
 type BooleanPref = (typeof BOOLEAN_PREFS)[number];
 
 export function setPref(key: 'homeSide', value: PanelPrefs['homeSide']): boolean;
+export function setPref(
+  key: 'screensaverMode',
+  value: PanelPrefs['screensaverMode'],
+): boolean;
 export function setPref(key: 'visiblePages', value: PanelPrefs['visiblePages']): boolean;
 export function setPref(key: BooleanPref, value: boolean): boolean;
 export function setPref(
-  key: 'homeSide' | 'visiblePages' | BooleanPref,
-  value: PanelPrefs['homeSide'] | PanelPrefs['visiblePages'] | boolean,
+  key: 'homeSide' | 'screensaverMode' | 'visiblePages' | BooleanPref,
+  value:
+    | PanelPrefs['homeSide']
+    | PanelPrefs['screensaverMode']
+    | PanelPrefs['visiblePages']
+    | boolean,
 ): boolean {
   prefs.value = { ...prefs.value, [key]: value };
   if (key === 'homeSide') {
     return send({ t: 'pref', id: nextId(), key, value: value as PanelPrefs['homeSide'] });
+  }
+  if (key === 'screensaverMode') {
+    return send({
+      t: 'pref',
+      id: nextId(),
+      key,
+      value: value as PanelPrefs['screensaverMode'],
+    });
   }
   if (key === 'visiblePages') {
     return send({ t: 'pref', id: nextId(), key, value: value as PanelPrefs['visiblePages'] });
