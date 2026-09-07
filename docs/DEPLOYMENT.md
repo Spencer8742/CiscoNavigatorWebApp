@@ -512,6 +512,16 @@ arrangement. Ids may contain letters, digits, `-` and `_`, up to 32
 characters; anything else is ignored and the panel falls back to the shared
 settings.
 
+A **trailing slash is the mistake to watch for**: `?panel=office3/` is not
+`office3`, it is the invalid id `office3/`, and the panel quietly falls back to
+the shared settings — which looks exactly like a panel that was never given an
+id at all. The symptom is that changing a setting on one panel changes it on
+all of them. The backend logs a warning naming the rejected value, so:
+
+```bash
+docker logs navigator-panel 2>&1 | grep "not a valid panel id"
+```
+
 The id is **not** stripped from the address bar the way the token is. It is
 not a secret, and leaving it visible is the only way to tell from the URL
 which panel a browser is claiming to be. The Settings screen shows it too,

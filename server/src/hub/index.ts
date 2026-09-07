@@ -159,12 +159,20 @@ export class Hub {
 
   #accept(socket: WebSocket, req: IncomingMessage): void {
     this.#seq += 1;
-    const panel: Panel = { socket, alive: true, id: this.#seq, panelId: panelIdFrom(req.url) };
+    const named = panelIdFrom(req.url);
+    const panel: Panel = { socket, alive: true, id: this.#seq, panelId: named.id };
     this.#panels.add(panel);
 
     const from = req.socket.remoteAddress ?? 'unknown';
     const who = panel.panelId ? `"${panel.panelId}"` : 'unnamed';
     log.info(`Panel #${panel.id} (${who}) connected from ${from} (${this.#panels.size} total)`);
+    if (named.rejected !== null) {
+      log.warn(
+        `Panel #${panel.id} asked to be "${named.rejected}", which is not a valid panel id ` +
+          `(letters, digits, - and _, up to 32 characters). Using the shared settings instead — ` +
+          `check the ?panel= value in this device's URL.`,
+      );
+    }
 
     socket.on('pong', () => {
       panel.alive = true;
@@ -502,8 +510,15 @@ export class Hub {
  * browser WebSocket API cannot set request headers, and RoomOS reloads the
  * provisioned URL and nothing else.
  */
-function panelIdFrom(url: string | undefined): string | null {
+function panelIdFrom(url: string | undefined): { id: string | null; rejected: string | null } {
   const q = (url ?? '').indexOf('?');
-  if (q === -1) return null;
-  return panelIdOf(new URLSearchParams((url ?? '').slice(q + 1)).get('panel'));
+  if (q === -1) return { id: null, rejected: null };
+  const raw = new URLSearchParams((url ?? '').slice(q + 1)).get('panel');
+  const id = panelIdOf(raw);
+  // A panel that ASKED for an id and was refused is a provisioning mistake --
+  // almost always a stray character in a hand-typed URL. It has to look
+  // different in the log from a panel that never asked, because the two
+  // behave identically (both get the shared settings) and the only way to
+  // tell them apart is to be told.
+  return { id, rejected: id === null && raw ? raw : null };
 }
