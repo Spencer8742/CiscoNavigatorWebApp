@@ -44,6 +44,7 @@ const log = logger('server');
 
 const VERSION = process.env['APP_VERSION'] ?? 'dev';
 const STARTED_AT = Date.now();
+const MAX_ASSIST_TEXT = 500;
 
 /** One second of 8 kHz mono silence, as a WAV. See the /silence.wav route. */
 const SILENCE = silentWav(8000);
@@ -408,6 +409,18 @@ async function main(): Promise<void> {
         entity: msg.entity,
         data: msg.data,
       }),
+    onAssist: async (msg) => {
+      const text = typeof msg.text === 'string' ? msg.text.trim() : '';
+      if (text.length === 0) throw new Error('Nothing to send');
+      if (text.length > MAX_ASSIST_TEXT) throw new Error('That request is too long');
+
+      return haClient.processConversation({
+        text,
+        language: msg.language,
+        agentId: msg.agentId,
+        conversationId: msg.conversationId,
+      });
+    },
 
     getPrefs: (panelId) => prefs.for(panelId),
     onPref: (key, value, panelId) => prefs.set(key, value, panelId),

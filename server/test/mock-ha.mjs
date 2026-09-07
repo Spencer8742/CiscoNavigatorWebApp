@@ -28,6 +28,12 @@ export class MockHomeAssistant {
   /** Every call_service message received, for assertions. */
   serviceCalls = [];
 
+  /** Every conversation/process message received, for assertions. */
+  conversations = [];
+
+  /** Response text for conversation/process. */
+  conversationSpeech = 'Done';
+
   /**
    * Every webhook POST received, as { id, body }.
    *
@@ -149,6 +155,30 @@ export class MockHomeAssistant {
           }
         }
         ws.send(JSON.stringify({ id: msg.id, type: 'result', success: true, result: {} }));
+        break;
+
+      case 'conversation/process':
+        this.conversations.push(msg);
+        ws.send(JSON.stringify({
+          id: msg.id,
+          type: 'result',
+          success: true,
+          result: {
+            conversation_id: msg.conversation_id ?? 'mock-conversation',
+            response: {
+              response_type: 'action_done',
+              speech: {
+                plain: {
+                  speech: this.conversationSpeech,
+                },
+              },
+              data: {
+                success: [],
+                failed: [],
+              },
+            },
+          },
+        }));
         break;
 
       default:

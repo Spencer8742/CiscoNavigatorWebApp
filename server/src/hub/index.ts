@@ -10,6 +10,7 @@ import type {
   AppleTvCommand,
   AppleTvSwipe,
   AppleTvState,
+  AssistResult,
   BrowseRequest,
   BrowseResult,
   KeyLightState,
@@ -96,6 +97,8 @@ export interface HubDeps {
   onLink?: (sid: number, op: 'begin' | 'poll' | 'forget') => Promise<ServiceLink>;
   /** Run a macro button by id. Returns an error string, or null. */
   onControl?: (button: string) => Promise<string | null>;
+  /** Send text to Home Assistant Assist. */
+  onAssist?: (msg: Extract<ClientMessage, { t: 'assist' }>) => Promise<AssistResult>;
   /** Drive a key light. Returns an error string, or null. */
   onKeyLight?: (light: string, op: KeyLightOp, value?: number) => Promise<string | null>;
   /** Choose an input on a `sources:` key. Returns an error string, or null. */
@@ -342,6 +345,30 @@ export class Hub {
         const error = await this.#deps.onCall(msg);
         if (error) {
           this.#send(panel, { t: 'error', ref: msg.id, code: 'call_failed', message: error });
+        }
+        break;
+      }
+
+      case 'assist': {
+        if (!this.#deps.onAssist) {
+          this.#send(panel, {
+            t: 'error',
+            ref: msg.id,
+            code: 'assist_unavailable',
+            message: 'Assist is not configured',
+          });
+          return;
+        }
+        try {
+          const result = await this.#deps.onAssist(msg);
+          this.#send(panel, { t: 'assist', ref: msg.id, result });
+        } catch (err) {
+          this.#send(panel, {
+            t: 'error',
+            ref: msg.id,
+            code: 'assist_failed',
+            message: err instanceof Error ? err.message : 'Assist did not respond',
+          });
         }
         break;
       }

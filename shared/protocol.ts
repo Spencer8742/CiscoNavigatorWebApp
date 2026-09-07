@@ -458,6 +458,21 @@ export interface QueuePage {
 
 export type BrowseResult = BrowseList | BrowseGroups | QueuePage;
 
+/* ── Assist ───────────────────────────────────────────────────────────── */
+
+export interface AssistResult {
+  /** What the panel sent, echoed back so overlapping requests cannot confuse the UI. */
+  text: string;
+  /** Human-readable response from Home Assistant, when the agent returned one. */
+  speech: string | null;
+  /** Keep multi-turn Assist context on this panel. */
+  conversationId: string | null;
+  /** HA response type, e.g. "action_done" or "query_answer". */
+  responseType: string | null;
+  /** False when HA understood the words but failed to complete the request. */
+  success: boolean;
+}
+
 /* ── Music commands ────────────────────────────────────────────────────── */
 
 /** What to do with the queue when playing something new. */
@@ -736,6 +751,8 @@ export type ServerMessage =
   | { t: 'photos'; photos: PhotoRef[] }
   /** Answer to a `browse` request. `ref` matches the request's id. */
   | { t: 'browse'; ref: number; result: BrowseResult }
+  /** Answer to an Assist request. `ref` matches the request's id. */
+  | { t: 'assist'; ref: number; result: AssistResult }
   /**
    * Reload the page.
    *
@@ -806,6 +823,21 @@ export type ClientMessage =
    * sight of anything this backend is connected to.
    */
   | { t: 'link'; id: number; sid: number; op: 'begin' | 'poll' | 'forget' }
+  /**
+   * Send text to Home Assistant Assist.
+   *
+   * Voice capture happens locally on the panel when the browser supports it;
+   * the backend receives text only and forwards it over the existing HA
+   * WebSocket, so HA credentials never leave this process.
+   */
+  | {
+      t: 'assist';
+      id: number;
+      text: string;
+      language?: string;
+      agentId?: string;
+      conversationId?: string;
+    }
   /**
    * Run a macro button from `controls.pages`.
    *

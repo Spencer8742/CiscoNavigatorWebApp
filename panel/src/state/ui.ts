@@ -102,6 +102,9 @@ export const openDeviceSource = signal<string | null>(null);
  */
 export const openDeviceAlerts = signal<string | null>(null);
 
+/** Whether the Home Assistant Assist sheet is open. */
+export const assistOpen = signal(false);
+
 /**
  * Kiosk lock: the nav bar is hidden and the panel stays on the page it is on.
  *
@@ -137,6 +140,7 @@ export function navigate(to: Route): void {
   // list rather than a room the user has forgotten they were in.
   if (to !== 'rooms') activeRoom.value = null;
   openEntity.value = null;
+  assistOpen.value = false;
   route.value = to;
   markActivity();
 }

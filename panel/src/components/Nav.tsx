@@ -1,7 +1,7 @@
 import { Icon } from '~/components/Icon.tsx';
 import { Pressable } from '~/components/Pressable.tsx';
 import { ui } from '~/config/index.ts';
-import { linkStatus, narrow, navigate, route, visibleRoutes, type Route } from '~/state/ui.ts';
+import { assistOpen, linkStatus, markActivity, narrow, navigate, route, visibleRoutes, type Route } from '~/state/ui.ts';
 
 /**
  * Primary navigation.
@@ -63,6 +63,17 @@ export function Nav() {
           <span class="nav-item-label">{LABELS[r]}</span>
         </Pressable>
       ))}
+
+      <Pressable
+        class="nav-assist p-sm"
+        onPress={() => {
+          assistOpen.value = true;
+          markActivity();
+        }}
+        ariaLabel="Assist"
+      >
+        <Icon name="mic" size="1.45rem" weight={1.9} />
+      </Pressable>
 
       {/*
         Connection indicator. A dot, not a banner: the link is healthy

@@ -58,9 +58,10 @@ export function applySecurityHeaders(res: ServerResponse, cast = false): void {
   res.setHeader('content-security-policy', cast ? CAST_CSP : CSP);
   res.setHeader('x-content-type-options', 'nosniff');
   res.setHeader('referrer-policy', 'no-referrer');
-  // The panel needs none of these; denying them is free. `autoplay` is left
-  // alone because cast mode may hold the session open with a silent loop.
-  res.setHeader('permissions-policy', 'camera=(), microphone=(), geolocation=(), interest-cohort=()');
+  // The panel needs microphone access for push-to-talk Assist. Camera and
+  // geolocation stay denied, and autoplay is left alone because cast mode may
+  // hold the session open with a silent loop.
+  res.setHeader('permissions-policy', 'camera=(), microphone=(self), geolocation=(), interest-cohort=()');
   // Never let an intermediary or a browser cache an authenticated API
   // response — this is overridden explicitly for /img, which is immutable.
   res.setHeader('x-frame-options', 'DENY');

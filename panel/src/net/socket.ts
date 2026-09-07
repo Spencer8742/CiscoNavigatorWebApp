@@ -11,6 +11,7 @@ import {
   BOOLEAN_PREFS,
   HEARTBEAT_MS,
   HEARTBEAT_TIMEOUT_MS,
+  type AssistResult,
   type BrowseRequest,
   type BrowseResult,
   type ServiceLink,
@@ -75,6 +76,7 @@ const browseWaiters = new Map<number, Waiter<BrowseResult>>();
  * a refused browse both arrive as `t: 'error'` carrying the same `ref`.
  */
 const linkWaiters = new Map<number, Waiter<ServiceLink>>();
+const assistWaiters = new Map<number, Waiter<AssistResult>>();
 
 export function connect(): void {
   closed = false;
@@ -278,6 +280,16 @@ function handle(msg: ServerMessage): void {
       break;
     }
 
+    case 'assist': {
+      const waiter = assistWaiters.get(msg.ref);
+      if (waiter) {
+        assistWaiters.delete(msg.ref);
+        clearTimeout(waiter.timer);
+        waiter.resolve(msg.result);
+      }
+      break;
+    }
+
     case 'pong':
       clearTimeout(pongTimer);
       pongTimer = undefined;
@@ -298,6 +310,13 @@ function handle(msg: ServerMessage): void {
         msg.ref === undefined
           ? undefined
           : (browseWaiters.get(msg.ref) ?? linkWaiters.get(msg.ref));
+      const assistWaiter = msg.ref === undefined ? undefined : assistWaiters.get(msg.ref);
+      if (assistWaiter && msg.ref !== undefined) {
+        assistWaiters.delete(msg.ref);
+        clearTimeout(assistWaiter.timer);
+        assistWaiter.reject(new Error(msg.message));
+        break;
+      }
       if (waiter && msg.ref !== undefined) {
         browseWaiters.delete(msg.ref);
         linkWaiters.delete(msg.ref);
@@ -341,7 +360,7 @@ function startHeartbeat(): void {
 }
 
 function failBrowseWaiters(): void {
-  for (const map of [browseWaiters, linkWaiters]) {
+  for (const map of [browseWaiters, linkWaiters, assistWaiters]) {
     for (const [id, waiter] of map) {
       map.delete(id);
       clearTimeout(waiter.timer);
@@ -564,6 +583,40 @@ export function link(sid: number, op: 'begin' | 'poll' | 'forget'): Promise<Serv
       if (linkWaiters.delete(id)) reject(new Error('The service did not respond'));
     }, 30_000);
     linkWaiters.set(id, { resolve, reject, timer });
+  });
+}
+
+export function askAssist(req: {
+  text: string;
+  conversationId?: string | null;
+  language?: string;
+  agentId?: string;
+}): Promise<AssistResult> {
+  return new Promise((resolve, reject) => {
+    const text = req.text.trim();
+    if (!text) {
+      reject(new Error('Nothing to send'));
+      return;
+    }
+
+    const id = nextId();
+    if (
+      !send({
+        t: 'assist',
+        id,
+        text,
+        ...(req.conversationId ? { conversationId: req.conversationId } : {}),
+        ...(req.language ? { language: req.language } : {}),
+        ...(req.agentId ? { agentId: req.agentId } : {}),
+      })
+    ) {
+      reject(new Error('Not connected'));
+      return;
+    }
+    const timer = setTimeout(() => {
+      if (assistWaiters.delete(id)) reject(new Error('Assist did not respond'));
+    }, 30_000);
+    assistWaiters.set(id, { resolve, reject, timer });
   });
 }
 

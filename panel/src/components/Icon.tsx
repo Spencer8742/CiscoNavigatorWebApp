@@ -327,6 +327,7 @@ const ICONS: Record<string, PathSpec> = {
   chevronUp: { d: ['M5.5 14.5 12 8l6.5 6.5'] },
   close: { d: ['M6 6l12 12', 'M18 6 6 18'] },
   check: { d: ['M4.8 12.6 9.6 17.4 19.2 6.6'] },
+  send: { d: ['M3.5 11.5 20.5 3.5 16.5 20.5 12.2 13.8z'] },
   minus: { d: ['M5 12h14'] },
   plus: { d: ['M12 5v14', 'M5 12h14'] },
   alert: {

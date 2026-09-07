@@ -3,6 +3,7 @@ import { Backoff } from '@shared/backoff.ts';
 import { logger } from '~/lib/log.ts';
 import type { Env } from '~/env.ts';
 import type { HaEntityEvent, HaIncoming } from '~/ha/protocol.ts';
+import type { AssistResult } from '@shared/protocol.ts';
 
 const log = logger('ha');
 
@@ -428,6 +429,27 @@ export class HaClient {
     return this.#request({ type, ...payload }, CALL_TIMEOUT_MS);
   }
 
+  async processConversation(input: {
+    text: string;
+    language?: string;
+    agentId?: string;
+    conversationId?: string;
+  }): Promise<AssistResult> {
+    const text = input.text.trim();
+    const result = await this.#request(
+      {
+        type: 'conversation/process',
+        text,
+        ...(input.language ? { language: input.language } : {}),
+        ...(input.agentId ? { agent_id: input.agentId } : {}),
+        ...(input.conversationId ? { conversation_id: input.conversationId } : {}),
+      },
+      RESPONSE_TIMEOUT_MS,
+    );
+
+    return normalizeAssistResult(text, result);
+  }
+
   #request(msg: Record<string, unknown>, timeoutMs: number): Promise<unknown> {
     return new Promise((resolve, reject) => {
       if (this.#state !== 'connected') {
@@ -457,4 +479,48 @@ export class HaClient {
     }
     this.#pending.clear();
   }
+}
+
+function normalizeAssistResult(text: string, raw: unknown): AssistResult {
+  const result = objectOf(raw);
+  const response = objectOf(result?.['response']);
+  const speech = objectOf(response?.['speech']);
+  const plain = objectOf(speech?.['plain']);
+
+  const speechText =
+    stringOf(plain?.['speech']) ??
+    stringOf(speech?.['speech']) ??
+    stringOf(response?.['speech']) ??
+    null;
+
+  const responseType = stringOf(response?.['response_type']);
+  const conversationId =
+    stringOf(result?.['conversation_id']) ??
+    stringOf(response?.['conversation_id']) ??
+    null;
+
+  const data = objectOf(response?.['data']);
+  const success = inferAssistSuccess(responseType, data);
+
+  return {
+    text,
+    speech: speechText,
+    conversationId,
+    responseType,
+    success,
+  };
+}
+
+function inferAssistSuccess(responseType: string | null, data: Record<string, unknown> | null): boolean {
+  if (responseType === 'error') return false;
+  const failed = data?.['failed'];
+  return !(Array.isArray(failed) && failed.length > 0);
+}
+
+function objectOf(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : null;
+}
+
+function stringOf(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value : null;
 }
