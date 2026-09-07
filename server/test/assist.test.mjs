@@ -241,11 +241,11 @@ test('Assist wake socket streams through Home Assistant wake word pipeline', asy
     assert.equal(ha.assistPipelineRuns[0].start_stage, 'wake_word');
     assert.equal(ha.assistPipelineRuns[0].end_stage, 'tts');
     assert.equal(ha.assistPipelineRuns[0].input.sample_rate, 16_000);
-    assert.equal(ha.assistPipelineRuns[0].input.timeout, 20);
+    assert.equal(ha.assistPipelineRuns[0].input.timeout, 120);
     assert.equal(ha.assistPipelineRuns[0].input.noise_suppression_level, 2);
     assert.equal(ha.assistPipelineRuns[0].input.auto_gain_dbfs, 31);
     assert.equal(ha.assistPipelineRuns[0].input.volume_multiplier, 2);
-    assert.equal(ha.assistPipelineRuns[0].timeout, 75);
+    assert.equal(ha.assistPipelineRuns[0].timeout, 150);
     assert.ok(Buffer.concat(ha.assistAudioChunks).length >= 4096);
     assert.equal(msg.result.text, ha.assistTranscript);
     assert.equal(msg.result.speech, 'The desk lights are on');
