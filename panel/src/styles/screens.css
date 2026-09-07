@@ -1787,7 +1787,7 @@
 
 .apple-tv-content {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(22rem, 30rem);
+  grid-template-columns: minmax(0, 1fr) minmax(26rem, 36rem);
   align-items: center;
   gap: clamp(var(--s-5), 4vw, var(--s-8));
   min-height: clamp(30rem, 62vh, 42rem);
@@ -1816,11 +1816,36 @@
   background: var(--surface-2);
   color: var(--text-dim);
 }
+/*
+ * The artwork's share is decided by whether the remote is out.
+ *
+ * Folded, the artwork is the point of the screen and takes the room to look
+ * like it -- capped against the viewport HEIGHT as well, since a square that
+ * wide would otherwise run off the bottom on a short panel.
+ *
+ * Open, it steps back to a reference thumbnail and the remote gets the space,
+ * because the thing being touched should be the thing that is big.
+ */
 .apple-tv-media {
   display: grid;
-  grid-template-columns: minmax(17rem, 24rem) minmax(0, 1fr);
   align-items: center;
   gap: clamp(var(--s-5), 3vw, var(--s-8));
+}
+.apple-tv-content[data-remote='closed'] .apple-tv-media {
+  /*
+   * The column carries the SAME height cap as the artwork inside it.
+   * Without that the column stayed 40rem while the square stopped at 58vh,
+   * and the difference showed up as a band of nothing between the artwork
+   * and the title -- wider than the gap, and clearly not intentional.
+   * (40rem is not 640px here: the root font-size scales with the viewport.)
+   */
+  grid-template-columns: minmax(20rem, min(40rem, 58vh)) minmax(0, 1fr);
+}
+.apple-tv-content[data-remote='open'] .apple-tv-media {
+  grid-template-columns: minmax(0, 15rem) minmax(0, 1fr);
+}
+.apple-tv-content[data-remote='closed'] .apple-tv-art {
+  max-width: min(100%, 58vh);
 }
 .apple-tv-art {
   display: grid;
@@ -1854,7 +1879,9 @@
 .apple-tv-touchpad {
   position: relative;
   width: 100%;
-  height: clamp(13rem, 28vh, 17rem);
+  /* Taller now that the remote is the wide half while it is open: a touchpad
+     you swipe on wants area, and this is the control being used. */
+  height: clamp(14rem, 34vh, 22rem);
   overflow: hidden;
   border-radius: var(--r-xl);
   border: 1px solid var(--border);
@@ -2021,8 +2048,6 @@
     min-height: clamp(20rem, 40vh, 28rem);
   }
   .apple-tv-remote { padding-left: var(--s-4); }
-  /* The artwork was still claiming up to 24rem here and squeezing the title
-     into a four-word-per-line column. */
   .apple-tv-content[data-remote='open'] .apple-tv-media {
     grid-template-columns: minmax(0, 11rem) minmax(0, 1fr);
   }

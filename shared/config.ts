@@ -43,7 +43,6 @@ export interface IdleConfig {
   /** Seconds of inactivity before the screensaver. 0 disables. */
   timeoutSeconds: number;
   /** Seconds of inactivity before returning to Home. 0 disables. */
-  returnHomeSeconds: number;
   /**
    * How long the Controls screen holds BOTH of the above off. 0 disables the
    * hold, so Controls idles like any other screen.

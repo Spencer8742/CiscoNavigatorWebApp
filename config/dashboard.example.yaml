@@ -60,22 +60,17 @@ idle:
   # photo slideshow. 0 disables.
   timeoutSeconds: 180
 
-  # Seconds of no touch before returning to the Home screen from any other
-  # screen (happens before the screensaver). 0 disables.
-  returnHomeSeconds: 90
+  # The panel does NOT navigate on its own. It stays on whatever screen it was
+  # left on; idling only starts the screensaver, and dismissing that puts you
+  # back where you were. (`returnHomeSeconds` used to send it to Home and has
+  # been removed — if it is still in your file the backend will say so.)
 
-  # How long the CONTROLS screen holds both of the above off. 0 disables the
+  # How long the CONTROLS screen holds the screensaver off. 0 disables the
   # hold, so Controls idles like every other screen.
   #
   # Controls is the one screen that is doing its job while nobody touches it:
   # you are in a call, hang up and mute are on screen, and going to photos
   # after three minutes is the panel being wrong about what it is for.
-  #
-  # Note this holds the return to Home as well, not just the screensaver.
-  # With the defaults above, returnHomeSeconds (90) is well short of
-  # timeoutSeconds (180), so holding only the screensaver would change
-  # nothing you could see — the panel would leave Controls at 90s and
-  # screensave from Home at 180s.
   #
   # It expires rather than lasting forever because the panel has no way to
   # know when you are done: RoomOS gives a web page no call state, and a panel
