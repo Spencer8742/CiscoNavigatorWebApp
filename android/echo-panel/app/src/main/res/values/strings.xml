@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Echo Panel</string>
+    <string name="wake_channel_name">Wake word</string>
+    <string name="wake_channel_description">Listens locally for the configured wake word.</string>
+    <string name="wake_notification_title">Echo Panel wake word</string>
+    <string name="wake_notification_ready">Listening locally</string>
+    <string name="wake_notification_missing_assets">Wake model assets are missing</string>
+</resources>

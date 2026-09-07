@@ -20,3 +20,9 @@ data/
 # Python bridge bytecode
 __pycache__/
 *.pyc
+
+# Android wrapper builds
+android/echo-panel/.gradle/
+android/echo-panel/build/
+android/echo-panel/app/build/
+android/echo-panel/local.properties
