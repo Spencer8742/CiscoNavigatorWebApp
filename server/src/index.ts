@@ -45,8 +45,6 @@ const log = logger('server');
 const VERSION = process.env['APP_VERSION'] ?? 'dev';
 const STARTED_AT = Date.now();
 const MAX_ASSIST_TEXT = 500;
-const ASSIST_AUDIO_SAMPLE_RATE = 16_000;
-const MAX_ASSIST_AUDIO_BYTES = ASSIST_AUDIO_SAMPLE_RATE * 2 * 12;
 
 /** One second of 8 kHz mono silence, as a WAV. See the /silence.wav route. */
 const SILENCE = silentWav(8000);
@@ -560,36 +558,6 @@ async function main(): Promise<void> {
       return;
     }
 
-    if (req.method === 'POST' && path === '/api/assist/audio') {
-      if (!auth.check(req)) {
-        res.writeHead(401, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ error: 'unauthorized' }));
-        return;
-      }
-
-      try {
-        const audio = await readLimitedBody(req, MAX_ASSIST_AUDIO_BYTES);
-        if (audio.length < ASSIST_AUDIO_SAMPLE_RATE) {
-          res.writeHead(400, { 'content-type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Record a little longer and try again' }));
-          return;
-        }
-        const result = await haClient.processAssistAudio({
-          pcm: audio,
-          sampleRate: ASSIST_AUDIO_SAMPLE_RATE,
-          conversationId: query.get('conversationId') ?? undefined,
-        });
-        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-        res.end(JSON.stringify(result));
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Assist did not respond';
-        const status = message === 'Request body too large' ? 413 : 502;
-        res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-        res.end(JSON.stringify({ error: message }));
-      }
-      return;
-    }
-
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.writeHead(405, { allow: 'GET, HEAD' });
       res.end();
@@ -829,30 +797,6 @@ function resolvePanelRoot(): string {
     if (existsSync(join(dir, 'index.html'))) return dir;
   }
   return candidates[0] as string;
-}
-
-function readLimitedBody(req: IncomingMessage, limit: number): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let size = 0;
-    let tooLarge = false;
-
-    req.on('data', (chunk: Buffer) => {
-      if (tooLarge) return;
-      size += chunk.length;
-      if (size > limit) {
-        tooLarge = true;
-        reject(new Error('Request body too large'));
-        req.destroy();
-        return;
-      }
-      chunks.push(chunk);
-    });
-    req.on('end', () => {
-      if (!tooLarge) resolve(Buffer.concat(chunks));
-    });
-    req.on('error', reject);
-  });
 }
 
 main().catch((err: unknown) => {

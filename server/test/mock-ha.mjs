@@ -34,15 +34,6 @@ export class MockHomeAssistant {
   /** Response text for conversation/process. */
   conversationSpeech = 'Done';
 
-  /** Every assist_pipeline/run message received, for assertions. */
-  assistPipelineRuns = [];
-
-  /** Raw PCM chunks received for assist_pipeline/run, without the handler byte. */
-  assistAudioChunks = [];
-
-  /** Transcript returned by the mock STT stage. */
-  assistTranscript = 'turn on the office lights';
-
   /**
    * Every webhook POST received, as { id, body }.
    *
@@ -69,12 +60,7 @@ export class MockHomeAssistant {
 
     this.#wss.on('connection', (ws) => {
       this.#sockets.add(ws);
-      const session = {
-        authed: false,
-        subscriptionId: null,
-        coalescing: false,
-        pipeline: null,
-      };
+      const session = { authed: false, subscriptionId: null, coalescing: false };
 
       ws.on('close', () => this.#sockets.delete(ws));
       ws.on('message', (data) => this.#onMessage(ws, session, data));
@@ -109,11 +95,6 @@ export class MockHomeAssistant {
   }
 
   #onMessage(ws, session, data) {
-    if (session.pipeline && Buffer.isBuffer(data)) {
-      this.#onPipelineAudio(ws, session, data);
-      return;
-    }
-
     let msg;
     try {
       msg = JSON.parse(data.toString());
@@ -200,87 +181,9 @@ export class MockHomeAssistant {
         }));
         break;
 
-      case 'assist_pipeline/run':
-        this.assistPipelineRuns.push(msg);
-        session.pipeline = { id: msg.id, handler: 7, chunks: [] };
-        ws.send(JSON.stringify({ id: msg.id, type: 'result', success: true, result: null }));
-        ws.send(JSON.stringify({
-          id: msg.id,
-          type: 'event',
-          event: {
-            type: 'run-start',
-            data: {
-              runner_data: {
-                stt_binary_handler_id: 7,
-                timeout: msg.timeout ?? 45,
-              },
-            },
-          },
-        }));
-        ws.send(JSON.stringify({
-          id: msg.id,
-          type: 'event',
-          event: {
-            type: 'stt-start',
-            data: {
-              engine: 'mock-stt',
-              metadata: { sample_rate: msg.input?.sample_rate },
-            },
-          },
-        }));
-        break;
-
       default:
         ws.send(JSON.stringify({ id: msg.id, type: 'result', success: true, result: null }));
     }
-  }
-
-  #onPipelineAudio(ws, session, data) {
-    const pipeline = session.pipeline;
-    if (!pipeline) return;
-    if (data[0] !== pipeline.handler) return;
-
-    if (data.length === 1) {
-      this.assistAudioChunks.push(...pipeline.chunks);
-      const id = pipeline.id;
-      session.pipeline = null;
-      ws.send(JSON.stringify({
-        id,
-        type: 'event',
-        event: {
-          type: 'stt-end',
-          data: { stt_output: { text: this.assistTranscript } },
-        },
-      }));
-      ws.send(JSON.stringify({
-        id,
-        type: 'event',
-        event: {
-          type: 'intent-end',
-          data: {
-            intent_output: {
-              conversation_id: 'mock-voice-conversation',
-              response: {
-                response_type: 'action_done',
-                speech: {
-                  plain: {
-                    speech: this.conversationSpeech,
-                  },
-                },
-                data: {
-                  success: [],
-                  failed: [],
-                },
-              },
-            },
-          },
-        },
-      }));
-      ws.send(JSON.stringify({ id, type: 'event', event: { type: 'run-end', data: {} } }));
-      return;
-    }
-
-    pipeline.chunks.push(Buffer.from(data.subarray(1)));
   }
 
   /** Compressed add form. `lu` is omitted when it equals `lc`, as HA does. */
