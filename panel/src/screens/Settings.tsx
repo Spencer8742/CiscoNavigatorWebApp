@@ -2,7 +2,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { config, ui } from '~/config/index.ts';
 import { health, linkStatus, prefs, socketState } from '~/state/ui.ts';
 import { Pressable } from '~/components/Pressable.tsx';
-import { setPref } from '~/net/socket.ts';
+import { reloadAllPanels, setPref } from '~/net/socket.ts';
 import { getPanelId } from '~/net/auth.ts';
 import { BOOLEAN_PREFS, PANEL_PAGES, type PanelPage, type PanelPrefs } from '@shared/protocol.ts';
 import { entityCount } from '~/state/entities.ts';
@@ -43,6 +43,18 @@ export function Settings() {
   const cfg = config.value;
   const h = health.value;
   const dev = deviceInfo();
+
+  /*
+   * The panel and the backend are built from one APP_VERSION and shipped in
+   * one image, so they agree until a new image is deployed. After that the
+   * backend restarts on the new version while every already-open panel keeps
+   * running the JavaScript of the old one — which is precisely the state a
+   * reload fixes, and the only moment this screen can detect it.
+   *
+   * Both are 'dev' in a local checkout, so nothing false-alarms there.
+   */
+  const backendVersion = h?.version;
+  const stale = backendVersion !== undefined && backendVersion !== __APP_VERSION__;
 
   return (
     <div class="screen screen-enter">
@@ -179,6 +191,35 @@ export function Settings() {
               look at, and "Shared" versus a name is the difference between a
               tap that changes one wall and one that changes all of them. */}
           <Row k="This panel" v={getPanelId() ?? 'Shared (no id)'} />
+        </div>
+
+        <div class="section-head">
+          <h2 class="section-title">Version</h2>
+        </div>
+        <div class="rows">
+          <Row k="This panel is running" v={__APP_VERSION__} />
+          <Row k="The backend is running" v={backendVersion ?? '—'} />
+          {stale ? (
+            <Row k="Status" v="Update available" tone="warn" />
+          ) : (
+            <Row k="Status" v="Up to date" tone={backendVersion ? 'ok' : undefined} />
+          )}
+        </div>
+        <div class="settings-actions">
+          <Pressable
+            class={stale ? 'settings-action is-urgent' : 'settings-action'}
+            onPress={() => reloadAllPanels()}
+            ariaLabel="Reload every panel"
+          >
+            Reload all panels
+          </Pressable>
+          <Pressable
+            class="settings-action"
+            onPress={() => window.location.reload()}
+            ariaLabel="Reload only this panel"
+          >
+            Reload this one
+          </Pressable>
         </div>
 
         <div class="section-head">

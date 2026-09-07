@@ -113,6 +113,47 @@
   gap: var(--s-3);
 }
 
+/*
+ * The two reload buttons.
+ *
+ * Side by side where they fit and stacked where they do not, rather than a
+ * fixed two-column grid: at 320px two buttons in a row leave neither of them
+ * a readable label.
+ */
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+  margin-top: var(--s-3);
+}
+
+.settings-action {
+  flex: 1 1 12rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--touch);
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+  background: var(--surface-1);
+  color: var(--text-dim);
+  font-size: 0.9375rem;
+  font-weight: 550;
+  text-align: center;
+}
+
+/*
+ * Only once the backend is known to be running a different build. An
+ * always-highlighted reload button is a button nobody reads after the first
+ * week, which would waste the one moment it has something to say.
+ */
+.settings-action.is-urgent {
+  border-color: var(--accent-dim);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
 .settings-page {
   display: flex;
   align-items: center;

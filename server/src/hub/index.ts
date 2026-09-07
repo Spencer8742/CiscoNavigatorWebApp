@@ -223,6 +223,16 @@ export class Hub {
         this.#send(panel, { t: 'pong', ref: msg.id });
         break;
 
+      case 'reload': {
+        // Logged at info because it blanks every screen in the building for a
+        // moment: if someone asks why the wall panels flickered, the answer
+        // should be in the log rather than a mystery.
+        const who = panel.panelId ? `"${panel.panelId}"` : 'an unnamed panel';
+        log.info(`Reload requested by ${who} — telling all ${this.#panels.size} panel(s) to reload`);
+        this.broadcast({ t: 'reload' });
+        break;
+      }
+
       case 'layout': {
         if (!this.#deps.onLayout) return;
         const problem = this.#deps.onLayout(msg.layout, panel.panelId);

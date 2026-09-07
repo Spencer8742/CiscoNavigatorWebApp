@@ -194,15 +194,14 @@ img {
    preference for a wall panel, not a rule that should cost a fifth of a
    narrow screen. */
 @media (max-width: 34rem) {
-  .shell[data-nav='left'] {
-    grid-template-columns: 1fr;
-    grid-template-rows: 1fr var(--bar-h);
-    grid-template-areas: 'main' 'nav';
-  }
-
-  .shell[data-nav='left'] .nav {
-    flex-direction: row;
-  }
+  /* The move itself is no longer done here. Restyling a left rail into a
+     bottom bar from CSS looked like it worked and did not: the item sizing
+     keys off `data-pos`, which still said 'left', so seven items kept
+     `width: 100%` and measured 2685px across inside a 390px screen, with
+     every destination but the first off the right edge. Below this width the
+     shell and the nav both switch to their EXISTING bottom layout instead
+     (state/ui.ts `narrow`), which is already first-class and already correct.
+     What remains here is the one thing that is genuinely about width. */
 
   /* The labels are what makes seven destinations not fit across a phone —
      and this applies to BOTH positions, not just the rail that was moved.
