@@ -93,7 +93,8 @@ const CALL_TIMEOUT_MS = 10_000;
  */
 const RESPONSE_TIMEOUT_MS = 25_000;
 const PIPELINE_TIMEOUT_MS = 45_000;
-const WAKE_PIPELINE_TIMEOUT_MS = 60_000;
+const WAKE_WORD_TIMEOUT_MS = 20_000;
+const WAKE_PIPELINE_TIMEOUT_MS = 75_000;
 const MAX_QUEUED_STREAM_BYTES = 16_000 * 2 * 3;
 /** Application-level ping interval — catches half-open sockets. */
 const PING_INTERVAL_MS = 30_000;
@@ -671,7 +672,10 @@ export class HaClient {
       end_stage: 'tts',
       input: {
         sample_rate: input.sampleRate,
-        timeout: WAKE_PIPELINE_TIMEOUT_MS / 1000,
+        timeout: WAKE_WORD_TIMEOUT_MS / 1000,
+        noise_suppression_level: 2,
+        auto_gain_dbfs: 31,
+        volume_multiplier: 2,
       },
       ...(input.conversationId ? { conversation_id: input.conversationId } : {}),
       timeout: WAKE_PIPELINE_TIMEOUT_MS / 1000,
