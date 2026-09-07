@@ -45,7 +45,11 @@ const SIZES = [
   ['phone', 390, 844],
   ['desktop', 1920, 1080],
 ];
-const SCREENS = ['Home', 'Rooms', 'Controls', 'Media', 'Photos', 'Settings'];
+// Apple TV was missing from this list, so the screen with the densest layout
+// in the app -- artwork and a remote sharing one row -- was never measured.
+// It only renders when the config declares `controls.appleTvs`, so point this
+// at a backend that has some or it will report `no-nav` and tell you nothing.
+const SCREENS = ['Home', 'Rooms', 'Controls', 'Apple TV', 'Media', 'Photos', 'Settings'];
 
 const t = (await (await fetch('http://127.0.0.1:9260/json')).json()).find((x) => x.type === 'page');
 const ws = new WebSocket(t.webSocketDebuggerUrl);

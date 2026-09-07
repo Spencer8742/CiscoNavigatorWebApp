@@ -1792,6 +1792,30 @@
   gap: clamp(var(--s-5), 4vw, var(--s-8));
   min-height: clamp(30rem, 62vh, 42rem);
 }
+
+/*
+ * Folded away: the remote costs one button's worth of column and the media
+ * takes the rest. `auto` rather than a fixed width so the button decides.
+ */
+.apple-tv-content[data-remote='closed'] {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+/*
+ * The button that brings it back. A tall pill against the right edge, which
+ * reads as something to pull out rather than as another transport control --
+ * and is a large target on a wall panel nobody is looking at closely.
+ */
+.apple-tv-remote-open {
+  display: grid;
+  place-items: center;
+  width: var(--touch);
+  min-height: clamp(7rem, 20vh, 11rem);
+  border-radius: var(--r-xl);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-2);
+  color: var(--text-dim);
+}
 .apple-tv-media {
   display: grid;
   grid-template-columns: minmax(17rem, 24rem) minmax(0, 1fr);
@@ -1886,12 +1910,24 @@
   border: 1px solid var(--border-subtle);
 }
 .apple-tv-key.is-primary { color: var(--accent); background: var(--accent-soft); border-color: var(--accent-dim); }
-.apple-tv-keys { justify-content: center; gap: var(--s-2); flex-wrap: wrap; }
+/*
+ * A grid, not a wrapping flex row. Four 4.5rem buttons need 18rem, and the
+ * remote column is narrower than that on most screens -- wrapping put three
+ * on one row and orphaned the fourth underneath. Two rows of two is the same
+ * information and looks intended.
+ */
+.apple-tv-keys {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  justify-content: center;
+  gap: var(--s-2);
+}
 .apple-tv-keys > button {
   gap: var(--s-2);
-  min-width: 4.5rem;
+  /* The grid decides the width; the floor is the touch target, not the label. */
+  min-width: 0;
   min-height: 4.5rem;
-  padding: 0 var(--s-4);
+  padding: 0 var(--s-2);
   font-size: 1.05rem;
 }
 .apple-tv-shortcuts {
@@ -1968,19 +2004,75 @@
 }
 .apple-tv-switch .status-dot { flex: 0 0 auto; }
 
+/*
+ * The remote NEVER drops below the artwork.
+ *
+ * It used to: below 1100px the grid collapsed to one column and the remote
+ * landed under the media, which on a 10" panel is most of a screen of
+ * scrolling to reach a Home button. What gives instead is the split. An open
+ * remote takes the width it needs at every size and the artwork shrinks to
+ * suit; a closed one is a single button, which fits anywhere.
+ */
 @media (max-width: 1100px) {
-  .apple-tv-content { grid-template-columns: 1fr; min-height: 0; }
-  .apple-tv-remote {
-    min-width: 0;
-    padding: var(--s-5) 0 0;
-    border-left: 0;
-    border-top: 1px solid var(--border-subtle);
+  .apple-tv-content[data-remote='open'] {
+    grid-template-columns: minmax(0, 1fr) minmax(16rem, 22rem);
+    /* Less reserved height once the columns are this narrow: at the old
+       figure the card was mostly empty above and below the content. */
+    min-height: clamp(20rem, 40vh, 28rem);
   }
+  .apple-tv-remote { padding-left: var(--s-4); }
+  /* The artwork was still claiming up to 24rem here and squeezing the title
+     into a four-word-per-line column. */
+  .apple-tv-content[data-remote='open'] .apple-tv-media {
+    grid-template-columns: minmax(0, 11rem) minmax(0, 1fr);
+  }
+  .apple-tv-keys { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
-@media (max-width: 700px) {
-  .apple-tv-media { grid-template-columns: 1fr; }
-  .apple-tv-art { width: min(15rem, 70vw); margin: 0 auto; }
+@media (max-width: 820px) {
+  .apple-tv-content[data-remote='open'] {
+    grid-template-columns: minmax(0, 1fr) 15rem;
+  }
+  /* Art above the text rather than beside it: below this the two-column media
+     block leaves the title a strip too narrow to read. */
+  .apple-tv-media { grid-template-columns: minmax(0, 1fr); }
+  .apple-tv-content[data-remote='open'] .apple-tv-art { width: min(9rem, 22vw); }
+}
+
+/*
+ * Phone, remote open. The remote wins the width -- it is what the person is
+ * touching -- and the artwork becomes a thumbnail. The transport row stays:
+ * play/pause is not on the remote itself, so hiding it here would leave no
+ * way to pause without opening something else.
+ */
+@media (max-width: 560px) {
+  /*
+   * At this width the remote takes over and the media side becomes a strip.
+   *
+   * Not a preference -- an accounting result. A usable remote needs about
+   * 10rem, and the transport row alone costs 8.5rem (three 44px targets and
+   * two gaps). On a 390px screen those cannot both hold, and trying it put
+   * play/pause on top of the touchpad's own label. So while the remote is
+   * open the media column is the artwork and nothing else.
+   *
+   * Nothing is lost for long: the remote folds itself away after
+   * REMOTE_IDLE_MS and the whole media block -- title, progress, transport --
+   * comes straight back, at full size.
+   */
+  .apple-tv-content[data-remote='open'] {
+    grid-template-columns: minmax(0, 5rem) minmax(0, 1fr);
+    gap: var(--s-3);
+  }
+  .apple-tv-content[data-remote='open'] .apple-tv-art { width: 100%; }
+  .apple-tv-content[data-remote='open'] .apple-tv-now { display: none; }
+}
+
+/* Closed on any screen: the artwork gets everything back. */
+@media (max-width: 820px) {
+  .apple-tv-content[data-remote='closed'] .apple-tv-art {
+    width: min(15rem, 60vw);
+    margin: 0 auto;
+  }
 }
 
 .control-tabs {

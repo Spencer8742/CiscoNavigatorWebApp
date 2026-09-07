@@ -1,5 +1,5 @@
 import type { JSX } from 'preact';
-import { useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { Icon } from '~/components/Icon.tsx';
 import { Pressable } from '~/components/Pressable.tsx';
 import { Progress } from '~/components/Progress.tsx';
@@ -10,8 +10,44 @@ import { controlsConfig } from '~/config/index.ts';
 import { AppleTvServiceLogo } from '~/components/AppleTvServiceLogo.tsx';
 import type { AppleTvCommand, AppleTvState } from '@shared/protocol.ts';
 
+/**
+ * How long the remote sits untouched before it folds away.
+ *
+ * Long enough to read what is on screen and press again without it closing
+ * under your hand; short enough that the artwork is back by the time anyone
+ * looks at the panel again.
+ */
+const REMOTE_IDLE_MS = 30_000;
+
 export function AppleTvRemote({ tv }: { tv: AppleTvState }) {
   const [pin, setPin] = useState('');
+
+  /*
+   * The remote and the artwork share one row and always have -- this never
+   * stacks them, at any width. What gives on a narrow screen is the SPLIT:
+   * an open remote takes the space it needs and the artwork shrinks to a
+   * thumbnail, and closing the remote hands it all back.
+   */
+  const [remoteOpen, setRemoteOpen] = useState(true);
+  const idle = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  const keepOpen = () => {
+    if (idle.current) clearTimeout(idle.current);
+    idle.current = setTimeout(() => setRemoteOpen(false), REMOTE_IDLE_MS);
+  };
+
+  useEffect(() => {
+    if (!remoteOpen) return;
+    keepOpen();
+    return () => {
+      if (idle.current) clearTimeout(idle.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [remoteOpen]);
+
+  // A different Apple TV is a fresh start: you switched to it in order to use
+  // it, so it should not hand you a folded remote left over from the last one.
+  useEffect(() => setRemoteOpen(true), [tv.id]);
   const token = getToken();
   const shortcuts = controlsConfig.value.appleTvs.find((device) => device.id === tv.id)?.shortcuts ?? [];
   const send = (op: AppleTvCommand) => {
@@ -43,7 +79,7 @@ export function AppleTvRemote({ tv }: { tv: AppleTvState }) {
         <Pairing tv={tv} pin={pin} setPin={setPin} />
       ) : null}
 
-      <div class="apple-tv-content">
+      <div class="apple-tv-content" data-remote={remoteOpen ? 'open' : 'closed'}>
         <div class="apple-tv-media">
           <div class="apple-tv-art" data-empty={tv.artwork ? undefined : ''}>
             {tv.artwork ? (
@@ -75,7 +111,11 @@ export function AppleTvRemote({ tv }: { tv: AppleTvState }) {
           </div>
         </div>
 
-        <div class="apple-tv-remote" aria-label={`${tv.name} remote`}>
+        {remoteOpen ? (
+        /* One handler on the container rather than one per control: a swipe,
+           a key and an app shortcut are all "still using it", and hanging the
+           reset off the container cannot miss a control added later. */
+        <div class="apple-tv-remote" aria-label={`${tv.name} remote`} onPointerDown={keepOpen}>
           <SwipePad tv={tv} send={send} />
           <div class="apple-tv-keys">
             <Pressable onPress={() => send('menu')} ariaLabel="Back">Back</Pressable>
@@ -98,6 +138,18 @@ export function AppleTvRemote({ tv }: { tv: AppleTvState }) {
             </div>
           ) : null}
         </div>
+        ) : (
+          <Pressable
+            class="apple-tv-remote-open"
+            onPress={() => {
+              setRemoteOpen(true);
+              markActivity();
+            }}
+            ariaLabel={`Show ${tv.name} remote`}
+          >
+            <Icon name="expand" size="1.4rem" />
+          </Pressable>
+        )}
       </div>
       {tv.error && !tv.reachable ? <p class="apple-tv-error">{tv.error}</p> : null}
     </section>

@@ -152,6 +152,37 @@
   height: 100%;
 }
 
+/*
+ * Phone: give the destinations the width back.
+ *
+ * The bar carries more than destinations -- an Assist button and a connection
+ * dot -- and both were fixed at var(--touch). On a 390px screen those two took
+ * 112px between them and squeezed seven destinations to 38x66, under the 44px
+ * floor everything else in this app respects.
+ *
+ * So the Assist button flexes like a destination (it is one, in every way that
+ * matters to a thumb) and the dot shrinks to the size of the dot it draws.
+ *
+ * These live here rather than in base.css's responsive block on purpose: the
+ * rules they override are in this file, at equal specificity, and this file
+ * loads second. The same rules in base.css silently lost.
+ */
+@media (max-width: 34rem) {
+  .nav[data-pos='bottom'] {
+    padding: 0;
+    gap: 0;
+  }
+  .nav[data-pos='bottom'] .nav-assist {
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
+    max-width: 8rem;
+  }
+  .nav[data-pos='bottom'] .nav-status {
+    width: 1.5rem;
+  }
+}
+
 .nav-assist {
   flex: 0 0 auto;
   display: flex;
