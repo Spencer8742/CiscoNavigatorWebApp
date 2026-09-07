@@ -99,6 +99,8 @@ export interface HubDeps {
   onControl?: (button: string) => Promise<string | null>;
   /** Send text to Home Assistant Assist. */
   onAssist?: (msg: Extract<ClientMessage, { t: 'assist' }>) => Promise<AssistResult>;
+  /** Accept an authenticated wake-word audio socket. */
+  onWake?: (socket: WebSocket, req: IncomingMessage) => void;
   /** Drive a key light. Returns an error string, or null. */
   onKeyLight?: (light: string, op: KeyLightOp, value?: number) => Promise<string | null>;
   /** Choose an input on a `sources:` key. Returns an error string, or null. */
@@ -134,6 +136,20 @@ export class Hub {
 
     server.on('upgrade', (req, socket, head) => {
       const url = req.url ?? '';
+      if (url.startsWith('/api/assist/wake')) {
+        if (!deps.auth.check(req)) {
+          log.warn('Rejected unauthenticated wake listener upgrade');
+          socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+          socket.destroy();
+          return;
+        }
+        this.#wss.handleUpgrade(req, socket, head, (ws) => {
+          if (deps.onWake) deps.onWake(ws, req);
+          else ws.close(1011, 'Assist wake is not configured');
+        });
+        return;
+      }
+
       if (!url.startsWith('/ws')) {
         socket.destroy();
         return;

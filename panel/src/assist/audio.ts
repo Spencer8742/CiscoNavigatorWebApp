@@ -1,0 +1,115 @@
+export const TARGET_SAMPLE_RATE = 16_000;
+
+export class PcmRecorder {
+  readonly #context: AudioContext;
+  readonly #stream: MediaStream;
+  readonly #source: MediaStreamAudioSourceNode;
+  readonly #processor: ScriptProcessorNode;
+  readonly #chunks: Int16Array[] = [];
+  #stopped = false;
+
+  private constructor(
+    context: AudioContext,
+    stream: MediaStream,
+    source: MediaStreamAudioSourceNode,
+    processor: ScriptProcessorNode,
+  ) {
+    this.#context = context;
+    this.#stream = stream;
+    this.#source = source;
+    this.#processor = processor;
+  }
+
+  static async start(targetSampleRate = TARGET_SAMPLE_RATE): Promise<PcmRecorder> {
+    return PcmRecorder.startWithChunks(() => undefined, targetSampleRate);
+  }
+
+  static async startWithChunks(
+    onChunk: (chunk: Int16Array) => void,
+    targetSampleRate = TARGET_SAMPLE_RATE,
+  ): Promise<PcmRecorder> {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+    const Ctor = window.AudioContext ?? window.webkitAudioContext;
+    if (!Ctor) throw new Error('Audio capture is not available');
+    const context = new Ctor();
+    const source = context.createMediaStreamSource(stream);
+    const processor = context.createScriptProcessor(4096, 1, 1);
+    const recorder = new PcmRecorder(context, stream, source, processor);
+
+    processor.onaudioprocess = (event) => {
+      const input = event.inputBuffer.getChannelData(0);
+      const chunk = toPcm16(input, context.sampleRate, targetSampleRate);
+      recorder.#chunks.push(chunk);
+      onChunk(chunk);
+    };
+
+    source.connect(processor);
+    processor.connect(context.destination);
+    return recorder;
+  }
+
+  async stop(): Promise<ArrayBuffer> {
+    if (this.#stopped) return new ArrayBuffer(0);
+    this.#stopped = true;
+    this.#processor.disconnect();
+    this.#source.disconnect();
+    for (const track of this.#stream.getTracks()) track.stop();
+    await this.#context.close().catch(() => undefined);
+
+    const samples = this.#chunks.reduce((total, chunk) => total + chunk.length, 0);
+    const out = new Int16Array(samples);
+    let offset = 0;
+    for (const chunk of this.#chunks) {
+      out.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return out.buffer.slice(0);
+  }
+}
+
+declare global {
+  interface Window {
+    webkitAudioContext?: typeof AudioContext;
+  }
+}
+
+export function canRecordVoice(): boolean {
+  return Boolean(
+    typeof navigator.mediaDevices?.getUserMedia === 'function' &&
+      (window.AudioContext || window.webkitAudioContext),
+  );
+}
+
+export function pcmChunkBytes(chunk: Int16Array): ArrayBuffer {
+  const bytes = new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+  return bytes.slice().buffer;
+}
+
+function toPcm16(input: Float32Array, inputSampleRate: number, outputSampleRate: number): Int16Array {
+  const ratio = inputSampleRate / outputSampleRate;
+  const length = Math.floor(input.length / ratio);
+  const out = new Int16Array(length);
+
+  for (let i = 0; i < length; i += 1) {
+    const start = Math.floor(i * ratio);
+    const end = Math.min(Math.floor((i + 1) * ratio), input.length);
+    let sum = 0;
+    let count = 0;
+    for (let j = start; j < end; j += 1) {
+      sum += input[j] ?? 0;
+      count += 1;
+    }
+    const sample = Math.max(-1, Math.min(1, count > 0 ? sum / count : input[start] ?? 0));
+    out[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+  }
+
+  return out;
+}
+

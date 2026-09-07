@@ -54,11 +54,31 @@ interface PendingPipeline {
   sampleRate: number;
   binaryHandlerId: number | null;
   sentAudio: boolean;
+  streaming: boolean;
+  audioQueue: Buffer[];
+  audioEnded: boolean;
   inputText: string | null;
   sttText: string | null;
   intentOutput: unknown;
   ttsUrl: string | null;
   conversationId: string | null;
+}
+
+export interface AssistPipelineStream {
+  result: Promise<AssistResult>;
+  write(chunk: Buffer): boolean;
+  end(): boolean;
+  cancel(): void;
+}
+
+export class AssistPipelineError extends Error {
+  readonly code: string | null;
+
+  constructor(message: string, code: string | null) {
+    super(message);
+    this.name = 'AssistPipelineError';
+    this.code = code;
+  }
 }
 
 /** A service call that hasn't come back in this long is not coming back. */
@@ -73,6 +93,8 @@ const CALL_TIMEOUT_MS = 10_000;
  */
 const RESPONSE_TIMEOUT_MS = 25_000;
 const PIPELINE_TIMEOUT_MS = 45_000;
+const WAKE_PIPELINE_TIMEOUT_MS = 60_000;
+const MAX_QUEUED_STREAM_BYTES = 16_000 * 2 * 3;
 /** Application-level ping interval — catches half-open sockets. */
 const PING_INTERVAL_MS = 30_000;
 const PING_TIMEOUT_MS = 10_000;
@@ -516,6 +538,9 @@ export class HaClient {
         sampleRate: 0,
         binaryHandlerId: null,
         sentAudio: true,
+        streaming: false,
+        audioQueue: [],
+        audioEnded: false,
         inputText: text,
         sttText: null,
         intentOutput: null,
@@ -566,6 +591,9 @@ export class HaClient {
         sampleRate: input.sampleRate,
         binaryHandlerId: null,
         sentAudio: false,
+        streaming: false,
+        audioQueue: [],
+        audioEnded: false,
         inputText: null,
         sttText: null,
         intentOutput: null,
@@ -591,6 +619,78 @@ export class HaClient {
     });
   }
 
+  startAssistWake(input: {
+    sampleRate: number;
+    conversationId?: string;
+  }): AssistPipelineStream {
+    let resolveResult!: (result: AssistResult) => void;
+    let rejectResult!: (error: Error) => void;
+    const result = new Promise<AssistResult>((resolve, reject) => {
+      resolveResult = resolve;
+      rejectResult = reject;
+    });
+
+    if (this.#state !== 'connected') {
+      rejectResult(new Error('Home Assistant is not connected'));
+      return {
+        result,
+        write: () => false,
+        end: () => false,
+        cancel: () => undefined,
+      };
+    }
+
+    const id = this.#nextId();
+    const timer = setTimeout(() => {
+      this.#pipelines.delete(id);
+      rejectResult(new Error('Assist did not respond'));
+    }, WAKE_PIPELINE_TIMEOUT_MS);
+
+    this.#pipelines.set(id, {
+      resolve: resolveResult,
+      reject: rejectResult,
+      timer,
+      pcm: Buffer.alloc(0),
+      sampleRate: input.sampleRate,
+      binaryHandlerId: null,
+      sentAudio: false,
+      streaming: true,
+      audioQueue: [],
+      audioEnded: false,
+      inputText: null,
+      sttText: null,
+      intentOutput: null,
+      ttsUrl: null,
+      conversationId: input.conversationId ?? null,
+    });
+
+    const sent = this.#send({
+      id,
+      type: 'assist_pipeline/run',
+      start_stage: 'wake_word',
+      end_stage: 'tts',
+      input: {
+        sample_rate: input.sampleRate,
+        timeout: WAKE_PIPELINE_TIMEOUT_MS / 1000,
+      },
+      ...(input.conversationId ? { conversation_id: input.conversationId } : {}),
+      timeout: WAKE_PIPELINE_TIMEOUT_MS / 1000,
+    });
+
+    if (!sent) {
+      clearTimeout(timer);
+      this.#pipelines.delete(id);
+      rejectResult(new Error('Home Assistant is not connected'));
+    }
+
+    return {
+      result,
+      write: (chunk) => this.#writeStreamingPipelineAudio(id, chunk),
+      end: () => this.#endStreamingPipelineAudio(id),
+      cancel: () => this.#finishPipeline(id, new Error('Wake listener closed')),
+    };
+  }
+
   #handlePipelineEvent(id: number, raw: HaEntityEvent | HaPipelineEvent): void {
     const pending = this.#pipelines.get(id);
     if (!pending) return;
@@ -603,6 +703,7 @@ export class HaClient {
       const handler = numberOf(runner?.['stt_binary_handler_id']);
       if (handler !== null && handler >= 0 && handler <= 255) {
         pending.binaryHandlerId = handler;
+        if (pending.streaming) this.#flushStreamingPipelineAudio(id, pending);
       }
       return;
     }
@@ -634,7 +735,11 @@ export class HaClient {
     }
 
     if (type === 'error') {
-      this.#finishPipeline(id, new Error(stringOf(data?.['message']) ?? 'Assist failed'));
+      const code = stringOf(data?.['code']);
+      this.#finishPipeline(
+        id,
+        new AssistPipelineError(stringOf(data?.['message']) ?? 'Assist failed', code),
+      );
       return;
     }
 
@@ -662,12 +767,61 @@ export class HaClient {
     const chunkSize = 8192;
     for (let offset = 0; offset < pending.pcm.length; offset += chunkSize) {
       const chunk = pending.pcm.subarray(offset, offset + chunkSize);
-      if (!this.#sendBinary(Buffer.concat([Buffer.from([handler]), chunk]))) {
+      if (!this.#sendPipelineAudioChunk(handler, chunk)) {
         this.#finishPipeline(id, new Error('Home Assistant is not connected'));
         return;
       }
     }
     this.#sendBinary(Buffer.from([handler]));
+  }
+
+  #writeStreamingPipelineAudio(id: number, chunk: Buffer): boolean {
+    const pending = this.#pipelines.get(id);
+    if (!pending || !pending.streaming || pending.audioEnded) return false;
+    if (chunk.length === 0) return true;
+
+    const handler = pending.binaryHandlerId;
+    if (handler === null) {
+      const queued = pending.audioQueue.reduce((total, item) => total + item.length, 0);
+      if (queued + chunk.length > MAX_QUEUED_STREAM_BYTES) {
+        this.#finishPipeline(id, new Error('Assist audio stream could not start'));
+        return false;
+      }
+      pending.audioQueue.push(Buffer.from(chunk));
+      return true;
+    }
+
+    if (!this.#sendPipelineAudioChunk(handler, chunk)) {
+      this.#finishPipeline(id, new Error('Home Assistant is not connected'));
+      return false;
+    }
+    return true;
+  }
+
+  #endStreamingPipelineAudio(id: number): boolean {
+    const pending = this.#pipelines.get(id);
+    if (!pending || !pending.streaming || pending.audioEnded) return false;
+    pending.audioEnded = true;
+    const handler = pending.binaryHandlerId;
+    if (handler === null) return true;
+    return this.#sendBinary(Buffer.from([handler]));
+  }
+
+  #flushStreamingPipelineAudio(id: number, pending: PendingPipeline): void {
+    const handler = pending.binaryHandlerId;
+    if (handler === null) return;
+    const queued = pending.audioQueue.splice(0);
+    for (const chunk of queued) {
+      if (!this.#sendPipelineAudioChunk(handler, chunk)) {
+        this.#finishPipeline(id, new Error('Home Assistant is not connected'));
+        return;
+      }
+    }
+    if (pending.audioEnded) this.#sendBinary(Buffer.from([handler]));
+  }
+
+  #sendPipelineAudioChunk(handler: number, chunk: Buffer): boolean {
+    return this.#sendBinary(Buffer.concat([Buffer.from([handler]), chunk]));
   }
 
   #finishPipeline(id: number, error: Error | null, result?: AssistResult): void {

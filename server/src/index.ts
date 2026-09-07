@@ -12,7 +12,7 @@ import { ArtworkProxy } from '~/http/artwork.ts';
 import { HaTtsProxy } from '~/http/ha-tts.ts';
 import { MediaArt } from '~/http/media-art.ts';
 import { Hub } from '~/hub/index.ts';
-import { HaClient } from '~/ha/client.ts';
+import { AssistPipelineError, HaClient } from '~/ha/client.ts';
 import { HaStore, isEmptyPatch } from '~/ha/store.ts';
 import { ServiceGuard } from '~/ha/services.ts';
 import { SonosClient } from '~/sonos/client.ts';
@@ -433,6 +433,46 @@ async function main(): Promise<void> {
       }));
     },
 
+    onWake: (socket) => {
+      const stream = haClient.startAssistWake({ sampleRate: ASSIST_AUDIO_SAMPLE_RATE });
+      let done = false;
+
+      socket.on('message', (data) => {
+        const chunk = rawAudio(data);
+        if (!chunk) return;
+        stream.write(chunk);
+      });
+
+      socket.on('close', () => {
+        if (!done) stream.cancel();
+      });
+
+      socket.on('error', () => {
+        if (!done) stream.cancel();
+      });
+
+      stream.result
+        .then((result) => {
+          done = true;
+          if (socket.readyState === 1) {
+            socket.send(JSON.stringify({ t: 'result', result: proxyAssistAudio(result) }));
+            socket.close(1000, 'ok');
+          }
+        })
+        .catch((err) => {
+          done = true;
+          if (socket.readyState !== 1) return;
+          if (err instanceof AssistPipelineError && err.code === 'wake-word-timeout') {
+            socket.send(JSON.stringify({ t: 'timeout' }));
+            socket.close(1000, 'timeout');
+            return;
+          }
+          const message = err instanceof Error ? err.message : 'Assist wake listener failed';
+          socket.send(JSON.stringify({ t: 'error', message }));
+          socket.close(1011, message.slice(0, 120));
+        });
+    },
+
     getPrefs: (panelId) => prefs.for(panelId),
     onPref: (key, value, panelId) => prefs.set(key, value, panelId),
     onLayout: (layout, panelId) =>
@@ -724,6 +764,13 @@ async function main(): Promise<void> {
       ...result,
       audioUrl: ttsAudio.pathFor(result.audioUrl),
     };
+  }
+
+  function rawAudio(data: unknown): Buffer | null {
+    if (Buffer.isBuffer(data)) return data;
+    if (data instanceof ArrayBuffer) return Buffer.from(data);
+    if (Array.isArray(data) && data.every(Buffer.isBuffer)) return Buffer.concat(data);
+    return null;
   }
 
   /*

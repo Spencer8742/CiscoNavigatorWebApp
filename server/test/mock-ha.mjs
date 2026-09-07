@@ -238,7 +238,7 @@ export class MockHomeAssistant {
           break;
         }
 
-        session.pipeline = { id: msg.id, handler: 7, chunks: [] };
+        session.pipeline = { id: msg.id, handler: 7, chunks: [], mode: msg.start_stage, finished: false };
         ws.send(JSON.stringify({ id: msg.id, type: 'result', success: true, result: null }));
         ws.send(JSON.stringify({
           id: msg.id,
@@ -253,6 +253,20 @@ export class MockHomeAssistant {
             },
           },
         }));
+        if (msg.start_stage === 'wake_word') {
+          ws.send(JSON.stringify({
+            id: msg.id,
+            type: 'event',
+            event: {
+              type: 'wake_word-start',
+              data: {
+                engine: 'mock-wake-word',
+                metadata: { sample_rate: msg.input?.sample_rate },
+              },
+            },
+          }));
+          break;
+        }
         ws.send(JSON.stringify({
           id: msg.id,
           type: 'event',
@@ -276,46 +290,76 @@ export class MockHomeAssistant {
     if (!pipeline) return;
     if (data[0] !== pipeline.handler) return;
 
+    if (pipeline.mode === 'wake_word') {
+      pipeline.chunks.push(Buffer.from(data.subarray(1)));
+      const received = pipeline.chunks.reduce((total, chunk) => total + chunk.length, 0);
+      if (!pipeline.finished && received >= 4096) {
+        pipeline.finished = true;
+        this.assistAudioChunks.push(...pipeline.chunks);
+        const id = pipeline.id;
+        session.pipeline = null;
+        ws.send(JSON.stringify({
+          id,
+          type: 'event',
+          event: {
+            type: 'wake_word-end',
+            data: {
+              wake_word_output: {
+                wake_word_id: 'okay_nabu',
+                timestamp: 250,
+              },
+            },
+          },
+        }));
+        this.#finishVoicePipeline(ws, id, 'mock-wake-conversation');
+      }
+      return;
+    }
+
     if (data.length === 1) {
       this.assistAudioChunks.push(...pipeline.chunks);
       const id = pipeline.id;
       session.pipeline = null;
-      ws.send(JSON.stringify({
-        id,
-        type: 'event',
-        event: {
-          type: 'stt-end',
-          data: { stt_output: { text: this.assistTranscript } },
-        },
-      }));
-      ws.send(JSON.stringify({
-        id,
-        type: 'event',
-        event: {
-          type: 'intent-end',
-          data: {
-            intent_output: this.#intentOutput('mock-voice-conversation'),
-          },
-        },
-      }));
-      ws.send(JSON.stringify({
-        id,
-        type: 'event',
-        event: {
-          type: 'tts-end',
-          data: {
-            tts_output: {
-              url: '/api/tts_proxy/mock.mp3',
-              mime_type: 'audio/mpeg',
-            },
-          },
-        },
-      }));
-      ws.send(JSON.stringify({ id, type: 'event', event: { type: 'run-end', data: {} } }));
+      this.#finishVoicePipeline(ws, id, 'mock-voice-conversation');
       return;
     }
 
     pipeline.chunks.push(Buffer.from(data.subarray(1)));
+  }
+
+  #finishVoicePipeline(ws, id, conversationId) {
+    ws.send(JSON.stringify({
+      id,
+      type: 'event',
+      event: {
+        type: 'stt-end',
+        data: { stt_output: { text: this.assistTranscript } },
+      },
+    }));
+    ws.send(JSON.stringify({
+      id,
+      type: 'event',
+      event: {
+        type: 'intent-end',
+        data: {
+          intent_output: this.#intentOutput(conversationId),
+        },
+      },
+    }));
+    ws.send(JSON.stringify({
+      id,
+      type: 'event',
+      event: {
+        type: 'tts-end',
+        data: {
+          tts_output: {
+            url: '/api/tts_proxy/mock.mp3',
+            mime_type: 'audio/mpeg',
+          },
+        },
+      },
+    }));
+    ws.send(JSON.stringify({ id, type: 'event', event: { type: 'run-end', data: {} } }));
   }
 
   #intentOutput(conversationId) {

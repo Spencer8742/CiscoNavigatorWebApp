@@ -1,7 +1,18 @@
 import { Icon } from '~/components/Icon.tsx';
 import { Pressable } from '~/components/Pressable.tsx';
 import { ui } from '~/config/index.ts';
-import { assistOpen, linkStatus, markActivity, narrow, navigate, route, visibleRoutes, type Route } from '~/state/ui.ts';
+import {
+  assistListenRequests,
+  assistOpen,
+  assistWakePaused,
+  linkStatus,
+  markActivity,
+  narrow,
+  navigate,
+  route,
+  visibleRoutes,
+  type Route,
+} from '~/state/ui.ts';
 
 /**
  * Primary navigation.
@@ -67,7 +78,9 @@ export function Nav() {
       <Pressable
         class="nav-assist p-sm"
         onPress={() => {
+          assistWakePaused.value = true;
           assistOpen.value = true;
+          assistListenRequests.value += 1;
           markActivity();
         }}
         ariaLabel="Assist"

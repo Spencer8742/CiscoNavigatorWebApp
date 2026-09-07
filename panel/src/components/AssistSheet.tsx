@@ -2,15 +2,22 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { Icon } from '~/components/Icon.tsx';
 import { Pressable } from '~/components/Pressable.tsx';
 import { Sheet } from '~/components/Sheet.tsx';
+import { canRecordVoice, PcmRecorder, TARGET_SAMPLE_RATE } from '~/assist/audio.ts';
 import { getToken } from '~/net/auth.ts';
 import { askAssist, askAssistAudio } from '~/net/socket.ts';
-import { assistOpen, markActivity, showToast } from '~/state/ui.ts';
+import {
+  assistListenRequests,
+  assistOpen,
+  assistWakePaused,
+  assistWakeResult,
+  markActivity,
+  showToast,
+} from '~/state/ui.ts';
 import type { AssistResult } from '@shared/protocol.ts';
 
 type AssistPhase = 'idle' | 'recording' | 'sending' | 'answered' | 'unsupported';
 
 const LANG = 'en-US';
-const TARGET_SAMPLE_RATE = 16_000;
 const MAX_RECORDING_MS = 7_000;
 
 export function AssistSheet() {
@@ -22,9 +29,13 @@ export function AssistSheet() {
   const recorder = useRef<PcmRecorder | null>(null);
   const player = useRef<HTMLAudioElement | null>(null);
   const autoStop = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastListenRequest = useRef(assistListenRequests.value);
+  const lastWakeResult = useRef(assistWakeResult.value?.seq ?? 0);
 
   const open = assistOpen.value;
   const voiceSupported = canRecordVoice();
+  const listenRequest = assistListenRequests.value;
+  const wakeResult = assistWakeResult.value;
 
   const clearAutoStop = (): void => {
     if (!autoStop.current) return;
@@ -37,6 +48,7 @@ export function AssistSheet() {
     if (!active) return;
     recorder.current = null;
     clearAutoStop();
+    assistWakePaused.value = false;
     const audio = await active.stop();
     if (!sendAudio) {
       setPhase('idle');
@@ -46,17 +58,42 @@ export function AssistSheet() {
   };
 
   useEffect(() => {
-    if (!open) void stopRecording(false);
+    if (!open) {
+      player.current?.pause();
+      assistWakePaused.value = false;
+      void stopRecording(false);
+    }
     return () => {
+      player.current?.pause();
+      assistWakePaused.value = false;
       void stopRecording(false);
     };
   }, [open]);
+
+  useEffect(() => {
+    if (!open || listenRequest <= lastListenRequest.current) return;
+    lastListenRequest.current = listenRequest;
+    if (phase !== 'recording' && phase !== 'sending') void startRecording();
+  }, [open, listenRequest, phase]);
+
+  useEffect(() => {
+    if (!wakeResult || wakeResult.seq <= lastWakeResult.current) return;
+    lastWakeResult.current = wakeResult.seq;
+    const result = wakeResult.result;
+    setConversationId(result.conversationId);
+    setHeard(result.text);
+    setReply(result);
+    setPhase('answered');
+    void playReply(result);
+    if (!result.audioUrl) assistWakePaused.value = false;
+  }, [wakeResult]);
 
   const sendText = async (raw: string): Promise<void> => {
     const text = raw.trim();
     if (!text || phase === 'sending') return;
     markActivity();
     void stopRecording(false);
+    assistWakePaused.value = true;
     setPhase('sending');
     setHeard(text);
     setReply(null);
@@ -66,8 +103,10 @@ export function AssistSheet() {
       setReply(result);
       setPhase('answered');
       void playReply(result);
+      if (!result.audioUrl) assistWakePaused.value = false;
       if (!result.success) showToast(result.speech ?? 'Assist could not complete that', 'error');
     } catch (err) {
+      assistWakePaused.value = false;
       setPhase('idle');
       showToast(err instanceof Error ? err.message : 'Assist did not respond', 'error');
     }
@@ -81,6 +120,7 @@ export function AssistSheet() {
     }
 
     markActivity();
+    assistWakePaused.value = true;
     setPhase('sending');
     setHeard('Listening complete');
     setReply(null);
@@ -91,8 +131,10 @@ export function AssistSheet() {
       setReply(result);
       setPhase('answered');
       void playReply(result);
+      if (!result.audioUrl) assistWakePaused.value = false;
       if (!result.success) showToast(result.speech ?? 'Assist could not complete that', 'error');
     } catch (err) {
+      assistWakePaused.value = false;
       setPhase('idle');
       showToast(err instanceof Error ? err.message : 'Assist did not respond', 'error');
     }
@@ -106,6 +148,7 @@ export function AssistSheet() {
     }
 
     markActivity();
+    assistWakePaused.value = true;
     setDraft('');
     setReply(null);
     setHeard('Listening...');
@@ -199,113 +242,22 @@ export function AssistSheet() {
     if (!src || !el) return;
 
     try {
+      assistWakePaused.value = true;
       el.pause();
       el.src = src;
       el.currentTime = 0;
+      el.onended = () => {
+        assistWakePaused.value = false;
+      };
+      el.onerror = () => {
+        assistWakePaused.value = false;
+      };
       await el.play();
     } catch {
+      assistWakePaused.value = false;
       showToast('Assist answered, but audio playback was blocked', 'error');
     }
   }
-}
-
-class PcmRecorder {
-  readonly #context: AudioContext;
-  readonly #stream: MediaStream;
-  readonly #source: MediaStreamAudioSourceNode;
-  readonly #processor: ScriptProcessorNode;
-  readonly #chunks: Int16Array[] = [];
-  #stopped = false;
-
-  private constructor(
-    context: AudioContext,
-    stream: MediaStream,
-    source: MediaStreamAudioSourceNode,
-    processor: ScriptProcessorNode,
-  ) {
-    this.#context = context;
-    this.#stream = stream;
-    this.#source = source;
-    this.#processor = processor;
-  }
-
-  static async start(targetSampleRate: number): Promise<PcmRecorder> {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
-    });
-    const Ctor = window.AudioContext ?? window.webkitAudioContext;
-    if (!Ctor) throw new Error('Audio capture is not available');
-    const context = new Ctor();
-    const source = context.createMediaStreamSource(stream);
-    const processor = context.createScriptProcessor(4096, 1, 1);
-    const recorder = new PcmRecorder(context, stream, source, processor);
-
-    processor.onaudioprocess = (event) => {
-      const input = event.inputBuffer.getChannelData(0);
-      recorder.#chunks.push(toPcm16(input, context.sampleRate, targetSampleRate));
-    };
-
-    source.connect(processor);
-    processor.connect(context.destination);
-    return recorder;
-  }
-
-  async stop(): Promise<ArrayBuffer> {
-    if (this.#stopped) return new ArrayBuffer(0);
-    this.#stopped = true;
-    this.#processor.disconnect();
-    this.#source.disconnect();
-    for (const track of this.#stream.getTracks()) track.stop();
-    await this.#context.close().catch(() => undefined);
-
-    const samples = this.#chunks.reduce((total, chunk) => total + chunk.length, 0);
-    const out = new Int16Array(samples);
-    let offset = 0;
-    for (const chunk of this.#chunks) {
-      out.set(chunk, offset);
-      offset += chunk.length;
-    }
-    return out.buffer.slice(0);
-  }
-}
-
-declare global {
-  interface Window {
-    webkitAudioContext?: typeof AudioContext;
-  }
-}
-
-function canRecordVoice(): boolean {
-  return Boolean(
-    typeof navigator.mediaDevices?.getUserMedia === 'function' &&
-      (window.AudioContext || window.webkitAudioContext),
-  );
-}
-
-function toPcm16(input: Float32Array, inputSampleRate: number, outputSampleRate: number): Int16Array {
-  const ratio = inputSampleRate / outputSampleRate;
-  const length = Math.floor(input.length / ratio);
-  const out = new Int16Array(length);
-
-  for (let i = 0; i < length; i += 1) {
-    const start = Math.floor(i * ratio);
-    const end = Math.min(Math.floor((i + 1) * ratio), input.length);
-    let sum = 0;
-    let count = 0;
-    for (let j = start; j < end; j += 1) {
-      sum += input[j] ?? 0;
-      count += 1;
-    }
-    const sample = Math.max(-1, Math.min(1, count > 0 ? sum / count : input[start] ?? 0));
-    out[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
-  }
-
-  return out;
 }
 
 function audioSrc(path: string | null | undefined): string | null {

@@ -17,6 +17,7 @@ import { SourcesSheet } from '~/components/SourcesSheet.tsx';
 import { DeviceSourceSheet } from '~/components/DeviceSourceSheet.tsx';
 import { DeviceAlertsSheet } from '~/components/DeviceAlertsSheet.tsx';
 import { AssistSheet } from '~/components/AssistSheet.tsx';
+import { AssistWakeListener } from '~/components/AssistWakeListener.tsx';
 import { castConfig, ui } from '~/config/index.ts';
 import {
   connectionProblem,
@@ -146,6 +147,7 @@ export function App() {
       <SourcesSheet />
       <DeviceSourceSheet />
       <DeviceAlertsSheet />
+      {!CAST ? <AssistWakeListener /> : null}
       <AssistSheet />
       <Toast />
     </ErrorBoundary>

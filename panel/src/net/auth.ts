@@ -146,6 +146,14 @@ export function authHeaders(): Record<string, string> {
  * dashboard whose reachable entities are themselves allow-listed.
  */
 export function socketUrl(): string {
+  return wsUrl('/ws');
+}
+
+export function wakeSocketUrl(): string {
+  return wsUrl('/api/assist/wake');
+}
+
+function wsUrl(path: string): string {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const query = new URLSearchParams();
   if (token) query.set('t', token);
@@ -154,5 +162,5 @@ export function socketUrl(): string {
   // said anything at all.
   if (panelId) query.set('panel', panelId);
   const q = query.toString();
-  return q ? `${proto}//${window.location.host}/ws?${q}` : `${proto}//${window.location.host}/ws`;
+  return q ? `${proto}//${window.location.host}${path}?${q}` : `${proto}//${window.location.host}${path}`;
 }
