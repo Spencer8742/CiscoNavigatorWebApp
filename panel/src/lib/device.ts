@@ -67,6 +67,46 @@ function hasXapi(): boolean {
   }
 }
 
+/**
+ * JS heap, as the engine itself reports it.
+ *
+ * This is the one number that maps onto the failure mode Cisco actually
+ * documents. Their web engine is "restricted, both in memory and CPU usage",
+ * and a page that exceeds its allowance is TERMINATED rather than slowed
+ * (docs/ROOMOS.md §2) -- but they publish no figure, and say it varies by
+ * device and by current system load.
+ *
+ * `jsHeapSizeLimit` is that unpublished figure, reported by the engine on the
+ * device in front of you. Reading it in Settings answers "how much room do we
+ * actually have on THIS Navigator, right now" in a way no datasheet does.
+ *
+ * `performance.memory` is non-standard and Chrome-only, so every access is
+ * guarded: it is absent in Firefox and Safari, and it may be quantised or
+ * withheld depending on the page's isolation. Absent is a normal answer, not
+ * an error -- the caller shows a dash.
+ */
+export interface HeapInfo {
+  usedMb: number;
+  limitMb: number;
+}
+
+export function heapInfo(): HeapInfo | null {
+  try {
+    const mem = (performance as unknown as Record<string, unknown>)['memory'] as
+      | { usedJSHeapSize?: unknown; jsHeapSizeLimit?: unknown }
+      | undefined;
+    if (!mem) return null;
+    const used = Number(mem.usedJSHeapSize);
+    const limit = Number(mem.jsHeapSizeLimit);
+    if (!Number.isFinite(used) || !Number.isFinite(limit) || limit <= 0) return null;
+    return { usedMb: used / 1048576, limitMb: limit / 1048576 };
+  } catch {
+    // Not fatal, and not worth a console line on a wall panel: the readout
+    // simply says nothing rather than claiming a figure it does not have.
+    return null;
+  }
+}
+
 /** True when the engine is older than the version this bundle targets. */
 export function isBelowBuildTarget(): boolean {
   const v = deviceInfo().chromeVersion;
