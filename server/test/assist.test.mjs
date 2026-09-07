@@ -217,6 +217,41 @@ test('Assist audio is streamed through Home Assistant pipeline STT and TTS', asy
   assert.ok(Buffer.from(await audioRes.arrayBuffer()).equals(ha.assistTtsAudio));
 });
 
+test('Assist wake socket streams through Home Assistant wake word pipeline', async () => {
+  const messages = [];
+  const ws = new WebSocket(`ws://127.0.0.1:${PANEL_PORT}/api/assist/wake?t=${TOKEN}`);
+  ws.on('message', (data) => {
+    messages.push(JSON.parse(data.toString()));
+  });
+
+  try {
+    await new Promise((resolve, reject) => {
+      ws.once('open', resolve);
+      ws.once('error', reject);
+    });
+
+    ws.send(Buffer.alloc(4096, 1));
+    const msg = await waitFor(
+      () => messages.find((item) => item.t === 'result'),
+      'wake Assist result',
+    );
+
+    assert.equal(ha.assistPipelineRuns.length, 1);
+    assert.equal(ha.assistPipelineRuns[0].type, 'assist_pipeline/run');
+    assert.equal(ha.assistPipelineRuns[0].start_stage, 'wake_word');
+    assert.equal(ha.assistPipelineRuns[0].end_stage, 'tts');
+    assert.equal(ha.assistPipelineRuns[0].input.sample_rate, 16_000);
+    assert.ok(Buffer.concat(ha.assistAudioChunks).length >= 4096);
+    assert.equal(msg.result.text, ha.assistTranscript);
+    assert.equal(msg.result.speech, 'The desk lights are on');
+    assert.equal(msg.result.audioUrl, '/api/assist/tts?p=%2Fapi%2Ftts_proxy%2Fmock.mp3');
+    assert.equal(msg.result.conversationId, 'mock-wake-conversation');
+    assert.equal(msg.result.success, true);
+  } finally {
+    ws.close();
+  }
+});
+
 test('Assist audio upload requires the panel token', async () => {
   const res = await fetch(`http://127.0.0.1:${PANEL_PORT}/api/assist/audio`, {
     method: 'POST',

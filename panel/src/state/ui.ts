@@ -2,6 +2,7 @@ import { signal, computed, effect } from '@preact/signals';
 import {
   DEFAULT_PREFS,
   PANEL_PAGES,
+  type AssistResult,
   type BackendHealth,
   type LinkState,
   type PanelPage,
@@ -104,6 +105,15 @@ export const openDeviceAlerts = signal<string | null>(null);
 
 /** Whether the Home Assistant Assist sheet is open. */
 export const assistOpen = signal(false);
+
+/** Incremented by any UI affordance that should open Assist and record now. */
+export const assistListenRequests = signal(0);
+
+/** Result supplied by the wake listener, which lives outside the Assist sheet. */
+export const assistWakeResult = signal<{ seq: number; result: AssistResult } | null>(null);
+
+/** Pauses wake listening during manual capture, request handling, and playback. */
+export const assistWakePaused = signal(false);
 
 /**
  * Kiosk lock: the nav bar is hidden and the panel stays on the page it is on.
