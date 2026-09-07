@@ -56,6 +56,7 @@ import { isCastDashboard, isCastMode, startCastReceiver } from '~/lib/cast.ts';
 const CAST = isCastMode();
 /** `?cast=1&pane=dashboard` — the real dashboard, on a cast display. */
 const CAST_DASHBOARD = CAST && isCastDashboard();
+const NATIVE_WAKE = new URLSearchParams(window.location.search).get('nativeWake') === '1';
 
 /*
  * Claim the Cast session as early as possible, for BOTH cast variants.
@@ -147,7 +148,7 @@ export function App() {
       <SourcesSheet />
       <DeviceSourceSheet />
       <DeviceAlertsSheet />
-      {!CAST ? <AssistWakeListener /> : null}
+      {!CAST && !NATIVE_WAKE ? <AssistWakeListener /> : null}
       <AssistSheet />
       <Toast />
     </ErrorBoundary>
