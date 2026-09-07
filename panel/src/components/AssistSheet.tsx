@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { Icon } from '~/components/Icon.tsx';
 import { Pressable } from '~/components/Pressable.tsx';
 import { Sheet } from '~/components/Sheet.tsx';
+import { getToken } from '~/net/auth.ts';
 import { askAssist, askAssistAudio } from '~/net/socket.ts';
 import { assistOpen, markActivity, showToast } from '~/state/ui.ts';
 import type { AssistResult } from '@shared/protocol.ts';
@@ -19,6 +20,7 @@ export function AssistSheet() {
   const [reply, setReply] = useState<AssistResult | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const recorder = useRef<PcmRecorder | null>(null);
+  const player = useRef<HTMLAudioElement | null>(null);
   const autoStop = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const open = assistOpen.value;
@@ -63,6 +65,7 @@ export function AssistSheet() {
       setConversationId(result.conversationId);
       setReply(result);
       setPhase('answered');
+      void playReply(result);
       if (!result.success) showToast(result.speech ?? 'Assist could not complete that', 'error');
     } catch (err) {
       setPhase('idle');
@@ -87,6 +90,7 @@ export function AssistSheet() {
       setHeard(result.text);
       setReply(result);
       setPhase('answered');
+      void playReply(result);
       if (!result.success) showToast(result.speech ?? 'Assist could not complete that', 'error');
     } catch (err) {
       setPhase('idle');
@@ -184,9 +188,25 @@ export function AssistSheet() {
             <Icon name="send" size="1.25rem" weight={2} />
           </Pressable>
         </form>
+        <audio ref={player} preload="none" />
       </div>
     </Sheet>
   );
+
+  async function playReply(result: AssistResult): Promise<void> {
+    const src = audioSrc(result.audioUrl);
+    const el = player.current;
+    if (!src || !el) return;
+
+    try {
+      el.pause();
+      el.src = src;
+      el.currentTime = 0;
+      await el.play();
+    } catch {
+      showToast('Assist answered, but audio playback was blocked', 'error');
+    }
+  }
 }
 
 class PcmRecorder {
@@ -288,12 +308,19 @@ function toPcm16(input: Float32Array, inputSampleRate: number, outputSampleRate:
   return out;
 }
 
+function audioSrc(path: string | null | undefined): string | null {
+  if (!path) return null;
+  const token = getToken();
+  const joiner = path.includes('?') ? '&' : '?';
+  return `${path}${token ? `${joiner}t=${encodeURIComponent(token)}` : ''}`;
+}
+
 function captureErrorMessage(err: unknown): string {
   if (err instanceof DOMException && err.name === 'NotAllowedError') {
     return 'Microphone permission is blocked';
   }
   if (window.isSecureContext === false) {
-    return 'Microphone capture needs a secure origin or the Android launcher permission bridge';
+    return 'Microphone capture needs a secure origin';
   }
   return err instanceof Error ? err.message : 'Microphone capture failed';
 }

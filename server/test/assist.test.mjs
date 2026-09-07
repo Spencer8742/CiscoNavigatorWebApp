@@ -1,4 +1,4 @@
-import { after, before, test } from 'node:test';
+import { after, before, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -119,6 +119,12 @@ before(async () => {
   }, 'backend to listen');
 });
 
+beforeEach(() => {
+  ha.conversations = [];
+  ha.assistPipelineRuns = [];
+  ha.assistAudioChunks = [];
+});
+
 after(async () => {
   if (backend && backend.exitCode === null) {
     backend.kill('SIGTERM');
@@ -134,7 +140,7 @@ after(async () => {
   if (dir) await rm(dir, { recursive: true, force: true });
 });
 
-test('Assist text is forwarded through the backend Home Assistant connection', async () => {
+test('Assist text is forwarded through the Home Assistant pipeline with TTS', async () => {
   const panel = new TestPanel();
   try {
     await panel.connect();
@@ -142,17 +148,20 @@ test('Assist text is forwarded through the backend Home Assistant connection', a
     const first = panel.assist('turn on the desk lights');
     const reply = await panel.replyFor(first);
 
-    assert.equal(ha.conversations.length, 1);
-    assert.equal(ha.conversations[0].type, 'conversation/process');
-    assert.equal(ha.conversations[0].text, 'turn on the desk lights');
-    assert.equal(ha.conversations[0].language, 'en-US');
+    assert.equal(ha.conversations.length, 0);
+    assert.equal(ha.assistPipelineRuns.length, 1);
+    assert.equal(ha.assistPipelineRuns[0].type, 'assist_pipeline/run');
+    assert.equal(ha.assistPipelineRuns[0].start_stage, 'intent');
+    assert.equal(ha.assistPipelineRuns[0].end_stage, 'tts');
+    assert.equal(ha.assistPipelineRuns[0].input.text, 'turn on the desk lights');
     assert.equal(reply.result.speech, 'The desk lights are on');
-    assert.equal(reply.result.conversationId, 'mock-conversation');
+    assert.equal(reply.result.audioUrl, '/api/assist/tts?p=%2Fapi%2Ftts_proxy%2Fmock.mp3');
+    assert.equal(reply.result.conversationId, 'mock-text-conversation');
     assert.equal(reply.result.success, true);
 
     const second = panel.assist('what about the fan', reply.result.conversationId);
     await panel.replyFor(second);
-    assert.equal(ha.conversations[1].conversation_id, 'mock-conversation');
+    assert.equal(ha.assistPipelineRuns[1].conversation_id, 'mock-text-conversation');
   } finally {
     panel.close();
   }
@@ -170,7 +179,7 @@ test('Assist rejects empty text before it reaches Home Assistant', async () => {
   }
 });
 
-test('Assist audio is streamed through Home Assistant pipeline STT', async () => {
+test('Assist audio is streamed through Home Assistant pipeline STT and TTS', async () => {
   const pcm = Buffer.alloc(16_000 * 2, 0);
   const res = await fetch(
     `http://127.0.0.1:${PANEL_PORT}/api/assist/audio?conversationId=existing-voice`,
@@ -190,14 +199,22 @@ test('Assist audio is streamed through Home Assistant pipeline STT', async () =>
   assert.equal(ha.assistPipelineRuns.length, 1);
   assert.equal(ha.assistPipelineRuns[0].type, 'assist_pipeline/run');
   assert.equal(ha.assistPipelineRuns[0].start_stage, 'stt');
-  assert.equal(ha.assistPipelineRuns[0].end_stage, 'intent');
+  assert.equal(ha.assistPipelineRuns[0].end_stage, 'tts');
   assert.equal(ha.assistPipelineRuns[0].input.sample_rate, 16_000);
   assert.equal(ha.assistPipelineRuns[0].conversation_id, 'existing-voice');
   assert.ok(Buffer.concat(ha.assistAudioChunks).equals(pcm));
   assert.equal(body.text, ha.assistTranscript);
   assert.equal(body.speech, 'The desk lights are on');
+  assert.equal(body.audioUrl, '/api/assist/tts?p=%2Fapi%2Ftts_proxy%2Fmock.mp3');
   assert.equal(body.conversationId, 'mock-voice-conversation');
   assert.equal(body.success, true);
+
+  const audioRes = await fetch(`http://127.0.0.1:${PANEL_PORT}${body.audioUrl}`, {
+    headers: { authorization: `Bearer ${TOKEN}` },
+  });
+  assert.equal(audioRes.status, 200);
+  assert.equal(audioRes.headers.get('content-type'), 'audio/mpeg');
+  assert.ok(Buffer.from(await audioRes.arrayBuffer()).equals(ha.assistTtsAudio));
 });
 
 test('Assist audio upload requires the panel token', async () => {

@@ -9,6 +9,7 @@ import { StaticFiles } from '~/http/static.ts';
 import { applySecurityHeaders } from '~/http/headers.ts';
 import { PanelAuth } from '~/http/auth.ts';
 import { ArtworkProxy } from '~/http/artwork.ts';
+import { HaTtsProxy } from '~/http/ha-tts.ts';
 import { MediaArt } from '~/http/media-art.ts';
 import { Hub } from '~/hub/index.ts';
 import { HaClient } from '~/ha/client.ts';
@@ -94,6 +95,7 @@ async function main(): Promise<void> {
 
   const auth = new PanelAuth(env.panelToken);
   const artwork = new ArtworkProxy(env.ha);
+  const ttsAudio = new HaTtsProxy(env.ha);
   const mediaArt = new MediaArt();
 
   /* ── Immich ──────────────────────────────────────────────────────────────
@@ -416,12 +418,19 @@ async function main(): Promise<void> {
       if (text.length === 0) throw new Error('Nothing to send');
       if (text.length > MAX_ASSIST_TEXT) throw new Error('That request is too long');
 
-      return haClient.processConversation({
+      if (msg.agentId) {
+        return proxyAssistAudio(await haClient.processConversation({
+          text,
+          language: msg.language,
+          agentId: msg.agentId,
+          conversationId: msg.conversationId,
+        }));
+      }
+
+      return proxyAssistAudio(await haClient.processAssistText({
         text,
-        language: msg.language,
-        agentId: msg.agentId,
         conversationId: msg.conversationId,
-      });
+      }));
     },
 
     getPrefs: (panelId) => prefs.for(panelId),
@@ -580,7 +589,7 @@ async function main(): Promise<void> {
           conversationId: query.get('conversationId') ?? undefined,
         });
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-        res.end(JSON.stringify(result));
+        res.end(JSON.stringify(proxyAssistAudio(result)));
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Assist did not respond';
         const status = message === 'Request body too large' ? 413 : 502;
@@ -636,6 +645,11 @@ async function main(): Promise<void> {
     if (path === '/api/config') {
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       res.end(JSON.stringify(config.current));
+      return;
+    }
+
+    if (path === '/api/assist/tts') {
+      await ttsAudio.serve(res, query.get('p'));
       return;
     }
 
@@ -702,6 +716,14 @@ async function main(): Promise<void> {
     }
 
     await files.serve(req, res, path);
+  }
+
+  function proxyAssistAudio<T extends { audioUrl?: string | null }>(result: T): T {
+    if (!result.audioUrl) return result;
+    return {
+      ...result,
+      audioUrl: ttsAudio.pathFor(result.audioUrl),
+    };
   }
 
   /*
