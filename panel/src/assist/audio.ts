@@ -1,5 +1,9 @@
 export const TARGET_SAMPLE_RATE = 16_000;
 
+type PcmRecorderOptions = {
+  processing?: boolean;
+};
+
 export class PcmRecorder {
   readonly #context: AudioContext;
   readonly #stream: MediaStream;
@@ -20,21 +24,35 @@ export class PcmRecorder {
     this.#processor = processor;
   }
 
-  static async start(targetSampleRate = TARGET_SAMPLE_RATE): Promise<PcmRecorder> {
-    return PcmRecorder.startWithChunks(() => undefined, targetSampleRate);
+  static async start(
+    targetSampleRate = TARGET_SAMPLE_RATE,
+    options: PcmRecorderOptions = {},
+  ): Promise<PcmRecorder> {
+    return PcmRecorder.startWithChunks(() => undefined, targetSampleRate, options);
   }
 
   static async startWithChunks(
     onChunk: (chunk: Int16Array) => void,
     targetSampleRate = TARGET_SAMPLE_RATE,
+    options: PcmRecorderOptions = {},
   ): Promise<PcmRecorder> {
+    const processing = options.processing ?? true;
     const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
+      audio: processing
+        ? {
+            channelCount: 1,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          }
+        : {
+            channelCount: { ideal: 1 },
+            sampleRate: { ideal: targetSampleRate },
+            sampleSize: { ideal: 16 },
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+          },
     });
     const Ctor = window.AudioContext ?? window.webkitAudioContext;
     if (!Ctor) throw new Error('Audio capture is not available');
@@ -112,4 +130,3 @@ function toPcm16(input: Float32Array, inputSampleRate: number, outputSampleRate:
 
   return out;
 }
-

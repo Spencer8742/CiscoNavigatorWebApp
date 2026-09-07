@@ -72,9 +72,13 @@ export function AssistWakeListener() {
       socket = ws;
 
       ws.onopen = () => {
-        void PcmRecorder.startWithChunks((chunk) => {
-          if (ws.readyState === WebSocket.OPEN) ws.send(pcmChunkBytes(chunk));
-        })
+        void PcmRecorder.startWithChunks(
+          (chunk) => {
+            if (ws.readyState === WebSocket.OPEN) ws.send(pcmChunkBytes(chunk));
+          },
+          undefined,
+          { processing: false },
+        )
           .then((next) => {
             if (stopped || socket !== ws) {
               void next.stop();
