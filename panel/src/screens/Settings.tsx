@@ -268,7 +268,6 @@ export function Settings() {
           <Row k="Live entities" v={String(entityCount())} />
           <Row k="Immich" v={cfg.immich.enabled ? 'enabled' : 'disabled'} />
           <Row k="Idle timeout" v={secs(cfg.idle.timeoutSeconds)} />
-          <Row k="Return home after" v={secs(cfg.idle.returnHomeSeconds)} />
         </div>
 
         <div class="section-head">

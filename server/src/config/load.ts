@@ -73,7 +73,6 @@ export const FALLBACK_CONFIG: DashboardConfig = {
   },
   idle: {
     timeoutSeconds: 180,
-    returnHomeSeconds: 90,
     controlsHoldSeconds: 1800,
     overlays: { nowPlaying: true, photoInfo: true },
     burnInProtection: true,
@@ -299,12 +298,20 @@ function validate(raw: unknown): DashboardConfig {
 
     idle: {
       timeoutSeconds: num(idleRaw['timeoutSeconds'], d.idle.timeoutSeconds, 'idle.timeoutSeconds', 0),
-      returnHomeSeconds: num(
-        idleRaw['returnHomeSeconds'],
-        d.idle.returnHomeSeconds,
-        'idle.returnHomeSeconds',
-        0,
-      ),
+      /*
+       * `idle.returnHomeSeconds` was removed: the panel no longer navigates
+       * on its own, so a screen someone left it on is the screen they find.
+       * Said out loud rather than ignored -- a setting that quietly stops
+       * doing anything is worse than one that is gone, because the file still
+       * reads as though it works.
+       */
+      ...(idleRaw['returnHomeSeconds'] !== undefined
+        ? (log.warn(
+            'idle.returnHomeSeconds is no longer used — the panel stays on the screen ' +
+              'it was left on. Remove it from dashboard.yaml.',
+          ),
+          {})
+        : {}),
       // Thirty minutes: longer than a meeting's quiet stretch, short enough
       // that a panel left on Controls is back to photos within the hour.
       controlsHoldSeconds: num(

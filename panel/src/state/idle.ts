@@ -2,13 +2,10 @@ import { effect } from '@preact/signals';
 import { idleConfig } from '~/config/index.ts';
 import type { IdleConfig } from '@shared/config.ts';
 import {
-  activeRoom,
   lastActivity,
   markActivity,
-  openEntity,
   route,
   screensaverActive,
-  visibleRoutes,
 } from '~/state/ui.ts';
 
 /**
@@ -19,13 +16,19 @@ import {
  *
  *     interaction ──▶ dashboard
  *          │
- *          ├─ after `returnHomeSeconds` ──▶ back to Home
- *          └─ after `timeoutSeconds`    ──▶ photo screensaver
- *                                             │
- *                              any touch ─────┘ (instant, no animation delay)
+ *          └─ after `timeoutSeconds` ──▶ photo screensaver
+ *                                          │
+ *                           any touch ─────┘ (instant, no animation delay)
  *
- * …except on the Controls screen, which holds both off for
+ * …except on the Controls screen, which holds it off for
  * `controlsHoldSeconds`. See `holdingOnControls` below.
+ *
+ * **The panel does not navigate on its own.** It used to return to Home after
+ * `returnHomeSeconds`, which meant walking up to a panel you had left on
+ * Apple TV and finding Home. A screen someone chose is the screen that should
+ * be there when they come back, so the only thing idling now does is start
+ * the screensaver -- and dismissing that puts you back exactly where you
+ * were, not somewhere the panel decided on.
  *
  * Implementation notes that matter on this device:
  *
@@ -98,12 +101,6 @@ function onVisibility(): void {
  * deciding that three minutes of quiet means you want photographs is the
  * panel being wrong about what it is for.
  *
- * The hold covers BOTH timeouts, and that is not belt-and-braces: with the
- * default config `returnHomeSeconds` (90) is well short of `timeoutSeconds`
- * (180), so holding only the screensaver would do nothing observable. The
- * panel would leave Controls at 90 seconds and screensave from Home at 180,
- * which is the behaviour being complained about with an extra step in it.
- *
  * It expires, because the panel has no way to know when you are finished —
  * RoomOS gives a web page no call state (docs/ROOMOS.md §8) — and a panel
  * parked on a static grid of keys indefinitely is a burn-in risk on a device
@@ -125,31 +122,9 @@ function tick(): void {
 
   const holding = holdingOnControls(cfg, idleMs);
 
-  /*
-   * Return to Home BEFORE considering the screensaver, so that whatever wakes
-   * the panel finds it in a known state.
-   *
-   * On the normal path this is the order it already happened in, one tick at
-   * a time, because returnHomeSeconds is the shorter of the two. It matters
-   * when a Controls hold EXPIRES: both timeouts are long past by then and
-   * become due on the same tick, and without this the panel would screensave
-   * still sitting on Controls and wake back onto it.
-   */
-  const returnRoute = visibleRoutes.value[0] ?? 'settings';
-  if (
-    !holding &&
-    cfg.returnHomeSeconds > 0 &&
-    idleMs >= cfg.returnHomeSeconds * 1000 &&
-    route.value !== returnRoute
-  ) {
-    // Deliberately NOT navigate(): that marks activity, which would reset the
-    // idle clock and mean the screensaver could never follow. Set the state
-    // directly and let the clock keep running.
-    activeRoom.value = null;
-    openEntity.value = null;
-    route.value = returnRoute;
-  }
-
+  // Starting the screensaver is the only thing left to decide. The route is
+  // deliberately untouched: the panel screensaves from wherever it is and
+  // wakes back onto it.
   if (!holding && cfg.timeoutSeconds > 0 && idleMs >= cfg.timeoutSeconds * 1000) {
     screensaverActive.value = true;
   }
