@@ -169,6 +169,11 @@ export interface MediaConfig {
   sections: string[];
 }
 
+export interface AssistConfig {
+  /** Phrases that arm hands-free Assist after STT hears them. */
+  wakePhrases: string[];
+}
+
 /**
  * Cast mode: what a Google Nest Hub shows.
  *
@@ -726,6 +731,7 @@ export interface DashboardConfig {
   rooms: RoomConfig[];
   home: HomeConfig;
   media: MediaConfig;
+  assist: AssistConfig;
   cast: CastConfig;
   controls: ControlsConfig;
 }

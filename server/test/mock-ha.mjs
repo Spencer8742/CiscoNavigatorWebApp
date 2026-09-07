@@ -238,7 +238,14 @@ export class MockHomeAssistant {
           break;
         }
 
-        session.pipeline = { id: msg.id, handler: 7, chunks: [], mode: msg.start_stage, finished: false };
+        session.pipeline = {
+          id: msg.id,
+          handler: 7,
+          chunks: [],
+          mode: msg.start_stage,
+          endStage: msg.end_stage,
+          finished: false,
+        };
         ws.send(JSON.stringify({ id: msg.id, type: 'result', success: true, result: null }));
         ws.send(JSON.stringify({
           id: msg.id,
@@ -297,6 +304,7 @@ export class MockHomeAssistant {
         pipeline.finished = true;
         this.assistAudioChunks.push(...pipeline.chunks);
         const id = pipeline.id;
+        const endStage = pipeline.endStage;
         session.pipeline = null;
         ws.send(JSON.stringify({
           id,
@@ -311,7 +319,7 @@ export class MockHomeAssistant {
             },
           },
         }));
-        this.#finishVoicePipeline(ws, id, 'mock-wake-conversation');
+        this.#finishVoicePipeline(ws, id, 'mock-wake-conversation', endStage);
       }
       return;
     }
@@ -319,15 +327,16 @@ export class MockHomeAssistant {
     if (data.length === 1) {
       this.assistAudioChunks.push(...pipeline.chunks);
       const id = pipeline.id;
+      const endStage = pipeline.endStage;
       session.pipeline = null;
-      this.#finishVoicePipeline(ws, id, 'mock-voice-conversation');
+      this.#finishVoicePipeline(ws, id, 'mock-voice-conversation', endStage);
       return;
     }
 
     pipeline.chunks.push(Buffer.from(data.subarray(1)));
   }
 
-  #finishVoicePipeline(ws, id, conversationId) {
+  #finishVoicePipeline(ws, id, conversationId, endStage) {
     ws.send(JSON.stringify({
       id,
       type: 'event',
@@ -336,6 +345,10 @@ export class MockHomeAssistant {
         data: { stt_output: { text: this.assistTranscript } },
       },
     }));
+    if (endStage === 'stt') {
+      ws.send(JSON.stringify({ id, type: 'event', event: { type: 'run-end', data: {} } }));
+      return;
+    }
     ws.send(JSON.stringify({
       id,
       type: 'event',

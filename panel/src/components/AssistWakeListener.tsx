@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'preact/hooks';
-import { canRecordVoice, pcmChunkBytes, PcmRecorder } from '~/assist/audio.ts';
-import { wakeSocketUrl } from '~/net/auth.ts';
+import { canRecordVoice, PcmRecorder, TARGET_SAMPLE_RATE } from '~/assist/audio.ts';
+import { askAssistWakeAudio } from '~/net/socket.ts';
 import {
   assistOpen,
   assistWakePaused,
@@ -10,14 +10,13 @@ import {
   ready,
   showToast,
 } from '~/state/ui.ts';
-import type { AssistResult } from '@shared/protocol.ts';
 
-const RETRY_MS = 1_000;
-
-type WakeMessage =
-  | { t: 'result'; result: AssistResult }
-  | { t: 'timeout' }
-  | { t: 'error'; message?: string };
+const RETRY_MS = 2_000;
+const SPEECH_RMS = 0.018;
+const SILENCE_RMS = 0.012;
+const MIN_SPEECH_MS = 350;
+const END_SILENCE_MS = 900;
+const MAX_SEGMENT_MS = 8_000;
 
 export function AssistWakeListener() {
   const seq = useRef(0);
@@ -33,8 +32,13 @@ export function AssistWakeListener() {
 
     let stopped = false;
     let retry: ReturnType<typeof setTimeout> | null = null;
-    let socket: WebSocket | null = null;
     let recorder: PcmRecorder | null = null;
+    let sending = false;
+    let segmenting = false;
+    let segment: Int16Array[] = [];
+    let segmentSamples = 0;
+    let speechMs = 0;
+    let silenceMs = 0;
 
     const clearRetry = (): void => {
       if (!retry) return;
@@ -42,10 +46,24 @@ export function AssistWakeListener() {
       retry = null;
     };
 
+    const resetSegment = (): void => {
+      segmenting = false;
+      segment = [];
+      segmentSamples = 0;
+      speechMs = 0;
+      silenceMs = 0;
+    };
+
     const stopRecorder = (): void => {
       const active = recorder;
       recorder = null;
       if (active) void active.stop();
+    };
+
+    const close = (): void => {
+      clearRetry();
+      stopRecorder();
+      resetSegment();
     };
 
     const schedule = (): void => {
@@ -56,47 +74,28 @@ export function AssistWakeListener() {
       }, RETRY_MS);
     };
 
-    const close = (): void => {
-      clearRetry();
-      stopRecorder();
-      const active = socket;
-      socket = null;
-      if (active && active.readyState <= WebSocket.OPEN) active.close();
+    const reportError = (err: unknown, fallback: string): void => {
+      const message = err instanceof Error ? err.message : fallback;
+      console.warn('[assist] wake listener error', message);
+      if (message !== lastError.current) {
+        lastError.current = message;
+        showToast(message, 'error');
+      }
     };
 
-    const start = (): void => {
-      if (stopped) return;
+    const submitSegment = (): void => {
+      if (sending || segmentSamples === 0) {
+        resetSegment();
+        return;
+      }
 
-      const ws = new WebSocket(wakeSocketUrl());
-      ws.binaryType = 'arraybuffer';
-      socket = ws;
-
-      ws.onopen = () => {
-        void PcmRecorder.startWithChunks(
-          (chunk) => {
-            if (ws.readyState === WebSocket.OPEN) ws.send(pcmChunkBytes(chunk));
-          },
-          undefined,
-          { processing: false },
-        )
-          .then((next) => {
-            if (stopped || socket !== ws) {
-              void next.stop();
-              return;
-            }
-            recorder = next;
-          })
-          .catch((err) => {
-            console.warn('[assist] wake capture failed', err);
-            close();
-          });
-      };
-
-      ws.onmessage = (event) => {
-        const msg = parseWakeMessage(event.data);
-        if (!msg) return;
-
-        if (msg.t === 'result') {
+      const audio = concatPcm(segment, segmentSamples);
+      resetSegment();
+      sending = true;
+      void askAssistWakeAudio(audio)
+        .then((msg) => {
+          sending = false;
+          if (stopped || !msg.matched) return;
           seq.current += 1;
           assistWakePaused.value = true;
           assistOpen.value = true;
@@ -104,36 +103,55 @@ export function AssistWakeListener() {
           markActivity();
           stopped = true;
           close();
-          return;
-        }
+        })
+        .catch((err) => {
+          sending = false;
+          if (stopped) return;
+          reportError(err, 'Wake word listener failed');
+        });
+    };
 
-        stopped = true;
-        close();
-        if (msg.t === 'timeout') {
-          stopped = false;
-          schedule();
-        } else {
-          const message = msg.message ?? 'Wake word listener failed';
-          console.warn('[assist] wake listener error', message);
-          if (message !== lastError.current) {
-            lastError.current = message;
-            showToast(message, 'error');
+    const onChunk = (chunk: Int16Array): void => {
+      if (stopped || sending) return;
+      const rms = pcmRms(chunk);
+      const ms = (chunk.length / TARGET_SAMPLE_RATE) * 1000;
+
+      if (!segmenting) {
+        if (rms < SPEECH_RMS) return;
+        segmenting = true;
+      }
+
+      segment.push(chunk);
+      segmentSamples += chunk.length;
+
+      if (rms >= SILENCE_RMS) {
+        speechMs += ms;
+        silenceMs = 0;
+      } else {
+        silenceMs += ms;
+      }
+
+      const segmentMs = (segmentSamples / TARGET_SAMPLE_RATE) * 1000;
+      if (segmentMs >= MAX_SEGMENT_MS || (speechMs >= MIN_SPEECH_MS && silenceMs >= END_SILENCE_MS)) {
+        submitSegment();
+      }
+    };
+
+    const start = (): void => {
+      if (stopped || recorder) return;
+      void PcmRecorder.startWithChunks(onChunk)
+        .then((next) => {
+          if (stopped) {
+            void next.stop();
+            return;
           }
-          stopped = false;
+          recorder = next;
+        })
+        .catch((err) => {
+          reportError(err, 'Wake capture failed');
+          close();
           schedule();
-        }
-      };
-
-      ws.onclose = () => {
-        if (socket === ws) socket = null;
-        stopRecorder();
-        schedule();
-      };
-
-      ws.onerror = () => {
-        close();
-        schedule();
-      };
+        });
     };
 
     start();
@@ -147,12 +165,22 @@ export function AssistWakeListener() {
   return null;
 }
 
-function parseWakeMessage(raw: unknown): WakeMessage | null {
-  if (typeof raw !== 'string') return null;
-  try {
-    const msg = JSON.parse(raw) as WakeMessage;
-    return msg && typeof msg === 'object' && 't' in msg ? msg : null;
-  } catch {
-    return null;
+function concatPcm(chunks: Int16Array[], samples: number): ArrayBuffer {
+  const out = new Int16Array(samples);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
   }
+  return out.buffer.slice(0);
+}
+
+function pcmRms(chunk: Int16Array): number {
+  if (chunk.length === 0) return 0;
+  let sum = 0;
+  for (let i = 0; i < chunk.length; i += 1) {
+    const sample = (chunk[i] ?? 0) / 0x8000;
+    sum += sample * sample;
+  }
+  return Math.sqrt(sum / chunk.length);
 }

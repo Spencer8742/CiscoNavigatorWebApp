@@ -46,6 +46,7 @@ const DEFAULTS: DashboardConfig = {
   rooms: [],
   home: { favorites: [], scenes: [], status: [], alerts: [] },
   media: { players: [], default: 'active', volumeStep: 0.05, sections: ['Speakers', 'TVs'] },
+  assist: { wakePhrases: ['okay nabu', 'ok nabu'] },
   // baseUrl/displays/checkSeconds drive the backend's cast keeper and are
   // never read by the panel; they are here to satisfy the shared type.
   cast: { baseUrl: '', displays: [], checkSeconds: 300, screensaver: true,
