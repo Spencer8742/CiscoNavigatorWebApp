@@ -465,6 +465,8 @@ export interface AssistResult {
   text: string;
   /** Human-readable response from Home Assistant, when the agent returned one. */
   speech: string | null;
+  /** Proxied TTS audio path on this origin, when the active Assist pipeline produced one. */
+  audioUrl?: string | null;
   /** Keep multi-turn Assist context on this panel. */
   conversationId: string | null;
   /** HA response type, e.g. "action_done" or "query_answer". */

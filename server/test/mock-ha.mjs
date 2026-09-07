@@ -43,6 +43,9 @@ export class MockHomeAssistant {
   /** Transcript returned by the mock STT stage. */
   assistTranscript = 'turn on the office lights';
 
+  /** Generated TTS audio returned by the mock TTS proxy. */
+  assistTtsAudio = Buffer.from('mock-tts-audio');
+
   /**
    * Every webhook POST received, as { id, body }.
    *
@@ -86,12 +89,18 @@ export class MockHomeAssistant {
   /**
    * Home Assistant's REST surface, to the extent anything here uses it.
    *
-   * Only webhooks so far. Note the 200 for an unknown id: that is what Home
-   * Assistant really does — deliberately, so a webhook id cannot be probed —
-   * which is why a webhook button that appears to do nothing means a missing
-   * automation rather than a broken panel.
+   * Only the REST surfaces the backend uses. Note the 200 for an unknown
+   * webhook id: that is what Home Assistant really does — deliberately, so a
+   * webhook id cannot be probed — which is why a webhook button that appears
+   * to do nothing means a missing automation rather than a broken panel.
    */
   #onRequest(req, res) {
+    if (req.method === 'GET' && /^\/api\/tts_proxy\/mock\.mp3/.test(req.url ?? '')) {
+      res.writeHead(200, { 'content-type': 'audio/mpeg' });
+      res.end(this.assistTtsAudio);
+      return;
+    }
+
     const match = /^\/api\/webhook\/([^/?]+)/.exec(req.url ?? '');
     if (!match || req.method !== 'POST') {
       res.writeHead(404).end();
@@ -202,6 +211,33 @@ export class MockHomeAssistant {
 
       case 'assist_pipeline/run':
         this.assistPipelineRuns.push(msg);
+        if (msg.start_stage === 'intent') {
+          ws.send(JSON.stringify({ id: msg.id, type: 'result', success: true, result: null }));
+          ws.send(JSON.stringify({
+            id: msg.id,
+            type: 'event',
+            event: {
+              type: 'intent-end',
+              data: { intent_output: this.#intentOutput('mock-text-conversation') },
+            },
+          }));
+          ws.send(JSON.stringify({
+            id: msg.id,
+            type: 'event',
+            event: {
+              type: 'tts-end',
+              data: {
+                tts_output: {
+                  url: '/api/tts_proxy/mock.mp3',
+                  mime_type: 'audio/mpeg',
+                },
+              },
+            },
+          }));
+          ws.send(JSON.stringify({ id: msg.id, type: 'event', event: { type: 'run-end', data: {} } }));
+          break;
+        }
+
         session.pipeline = { id: msg.id, handler: 7, chunks: [] };
         ws.send(JSON.stringify({ id: msg.id, type: 'result', success: true, result: null }));
         ws.send(JSON.stringify({
@@ -258,20 +294,19 @@ export class MockHomeAssistant {
         event: {
           type: 'intent-end',
           data: {
-            intent_output: {
-              conversation_id: 'mock-voice-conversation',
-              response: {
-                response_type: 'action_done',
-                speech: {
-                  plain: {
-                    speech: this.conversationSpeech,
-                  },
-                },
-                data: {
-                  success: [],
-                  failed: [],
-                },
-              },
+            intent_output: this.#intentOutput('mock-voice-conversation'),
+          },
+        },
+      }));
+      ws.send(JSON.stringify({
+        id,
+        type: 'event',
+        event: {
+          type: 'tts-end',
+          data: {
+            tts_output: {
+              url: '/api/tts_proxy/mock.mp3',
+              mime_type: 'audio/mpeg',
             },
           },
         },
@@ -281,6 +316,24 @@ export class MockHomeAssistant {
     }
 
     pipeline.chunks.push(Buffer.from(data.subarray(1)));
+  }
+
+  #intentOutput(conversationId) {
+    return {
+      conversation_id: conversationId,
+      response: {
+        response_type: 'action_done',
+        speech: {
+          plain: {
+            speech: this.conversationSpeech,
+          },
+        },
+        data: {
+          success: [],
+          failed: [],
+        },
+      },
+    };
   }
 
   /** Compressed add form. `lu` is omitted when it equals `lc`, as HA does. */
