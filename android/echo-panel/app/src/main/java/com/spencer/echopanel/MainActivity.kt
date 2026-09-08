@@ -46,7 +46,6 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         applyIntentSettings(intent)
-        hideSystemUi()
 
         val root = FrameLayout(this)
         webView = WebView(this)
@@ -72,6 +71,7 @@ class MainActivity : Activity() {
             ),
         )
         setContentView(root)
+        hideSystemUi()
 
         configureWebView()
         registerWakeReceiver()
@@ -249,7 +249,9 @@ class MainActivity : Activity() {
 
     private fun hideSystemUi() {
         if (Build.VERSION.SDK_INT >= 30) {
-            window.insetsController?.hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
+            window.decorView.windowInsetsController?.hide(
+                WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars(),
+            )
         } else {
             @Suppress("DEPRECATION")
             window.decorView.systemUiVisibility =
