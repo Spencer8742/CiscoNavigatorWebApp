@@ -19,6 +19,7 @@ type AssistPhase = 'idle' | 'recording' | 'sending' | 'answered' | 'unsupported'
 
 const LANG = 'en-US';
 const MAX_RECORDING_MS = 7_000;
+const NATIVE_WAKE_PAUSE_MS = 250;
 
 export function AssistSheet() {
   const [phase, setPhase] = useState<AssistPhase>('idle');
@@ -50,6 +51,7 @@ export function AssistSheet() {
     clearAutoStop();
     assistWakePaused.value = false;
     const audio = await active.stop();
+    resumeNativeWake();
     if (!sendAudio) {
       setPhase('idle');
       return;
@@ -155,6 +157,7 @@ export function AssistSheet() {
     setPhase('recording');
 
     try {
+      await pauseNativeWakeForCapture();
       recorder.current = await PcmRecorder.start(TARGET_SAMPLE_RATE);
       autoStop.current = setTimeout(() => {
         void stopRecording(true);
@@ -162,6 +165,7 @@ export function AssistSheet() {
     } catch (err) {
       recorder.current = null;
       clearAutoStop();
+      resumeNativeWake();
       setPhase('unsupported');
       showToast(captureErrorMessage(err), 'error');
     }
@@ -257,6 +261,25 @@ export function AssistSheet() {
       assistWakePaused.value = false;
       showToast('Assist answered, but audio playback was blocked', 'error');
     }
+  }
+}
+
+async function pauseNativeWakeForCapture(): Promise<void> {
+  try {
+    window.CiscoNavigatorNativePauseWake?.();
+  } catch {
+    /* Native bridge is optional outside the Android wrapper. */
+  }
+  if (window.CiscoNavigatorNativePauseWake) {
+    await new Promise((resolve) => setTimeout(resolve, NATIVE_WAKE_PAUSE_MS));
+  }
+}
+
+function resumeNativeWake(): void {
+  try {
+    window.CiscoNavigatorNativeResumeWake?.();
+  } catch {
+    /* Native bridge is optional outside the Android wrapper. */
   }
 }
 

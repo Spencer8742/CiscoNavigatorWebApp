@@ -33,8 +33,10 @@ The default wake model path is `hey_jarvis_v0.1.onnx`, but any compatible openWa
 classifier can be used. Keep the shared preprocessing files named exactly as shown above because
 the library looks them up by those names.
 
-Pre-trained wake classifiers may carry different dataset/license terms than this MIT repo. Check
-the model license before committing one here.
+CI downloads the default `hey jarvis` assets from the Apache-2.0 licensed openWakeWord v0.5.1
+GitHub release and verifies SHA-256 before building the APK. Pre-trained wake classifiers may carry
+different dataset/license terms if you switch models; check the model license before committing or
+downloading a different classifier.
 
 ## Runtime Defaults
 

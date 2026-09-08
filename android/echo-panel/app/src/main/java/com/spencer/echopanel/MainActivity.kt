@@ -14,6 +14,8 @@ import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
+import android.view.WindowManager
+import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -70,10 +72,13 @@ class MainActivity : Activity() {
                 ViewGroup.LayoutParams.MATCH_PARENT,
             ),
         )
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        webView.keepScreenOn = true
         setContentView(root)
         hideSystemUi()
 
         configureWebView()
+        webView.addJavascriptInterface(NativeBridge(), "CiscoNavigatorAndroid")
         registerWakeReceiver()
         requestRuntimePermissions()
         loadPanel()
@@ -165,6 +170,12 @@ class MainActivity : Activity() {
             window.CiscoNavigatorNative = true;
             window.CiscoNavigatorNativeWake = window.CiscoNavigatorNativeWake || function() {
               window.dispatchEvent(new CustomEvent('navigator-native-wake'));
+            };
+            window.CiscoNavigatorNativePauseWake = function() {
+              if (window.CiscoNavigatorAndroid) window.CiscoNavigatorAndroid.pauseWakeListening();
+            };
+            window.CiscoNavigatorNativeResumeWake = function() {
+              if (window.CiscoNavigatorAndroid) window.CiscoNavigatorAndroid.resumeWakeListening();
             };
             """.trimIndent(),
             null,
@@ -261,6 +272,22 @@ class MainActivity : Activity() {
                     View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
                     View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
                     View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+        }
+    }
+
+    private inner class NativeBridge {
+        @JavascriptInterface
+        fun pauseWakeListening() {
+            runOnUiThread {
+                stopService(Intent(this@MainActivity, WakeWordService::class.java))
+            }
+        }
+
+        @JavascriptInterface
+        fun resumeWakeListening() {
+            runOnUiThread {
+                if (hasAudioPermission()) startWakeService()
+            }
         }
     }
 }

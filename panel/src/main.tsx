@@ -42,6 +42,8 @@ declare global {
   interface Window {
     CiscoNavigatorNative?: boolean;
     CiscoNavigatorNativeWake?: () => void;
+    CiscoNavigatorNativePauseWake?: () => void;
+    CiscoNavigatorNativeResumeWake?: () => void;
   }
 }
 
