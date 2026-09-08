@@ -177,6 +177,45 @@ class MainActivity : Activity() {
             window.CiscoNavigatorNativeResumeWake = function() {
               if (window.CiscoNavigatorAndroid) window.CiscoNavigatorAndroid.resumeWakeListening();
             };
+            (function() {
+              var media = navigator.mediaDevices;
+              if (!media || typeof media.getUserMedia !== 'function' || media.__CiscoNavigatorWakePatched) return;
+              var originalGetUserMedia = media.getUserMedia.bind(media);
+              Object.defineProperty(media, '__CiscoNavigatorWakePatched', { value: true });
+              media.getUserMedia = async function(constraints) {
+                var wantsAudio = !!(constraints && constraints.audio);
+                if (!wantsAudio) return originalGetUserMedia(constraints);
+
+                window.CiscoNavigatorNativePauseWake();
+                await new Promise(function(resolve) { setTimeout(resolve, 250); });
+
+                try {
+                  var stream = await originalGetUserMedia(constraints);
+                  var tracks = typeof stream.getAudioTracks === 'function' ? stream.getAudioTracks() : [];
+                  var resumed = false;
+                  var maybeResumeWake = function() {
+                    if (resumed) return;
+                    if (!tracks.every(function(track) { return track.readyState === 'ended'; })) return;
+                    resumed = true;
+                    setTimeout(function() { window.CiscoNavigatorNativeResumeWake(); }, 250);
+                  };
+                  tracks.forEach(function(track) {
+                    var originalStop = track.stop.bind(track);
+                    track.stop = function() {
+                      originalStop();
+                      maybeResumeWake();
+                    };
+                    if (typeof track.addEventListener === 'function') {
+                      track.addEventListener('ended', maybeResumeWake);
+                    }
+                  });
+                  return stream;
+                } catch (err) {
+                  window.CiscoNavigatorNativeResumeWake();
+                  throw err;
+                }
+              };
+            })();
             """.trimIndent(),
             null,
         )
