@@ -915,14 +915,34 @@ function normalizeAssistResult(text: string, raw: unknown): AssistResult {
 
   const data = objectOf(response?.['data']);
   const success = inferAssistSuccess(responseType, data);
+  const normalizedSpeech = normalizeAssistSpeech(speechText, responseType, data);
 
   return {
     text,
-    speech: speechText,
+    speech: normalizedSpeech,
     conversationId,
     responseType,
     success,
   };
+}
+
+function normalizeAssistSpeech(
+  speech: string | null,
+  responseType: string | null,
+  data: Record<string, unknown> | null,
+): string | null {
+  if (responseType !== 'error') return speech;
+
+  const fallback =
+    stringOf(data?.['message']) ??
+    stringOf(data?.['error']) ??
+    stringOf(data?.['code']) ??
+    null;
+  if (fallback) return fallback;
+  if (!speech || /^error:? unknown$/i.test(speech)) {
+    return 'Home Assistant returned an unknown Assist error';
+  }
+  return speech;
 }
 
 function inferAssistSuccess(responseType: string | null, data: Record<string, unknown> | null): boolean {

@@ -188,7 +188,7 @@ class WakeWordService : Service() {
         private const val NOTIFICATION_ID = 42
         private const val WAKE_CAPTURE_PAUSE_MS = 15_000L
         private const val SCORE_LOG_INTERVAL_MS = 5_000L
-        private const val DEFAULT_WAKE_THRESHOLD = 0.05f
+        private const val DEFAULT_WAKE_THRESHOLD = 0.03f
         private const val PREFS = "echo-panel"
         private const val KEY_MODEL_NAME = "wake_model_name"
         private const val KEY_MODEL_PATH = "wake_model_path"

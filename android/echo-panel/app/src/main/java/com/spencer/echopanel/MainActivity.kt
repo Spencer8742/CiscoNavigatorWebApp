@@ -229,15 +229,45 @@ class MainActivity : Activity() {
     private fun triggerAssistFromWake() {
         runOnUiThread {
             hideSystemUi()
+            playListeningChime()
             webView.evaluateJavascript(
                 """
-                if (typeof window.CiscoNavigatorNativeWake === 'function') {
-                  window.CiscoNavigatorNativeWake();
-                } else {
+                (function() {
+                  var safeCall = function(fn) {
+                    try {
+                      if (typeof fn === 'function') fn();
+                    } catch (err) {
+                      console.warn('[native-wake] callback failed', err);
+                    }
+                  };
+
+                  safeCall(window.CiscoNavigatorNativeWake);
                   window.dispatchEvent(new CustomEvent('navigator-native-wake', {
                     detail: { source: 'openwakeword' }
                   }));
-                }
+
+                  var isAssistOpen = function() {
+                    return !!document.querySelector('[role="dialog"][aria-label="Assist"]');
+                  };
+                  var clickByLabel = function(label) {
+                    var match = Array.prototype.find.call(
+                      document.querySelectorAll('[aria-label]'),
+                      function(el) { return el.getAttribute('aria-label') === label; }
+                    );
+                    if (match && typeof match.click === 'function') {
+                      match.click();
+                      return true;
+                    }
+                    return false;
+                  };
+
+                  window.setTimeout(function() {
+                    if (!isAssistOpen()) clickByLabel('Assist');
+                    window.setTimeout(function() {
+                      if (isAssistOpen()) clickByLabel('Start listening');
+                    }, 350);
+                  }, 350);
+                })();
                 """.trimIndent(),
                 null,
             )
