@@ -19,6 +19,10 @@ type AssistPhase = 'idle' | 'recording' | 'sending' | 'answered' | 'unsupported'
 
 const LANG = 'en-US';
 const MAX_RECORDING_MS = 7_000;
+const NATIVE_WAKE_PAUSE_MS = 250;
+const UNKNOWN_ASSIST_ERROR = /^error:? unknown$/i;
+
+let chimeContext: AudioContext | null = null;
 
 export function AssistSheet() {
   const [phase, setPhase] = useState<AssistPhase>('idle');
@@ -50,6 +54,7 @@ export function AssistSheet() {
     clearAutoStop();
     assistWakePaused.value = false;
     const audio = await active.stop();
+    resumeNativeWake();
     if (!sendAudio) {
       setPhase('idle');
       return;
@@ -104,7 +109,7 @@ export function AssistSheet() {
       setPhase('answered');
       void playReply(result);
       if (!result.audioUrl) assistWakePaused.value = false;
-      if (!result.success) showToast(result.speech ?? 'Assist could not complete that', 'error');
+      if (!result.success) showToast(assistReplyText(result), 'error');
     } catch (err) {
       assistWakePaused.value = false;
       setPhase('idle');
@@ -132,7 +137,7 @@ export function AssistSheet() {
       setPhase('answered');
       void playReply(result);
       if (!result.audioUrl) assistWakePaused.value = false;
-      if (!result.success) showToast(result.speech ?? 'Assist could not complete that', 'error');
+      if (!result.success) showToast(assistReplyText(result), 'error');
     } catch (err) {
       assistWakePaused.value = false;
       setPhase('idle');
@@ -155,13 +160,16 @@ export function AssistSheet() {
     setPhase('recording');
 
     try {
+      await pauseNativeWakeForCapture();
       recorder.current = await PcmRecorder.start(TARGET_SAMPLE_RATE);
+      if (!window.CiscoNavigatorNative) void playListeningChime();
       autoStop.current = setTimeout(() => {
         void stopRecording(true);
       }, MAX_RECORDING_MS);
     } catch (err) {
       recorder.current = null;
       clearAutoStop();
+      resumeNativeWake();
       setPhase('unsupported');
       showToast(captureErrorMessage(err), 'error');
     }
@@ -205,7 +213,7 @@ export function AssistSheet() {
           )}
           {reply ? (
             <div class={reply.success ? 'assist-bubble' : 'assist-bubble assist-bubble-error'}>
-              {reply.speech ?? (reply.success ? 'Done' : 'Assist could not complete that')}
+              {assistReplyText(reply)}
             </div>
           ) : null}
         </div>
@@ -257,6 +265,69 @@ export function AssistSheet() {
       assistWakePaused.value = false;
       showToast('Assist answered, but audio playback was blocked', 'error');
     }
+  }
+}
+
+function assistReplyText(result: AssistResult): string {
+  const speech = result.speech?.trim();
+  if (result.success) return speech || 'Done';
+  if (!speech || UNKNOWN_ASSIST_ERROR.test(speech)) {
+    return 'Home Assistant returned an unknown Assist error';
+  }
+  return speech;
+}
+
+async function playListeningChime(): Promise<void> {
+  const AudioContextCtor =
+    window.AudioContext ??
+    (window as Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext })
+      .webkitAudioContext;
+  if (!AudioContextCtor) return;
+
+  try {
+    const ctx = chimeContext ?? new AudioContextCtor();
+    chimeContext = ctx;
+    await ctx.resume();
+
+    const start = ctx.currentTime + 0.01;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(0.12, start + 0.018);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.18);
+    gain.connect(ctx.destination);
+
+    const first = ctx.createOscillator();
+    first.type = 'sine';
+    first.frequency.setValueAtTime(880, start);
+    first.frequency.exponentialRampToValueAtTime(1320, start + 0.12);
+    first.connect(gain);
+    first.start(start);
+    first.stop(start + 0.18);
+
+    first.onended = () => {
+      gain.disconnect();
+    };
+  } catch {
+    /* A blocked chime must not block microphone capture. */
+  }
+}
+
+async function pauseNativeWakeForCapture(): Promise<void> {
+  try {
+    window.CiscoNavigatorNativePauseWake?.();
+  } catch {
+    /* Native bridge is optional outside the Android wrapper. */
+  }
+  if (window.CiscoNavigatorNativePauseWake) {
+    await new Promise((resolve) => setTimeout(resolve, NATIVE_WAKE_PAUSE_MS));
+  }
+}
+
+function resumeNativeWake(): void {
+  try {
+    window.CiscoNavigatorNativeResumeWake?.();
+  } catch {
+    /* Native bridge is optional outside the Android wrapper. */
   }
 }
 

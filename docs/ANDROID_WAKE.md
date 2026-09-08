@@ -33,8 +33,10 @@ The default wake model path is `hey_jarvis_v0.1.onnx`, but any compatible openWa
 classifier can be used. Keep the shared preprocessing files named exactly as shown above because
 the library looks them up by those names.
 
-Pre-trained wake classifiers may carry different dataset/license terms than this MIT repo. Check
-the model license before committing one here.
+CI downloads the default `hey jarvis` assets from the Apache-2.0 licensed openWakeWord v0.5.1
+GitHub release and verifies SHA-256 before building the APK. Pre-trained wake classifiers may carry
+different dataset/license terms if you switch models; check the model license before committing or
+downloading a different classifier.
 
 ## Runtime Defaults
 
@@ -44,10 +46,12 @@ The APK defaults to:
 panel_url=https://assistant.ts.blasters.app/?panel=echo-show&nativeWake=1
 wake_model_name=Hey Jarvis
 wake_model_path=hey_jarvis_v0.1.onnx
-wake_threshold=0.5
+wake_threshold=0.05
 ```
 
 Those are stored in Android shared preferences under `echo-panel`.
+`WakeWordService` logs the configured model, threshold, detections, and periodic score peaks under
+the `WakeWordService` tag so missed detections can be diagnosed with `adb logcat`.
 
 ## Configure With ADB
 
@@ -62,7 +66,7 @@ adb shell am start -n com.spencer.echopanel/.MainActivity \
 adb shell am start -n com.spencer.echopanel/.MainActivity \
   --es wake_model_name 'Hey Jarvis' \
   --es wake_model_path 'hey_jarvis_v0.1.onnx' \
-  --ef wake_threshold 0.5
+  --ef wake_threshold 0.05
 ```
 
 `wake_model_path` must point to an ONNX file that was packaged in the APK assets directory.

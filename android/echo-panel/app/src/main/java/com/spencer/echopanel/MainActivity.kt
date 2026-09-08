@@ -3,6 +3,8 @@ package com.spencer.echopanel
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -11,9 +13,13 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
+import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
+import android.view.WindowManager
+import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -34,6 +40,7 @@ private const val EXTRA_WAKE_THRESHOLD = "wake_threshold"
 class MainActivity : Activity() {
     private lateinit var webView: WebView
     private lateinit var status: TextView
+    private var lastChimeAt = 0L
 
     private val wakeReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -70,10 +77,13 @@ class MainActivity : Activity() {
                 ViewGroup.LayoutParams.MATCH_PARENT,
             ),
         )
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        webView.keepScreenOn = true
         setContentView(root)
         hideSystemUi()
 
         configureWebView()
+        webView.addJavascriptInterface(NativeBridge(), "CiscoNavigatorAndroid")
         registerWakeReceiver()
         requestRuntimePermissions()
         loadPanel()
@@ -166,6 +176,51 @@ class MainActivity : Activity() {
             window.CiscoNavigatorNativeWake = window.CiscoNavigatorNativeWake || function() {
               window.dispatchEvent(new CustomEvent('navigator-native-wake'));
             };
+            window.CiscoNavigatorNativePauseWake = function() {
+              if (window.CiscoNavigatorAndroid) window.CiscoNavigatorAndroid.pauseWakeListening();
+            };
+            window.CiscoNavigatorNativeResumeWake = function() {
+              if (window.CiscoNavigatorAndroid) window.CiscoNavigatorAndroid.resumeWakeListening();
+            };
+            (function() {
+              var media = navigator.mediaDevices;
+              if (!media || typeof media.getUserMedia !== 'function' || media.__CiscoNavigatorWakePatched) return;
+              var originalGetUserMedia = media.getUserMedia.bind(media);
+              Object.defineProperty(media, '__CiscoNavigatorWakePatched', { value: true });
+              media.getUserMedia = async function(constraints) {
+                var wantsAudio = !!(constraints && constraints.audio);
+                if (!wantsAudio) return originalGetUserMedia(constraints);
+
+                window.CiscoNavigatorNativePauseWake();
+                await new Promise(function(resolve) { setTimeout(resolve, 250); });
+
+                try {
+                  var stream = await originalGetUserMedia(constraints);
+                  var tracks = typeof stream.getAudioTracks === 'function' ? stream.getAudioTracks() : [];
+                  var resumed = false;
+                  var maybeResumeWake = function() {
+                    if (resumed) return;
+                    if (!tracks.every(function(track) { return track.readyState === 'ended'; })) return;
+                    resumed = true;
+                    setTimeout(function() { window.CiscoNavigatorNativeResumeWake(); }, 250);
+                  };
+                  tracks.forEach(function(track) {
+                    var originalStop = track.stop.bind(track);
+                    track.stop = function() {
+                      originalStop();
+                      maybeResumeWake();
+                    };
+                    if (typeof track.addEventListener === 'function') {
+                      track.addEventListener('ended', maybeResumeWake);
+                    }
+                  });
+                  return stream;
+                } catch (err) {
+                  window.CiscoNavigatorNativeResumeWake();
+                  throw err;
+                }
+              };
+            })();
             """.trimIndent(),
             null,
         )
@@ -176,9 +231,13 @@ class MainActivity : Activity() {
             hideSystemUi()
             webView.evaluateJavascript(
                 """
-                window.dispatchEvent(new CustomEvent('navigator-native-wake', {
-                  detail: { source: 'openwakeword' }
-                }));
+                if (typeof window.CiscoNavigatorNativeWake === 'function') {
+                  window.CiscoNavigatorNativeWake();
+                } else {
+                  window.dispatchEvent(new CustomEvent('navigator-native-wake', {
+                    detail: { source: 'openwakeword' }
+                  }));
+                }
                 """.trimIndent(),
                 null,
             )
@@ -262,5 +321,45 @@ class MainActivity : Activity() {
                     View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
                     View.SYSTEM_UI_FLAG_LAYOUT_STABLE
         }
+    }
+
+    private inner class NativeBridge {
+        @JavascriptInterface
+        fun pauseWakeListening() {
+            Log.i(TAG, "Pausing native wake listening for WebView audio capture")
+            playListeningChime()
+            runOnUiThread {
+                stopService(Intent(this@MainActivity, WakeWordService::class.java))
+            }
+        }
+
+        @JavascriptInterface
+        fun resumeWakeListening() {
+            Log.i(TAG, "Resuming native wake listening after WebView audio capture")
+            runOnUiThread {
+                if (hasAudioPermission()) startWakeService()
+            }
+        }
+    }
+
+    private fun playListeningChime() {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastChimeAt < CHIME_DEBOUNCE_MS) return
+        lastChimeAt = now
+
+        runCatching {
+            val tone = ToneGenerator(AudioManager.STREAM_MUSIC, CHIME_VOLUME)
+            tone.startTone(ToneGenerator.TONE_PROP_ACK, CHIME_MS)
+            webView.postDelayed({ tone.release() }, CHIME_MS + 250L)
+        }.onFailure {
+            Log.w(TAG, "Could not play listening chime", it)
+        }
+    }
+
+    companion object {
+        private const val TAG = "MainActivity"
+        private const val CHIME_MS = 160
+        private const val CHIME_VOLUME = 70
+        private const val CHIME_DEBOUNCE_MS = 800L
     }
 }

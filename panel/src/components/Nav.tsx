@@ -2,13 +2,10 @@ import { Icon } from '~/components/Icon.tsx';
 import { Pressable } from '~/components/Pressable.tsx';
 import { ui } from '~/config/index.ts';
 import {
-  assistListenRequests,
-  assistOpen,
-  assistWakePaused,
   linkStatus,
-  markActivity,
   narrow,
   navigate,
+  openAssistAndListen,
   route,
   visibleRoutes,
   type Route,
@@ -77,12 +74,7 @@ export function Nav() {
 
       <Pressable
         class="nav-assist p-sm"
-        onPress={() => {
-          assistWakePaused.value = true;
-          assistOpen.value = true;
-          assistListenRequests.value += 1;
-          markActivity();
-        }}
+        onPress={openAssistAndListen}
         ariaLabel="Assist"
       >
         <Icon name="mic" size="1.45rem" weight={1.9} />
