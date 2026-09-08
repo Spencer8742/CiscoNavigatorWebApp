@@ -24,19 +24,25 @@ import kotlinx.coroutines.launch
 class WakeWordService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var engine: WakeWordEngine? = null
+    private var lastScoreLogAt = 0L
+    private var peakScore = 0f
+    private var peakScoreAt = 0L
 
     override fun onCreate() {
         super.onCreate()
+        Log.i(TAG, "Wake word service created")
         createChannel()
         startForeground(NOTIFICATION_ID, notification(getString(R.string.wake_notification_ready)))
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.i(TAG, "Wake word service start requested")
         if (engine == null) startWakeEngine()
         return START_STICKY
     }
 
     override fun onDestroy() {
+        Log.i(TAG, "Wake word service destroyed")
         engine?.release()
         engine = null
         scope.cancel()
@@ -61,13 +67,16 @@ class WakeWordService : Service() {
             return
         }
 
+        val modelName = wakeModelName()
+        val threshold = wakeThreshold()
         val models = listOf(
             WakeWordModel(
-                name = wakeModelName(),
+                name = modelName,
                 modelPath = modelPath,
-                threshold = wakeThreshold(),
+                threshold = threshold,
             ),
         )
+        Log.i(TAG, "Starting wake engine model=$modelName path=$modelPath threshold=$threshold")
 
         val next = WakeWordEngine(
             context = this,
@@ -77,6 +86,26 @@ class WakeWordService : Service() {
             scope = scope,
         )
         engine = next
+
+        scope.launch {
+            next.scores.collect { score ->
+                if (score.score > peakScore) {
+                    peakScore = score.score
+                    peakScoreAt = score.timestamp
+                }
+
+                val now = System.currentTimeMillis()
+                if (now - lastScoreLogAt >= SCORE_LOG_INTERVAL_MS) {
+                    Log.i(
+                        TAG,
+                        "Wake score model=${score.model.name} current=${score.score} peak=$peakScore peakAt=$peakScoreAt threshold=${score.model.threshold}",
+                    )
+                    lastScoreLogAt = now
+                    peakScore = score.score
+                    peakScoreAt = score.timestamp
+                }
+            }
+        }
 
         scope.launch {
             next.detections.collect { detection ->
@@ -94,6 +123,7 @@ class WakeWordService : Service() {
         }
 
         next.start()
+        Log.i(TAG, "Wake engine started")
     }
 
     private fun wakeModelName(): String {
@@ -109,7 +139,7 @@ class WakeWordService : Service() {
 
     private fun wakeThreshold(): Float {
         return getSharedPreferences(PREFS, MODE_PRIVATE)
-            .getFloat(KEY_THRESHOLD, 0.5f)
+            .getFloat(KEY_THRESHOLD, DEFAULT_WAKE_THRESHOLD)
             .coerceIn(0.01f, 0.99f)
     }
 
@@ -157,6 +187,8 @@ class WakeWordService : Service() {
         private const val CHANNEL_ID = "wake_word"
         private const val NOTIFICATION_ID = 42
         private const val WAKE_CAPTURE_PAUSE_MS = 15_000L
+        private const val SCORE_LOG_INTERVAL_MS = 5_000L
+        private const val DEFAULT_WAKE_THRESHOLD = 0.08f
         private const val PREFS = "echo-panel"
         private const val KEY_MODEL_NAME = "wake_model_name"
         private const val KEY_MODEL_PATH = "wake_model_path"

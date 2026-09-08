@@ -11,6 +11,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
@@ -317,6 +318,7 @@ class MainActivity : Activity() {
     private inner class NativeBridge {
         @JavascriptInterface
         fun pauseWakeListening() {
+            Log.i(TAG, "Pausing native wake listening for WebView audio capture")
             runOnUiThread {
                 stopService(Intent(this@MainActivity, WakeWordService::class.java))
             }
@@ -324,9 +326,14 @@ class MainActivity : Activity() {
 
         @JavascriptInterface
         fun resumeWakeListening() {
+            Log.i(TAG, "Resuming native wake listening after WebView audio capture")
             runOnUiThread {
                 if (hasAudioPermission()) startWakeService()
             }
         }
+    }
+
+    companion object {
+        private const val TAG = "MainActivity"
     }
 }

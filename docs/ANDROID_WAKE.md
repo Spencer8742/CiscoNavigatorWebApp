@@ -46,10 +46,12 @@ The APK defaults to:
 panel_url=https://assistant.ts.blasters.app/?panel=echo-show&nativeWake=1
 wake_model_name=Hey Jarvis
 wake_model_path=hey_jarvis_v0.1.onnx
-wake_threshold=0.5
+wake_threshold=0.08
 ```
 
 Those are stored in Android shared preferences under `echo-panel`.
+`WakeWordService` logs the configured model, threshold, detections, and periodic score peaks under
+the `WakeWordService` tag so missed detections can be diagnosed with `adb logcat`.
 
 ## Configure With ADB
 
@@ -64,7 +66,7 @@ adb shell am start -n com.spencer.echopanel/.MainActivity \
 adb shell am start -n com.spencer.echopanel/.MainActivity \
   --es wake_model_name 'Hey Jarvis' \
   --es wake_model_path 'hey_jarvis_v0.1.onnx' \
-  --ef wake_threshold 0.5
+  --ef wake_threshold 0.08
 ```
 
 `wake_model_path` must point to an ONNX file that was packaged in the APK assets directory.
