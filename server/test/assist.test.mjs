@@ -188,7 +188,7 @@ test('Assist normalizes Home Assistant unknown error responses', async () => {
   try {
     ha.conversationResponseType = 'error';
     ha.conversationSpeech = 'Error Unknown';
-    ha.conversationResponseData = {};
+    ha.conversationResponseData = { code: 'unknown' };
 
     await panel.connect();
     const ref = panel.assist('turn on the desk lights');

@@ -938,7 +938,7 @@ function normalizeAssistSpeech(
     stringOf(data?.['error']) ??
     stringOf(data?.['code']) ??
     null;
-  if (fallback) return fallback;
+  if (fallback && !/^unknown$/i.test(fallback)) return fallback;
   if (!speech || /^error:? unknown$/i.test(speech)) {
     return 'Home Assistant returned an unknown Assist error';
   }

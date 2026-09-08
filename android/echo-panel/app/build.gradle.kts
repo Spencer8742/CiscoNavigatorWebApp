@@ -11,8 +11,8 @@ android {
         applicationId = "com.spencer.echopanel"
         minSdk = 23
         targetSdk = 35
-        versionCode = 9
-        versionName = "1.8"
+        versionCode = 10
+        versionName = "1.9"
     }
 
     buildTypes {
