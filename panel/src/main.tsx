@@ -4,7 +4,7 @@ import { initAuth } from '~/net/auth.ts';
 import { connect } from '~/net/socket.ts';
 import { resyncClock, startClock } from '~/state/clock.ts';
 import { startIdleMonitor } from '~/state/idle.ts';
-import { assistListenRequests, assistOpen, assistWakePaused, markActivity } from '~/state/ui.ts';
+import { openAssistAndListen } from '~/state/ui.ts';
 
 import '~/styles/tokens.css';
 import '~/styles/base.css';
@@ -32,10 +32,7 @@ startIdleMonitor();
 connect();
 
 function startAssistFromNativeWake(): void {
-  assistWakePaused.value = true;
-  assistOpen.value = true;
-  assistListenRequests.value += 1;
-  markActivity();
+  openAssistAndListen();
 }
 
 declare global {

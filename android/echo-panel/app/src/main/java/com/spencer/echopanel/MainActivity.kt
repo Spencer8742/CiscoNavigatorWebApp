@@ -3,6 +3,8 @@ package com.spencer.echopanel
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -11,6 +13,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
@@ -37,6 +40,7 @@ private const val EXTRA_WAKE_THRESHOLD = "wake_threshold"
 class MainActivity : Activity() {
     private lateinit var webView: WebView
     private lateinit var status: TextView
+    private var lastChimeAt = 0L
 
     private val wakeReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -227,9 +231,13 @@ class MainActivity : Activity() {
             hideSystemUi()
             webView.evaluateJavascript(
                 """
-                window.dispatchEvent(new CustomEvent('navigator-native-wake', {
-                  detail: { source: 'openwakeword' }
-                }));
+                if (typeof window.CiscoNavigatorNativeWake === 'function') {
+                  window.CiscoNavigatorNativeWake();
+                } else {
+                  window.dispatchEvent(new CustomEvent('navigator-native-wake', {
+                    detail: { source: 'openwakeword' }
+                  }));
+                }
                 """.trimIndent(),
                 null,
             )
@@ -319,6 +327,7 @@ class MainActivity : Activity() {
         @JavascriptInterface
         fun pauseWakeListening() {
             Log.i(TAG, "Pausing native wake listening for WebView audio capture")
+            playListeningChime()
             runOnUiThread {
                 stopService(Intent(this@MainActivity, WakeWordService::class.java))
             }
@@ -333,7 +342,24 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun playListeningChime() {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastChimeAt < CHIME_DEBOUNCE_MS) return
+        lastChimeAt = now
+
+        runCatching {
+            val tone = ToneGenerator(AudioManager.STREAM_MUSIC, CHIME_VOLUME)
+            tone.startTone(ToneGenerator.TONE_PROP_ACK, CHIME_MS)
+            webView.postDelayed({ tone.release() }, CHIME_MS + 250L)
+        }.onFailure {
+            Log.w(TAG, "Could not play listening chime", it)
+        }
+    }
+
     companion object {
         private const val TAG = "MainActivity"
+        private const val CHIME_MS = 160
+        private const val CHIME_VOLUME = 70
+        private const val CHIME_DEBOUNCE_MS = 800L
     }
 }

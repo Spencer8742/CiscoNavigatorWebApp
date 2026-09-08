@@ -115,6 +115,20 @@ export const assistWakeResult = signal<{ seq: number; result: AssistResult } | n
 /** Pauses wake listening during manual capture, request handling, and playback. */
 export const assistWakePaused = signal(false);
 
+export function openAssistAndListen(): void {
+  const wasOpen = assistOpen.value;
+  assistWakePaused.value = true;
+  assistOpen.value = true;
+
+  const request = (): void => {
+    assistListenRequests.value += 1;
+  };
+  if (wasOpen) request();
+  else window.setTimeout(request, 0);
+
+  markActivity();
+}
+
 /**
  * Kiosk lock: the nav bar is hidden and the panel stays on the page it is on.
  *
