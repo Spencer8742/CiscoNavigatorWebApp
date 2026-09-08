@@ -378,8 +378,9 @@ class MainActivity : Activity() {
         lastChimeAt = now
 
         runCatching {
-            val tone = ToneGenerator(AudioManager.STREAM_MUSIC, CHIME_VOLUME)
-            tone.startTone(ToneGenerator.TONE_PROP_ACK, CHIME_MS)
+            Log.i(TAG, "Playing listening chime")
+            val tone = ToneGenerator(AudioManager.STREAM_ALARM, CHIME_VOLUME)
+            tone.startTone(ToneGenerator.TONE_PROP_PROMPT, CHIME_MS)
             webView.postDelayed({ tone.release() }, CHIME_MS + 250L)
         }.onFailure {
             Log.w(TAG, "Could not play listening chime", it)
@@ -388,8 +389,8 @@ class MainActivity : Activity() {
 
     companion object {
         private const val TAG = "MainActivity"
-        private const val CHIME_MS = 160
-        private const val CHIME_VOLUME = 70
+        private const val CHIME_MS = 240
+        private const val CHIME_VOLUME = 100
         private const val CHIME_DEBOUNCE_MS = 800L
     }
 }
