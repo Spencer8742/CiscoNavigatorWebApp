@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'preact/hooks';
 import { canRecordVoice, PcmRecorder, TARGET_SAMPLE_RATE } from '~/assist/audio.ts';
+import type { VoiceRecorder } from '~/assist/native.ts';
 import { askAssistWakeAudio } from '~/net/socket.ts';
 import {
   assistOpen,
@@ -32,7 +33,7 @@ export function AssistWakeListener() {
 
     let stopped = false;
     let retry: ReturnType<typeof setTimeout> | null = null;
-    let recorder: PcmRecorder | null = null;
+    let recorder: VoiceRecorder | null = null;
     let sending = false;
     let segmenting = false;
     let segment: Int16Array[] = [];
@@ -139,7 +140,7 @@ export function AssistWakeListener() {
 
     const start = (): void => {
       if (stopped || recorder) return;
-      void PcmRecorder.startWithChunks(onChunk)
+      void PcmRecorder.startWithChunks(onChunk, TARGET_SAMPLE_RATE, { retainAudio: false })
         .then((next) => {
           if (stopped) {
             void next.stop();

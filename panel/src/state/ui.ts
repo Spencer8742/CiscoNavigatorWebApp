@@ -116,16 +116,9 @@ export const assistWakeResult = signal<{ seq: number; result: AssistResult } | n
 export const assistWakePaused = signal(false);
 
 export function openAssistAndListen(): void {
-  const wasOpen = assistOpen.value;
   assistWakePaused.value = true;
   assistOpen.value = true;
-
-  const request = (): void => {
-    assistListenRequests.value += 1;
-  };
-  if (wasOpen) request();
-  else window.setTimeout(request, 0);
-
+  assistListenRequests.value += 1;
   markActivity();
 }
 

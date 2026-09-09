@@ -1,27 +1,19 @@
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { Icon } from '~/components/Icon.tsx';
 import { Pressable } from '~/components/Pressable.tsx';
 import { Sheet } from '~/components/Sheet.tsx';
 import { canRecordVoice, PcmRecorder, TARGET_SAMPLE_RATE } from '~/assist/audio.ts';
+import { hasNativeAudio, type VoiceRecorder } from '~/assist/native.ts';
+import { SpeechEndpoint } from '~/assist/endpoint.ts';
 import { getToken } from '~/net/auth.ts';
 import { askAssist, askAssistAudio } from '~/net/socket.ts';
 import {
-  assistListenRequests,
-  assistOpen,
-  assistWakePaused,
-  assistWakeResult,
-  markActivity,
-  showToast,
+  assistListenRequests, assistOpen, assistWakePaused, assistWakeResult, markActivity, showToast,
 } from '~/state/ui.ts';
 import type { AssistResult } from '@shared/protocol.ts';
 
-type AssistPhase = 'idle' | 'recording' | 'sending' | 'answered' | 'unsupported';
-
-const LANG = 'en-US';
-const MAX_RECORDING_MS = 7_000;
-const NATIVE_WAKE_PAUSE_MS = 250;
+type AssistPhase = 'idle' | 'starting' | 'recording' | 'sending' | 'answered' | 'unsupported';
 const UNKNOWN_ASSIST_ERROR = /^error:? unknown$/i;
-
 let chimeContext: AudioContext | null = null;
 
 export function AssistSheet() {
@@ -30,165 +22,164 @@ export function AssistSheet() {
   const [heard, setHeard] = useState('');
   const [reply, setReply] = useState<AssistResult | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
-  const recorder = useRef<PcmRecorder | null>(null);
+  const recorder = useRef<VoiceRecorder | null>(null);
   const player = useRef<HTMLAudioElement | null>(null);
   const autoStop = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastListenRequest = useRef(assistListenRequests.value);
-  const lastWakeResult = useRef(assistWakeResult.value?.seq ?? 0);
-
+  const captureAbort = useRef<AbortController | null>(null);
+  const generation = useRef(0);
+  const currentPhase = useRef<AssistPhase>('idle');
+  const lastListenRequest = useRef(0);
+  const lastWakeResult = useRef(0);
   const open = assistOpen.value;
   const voiceSupported = canRecordVoice();
   const listenRequest = assistListenRequests.value;
   const wakeResult = assistWakeResult.value;
 
+  const updatePhase = (value: AssistPhase): void => {
+    currentPhase.current = value;
+    setPhase(value);
+  };
   const clearAutoStop = (): void => {
-    if (!autoStop.current) return;
-    clearTimeout(autoStop.current);
+    if (autoStop.current) clearTimeout(autoStop.current);
     autoStop.current = null;
   };
-
-  const stopRecording = async (sendAudio: boolean): Promise<void> => {
-    const active = recorder.current;
-    if (!active) return;
-    recorder.current = null;
+  const cancel = (): void => {
+    generation.current++;
     clearAutoStop();
+    captureAbort.current?.abort();
+    captureAbort.current = null;
+    const active = recorder.current;
+    recorder.current = null;
+    if (active) void active.stop();
+    player.current?.pause();
     assistWakePaused.value = false;
-    const audio = await active.stop();
-    resumeNativeWake();
-    if (!sendAudio) {
-      setPhase('idle');
-      return;
-    }
-    await sendVoice(audio);
+    updatePhase('idle');
   };
+  const isCurrent = (id: number): boolean => generation.current === id && assistOpen.value;
 
-  useEffect(() => {
-    if (!open) {
-      player.current?.pause();
-      assistWakePaused.value = false;
-      void stopRecording(false);
-    }
-    return () => {
-      player.current?.pause();
-      assistWakePaused.value = false;
-      void stopRecording(false);
-    };
+  useLayoutEffect(() => {
+    if (!open) cancel();
+    return cancel;
   }, [open]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open || listenRequest <= lastListenRequest.current) return;
     lastListenRequest.current = listenRequest;
-    if (phase !== 'recording' && phase !== 'sending') void startRecording();
-  }, [open, listenRequest, phase]);
+    void startRecording();
+  }, [open, listenRequest]);
 
   useEffect(() => {
     if (!wakeResult || wakeResult.seq <= lastWakeResult.current) return;
     lastWakeResult.current = wakeResult.seq;
-    const result = wakeResult.result;
-    setConversationId(result.conversationId);
-    setHeard(result.text);
-    setReply(result);
-    setPhase('answered');
-    void playReply(result);
-    if (!result.audioUrl) assistWakePaused.value = false;
+    applyReply(wakeResult.result, generation.current);
   }, [wakeResult]);
 
-  const sendText = async (raw: string): Promise<void> => {
+  function applyReply(result: AssistResult, id: number): void {
+    if (!isCurrent(id)) return;
+    setConversationId(result.success ? result.conversationId : null);
+    setHeard(result.text);
+    setReply(result);
+    updatePhase('answered');
+    playReply(result, id);
+    if (!result.success) showToast(assistReplyText(result), 'error');
+  }
+
+  async function sendText(raw: string): Promise<void> {
     const text = raw.trim();
-    if (!text || phase === 'sending') return;
-    markActivity();
-    void stopRecording(false);
+    if (!text || currentPhase.current === 'sending') return;
+    cancel();
+    const id = generation.current;
     assistWakePaused.value = true;
-    setPhase('sending');
+    updatePhase('sending');
     setHeard(text);
     setReply(null);
+    markActivity();
     try {
-      const result = await askAssist({ text, conversationId, language: LANG });
-      setConversationId(result.conversationId);
-      setReply(result);
-      setPhase('answered');
-      void playReply(result);
-      if (!result.audioUrl) assistWakePaused.value = false;
-      if (!result.success) showToast(assistReplyText(result), 'error');
-    } catch (err) {
-      assistWakePaused.value = false;
-      setPhase('idle');
-      showToast(err instanceof Error ? err.message : 'Assist did not respond', 'error');
-    }
-  };
+      applyReply(await askAssist({ text, conversationId, language: 'en-US' }), id);
+    } catch (error) { reportError(error, id); }
+  }
 
-  const sendVoice = async (audio: ArrayBuffer): Promise<void> => {
-    if (audio.byteLength === 0) {
-      setPhase('idle');
-      showToast('I did not hear anything', 'error');
+  function reportError(error: unknown, id: number): void {
+    if (!isCurrent(id)) return;
+    assistWakePaused.value = false;
+    updatePhase('idle');
+    showToast(captureErrorMessage(error), 'error');
+  }
+
+  async function stopRecording(sendAudio: boolean): Promise<void> {
+    const active = recorder.current;
+    if (!active) return;
+    recorder.current = null;
+    clearAutoStop();
+    captureAbort.current = null;
+    const id = generation.current;
+    updatePhase(sendAudio ? 'sending' : 'idle');
+    const audio = await active.stop();
+    if (!isCurrent(id)) return;
+    if (!sendAudio || audio.byteLength < TARGET_SAMPLE_RATE) {
+      assistWakePaused.value = false;
+      updatePhase('idle');
+      setHeard('');
+      showToast('I did not hear a command. Try again.', 'error');
       return;
     }
-
-    markActivity();
-    assistWakePaused.value = true;
-    setPhase('sending');
-    setHeard('Listening complete');
-    setReply(null);
+    setHeard('Processing...');
     try {
-      const result = await askAssistAudio(audio, { conversationId });
-      setConversationId(result.conversationId);
-      setHeard(result.text);
-      setReply(result);
-      setPhase('answered');
-      void playReply(result);
-      if (!result.audioUrl) assistWakePaused.value = false;
-      if (!result.success) showToast(assistReplyText(result), 'error');
-    } catch (err) {
-      assistWakePaused.value = false;
-      setPhase('idle');
-      showToast(err instanceof Error ? err.message : 'Assist did not respond', 'error');
-    }
-  };
+      applyReply(await askAssistAudio(audio, { conversationId }), id);
+    } catch (error) { reportError(error, id); }
+  }
 
-  const startRecording = async (): Promise<void> => {
+  async function startRecording(): Promise<void> {
+    if (['starting', 'recording', 'sending'].includes(currentPhase.current)) return;
     if (!voiceSupported) {
-      setPhase('unsupported');
+      updatePhase('unsupported');
       showToast('Microphone capture is not available in this WebView', 'error');
       return;
     }
-
-    markActivity();
+    player.current?.pause();
+    const id = ++generation.current;
+    const abort = new AbortController();
+    captureAbort.current = abort;
     assistWakePaused.value = true;
+    updatePhase('starting');
     setDraft('');
     setReply(null);
-    setHeard('Listening...');
-    setPhase('recording');
-
+    setHeard('');
+    markActivity();
+    const endpoint = new SpeechEndpoint();
     try {
-      await pauseNativeWakeForCapture();
-      recorder.current = await PcmRecorder.start(TARGET_SAMPLE_RATE);
-      if (!window.CiscoNavigatorNative) void playListeningChime();
-      autoStop.current = setTimeout(() => {
-        void stopRecording(true);
-      }, MAX_RECORDING_MS);
-    } catch (err) {
+      const next = await PcmRecorder.startWithChunks((chunk) => {
+        if (!isCurrent(id)) return;
+        const result = endpoint.push(chunk);
+        if (result) void stopRecording(result === 'speech-end');
+      }, TARGET_SAMPLE_RATE, {
+        signal: abort.signal,
+        onError: (error) => {
+          if (!isCurrent(id)) return;
+          cancel();
+          showToast(captureErrorMessage(error), 'error');
+        },
+      });
+      if (!isCurrent(id) || abort.signal.aborted) { await next.stop(); return; }
+      recorder.current = next;
+      updatePhase('recording');
+      setHeard('Listening...');
+      if (!hasNativeAudio()) void playListeningChime();
+      autoStop.current = setTimeout(() => void stopRecording(endpoint.hasSpeech), 16000);
+    } catch (error) {
+      if (abort.signal.aborted || !isCurrent(id)) return;
       recorder.current = null;
       clearAutoStop();
-      resumeNativeWake();
-      setPhase('unsupported');
-      showToast(captureErrorMessage(err), 'error');
+      reportError(error, id);
     }
-  };
+  }
 
   const primary = (): void => {
     if (phase === 'recording') void stopRecording(true);
     else void startRecording();
   };
-
-  const status =
-    phase === 'recording'
-      ? 'Listening'
-      : phase === 'sending'
-        ? 'Sending'
-        : phase === 'unsupported'
-          ? 'Keyboard'
-          : 'Ready';
-
+  const status = phase === 'starting' ? 'Starting microphone' : phase === 'recording' ? 'Listening'
+    : phase === 'sending' ? 'Thinking' : phase === 'unsupported' ? 'Keyboard' : 'Ready';
   if (!open) return null;
 
   return (
@@ -197,7 +188,7 @@ export function AssistSheet() {
         <Pressable
           class={phase === 'recording' ? 'assist-mic is-listening p-lg' : 'assist-mic p-lg'}
           onPress={primary}
-          disabled={phase === 'sending'}
+          disabled={phase === 'sending' || phase === 'starting'}
           ariaLabel={phase === 'recording' ? 'Send voice command' : 'Start listening'}
         >
           <Icon name={phase === 'recording' ? 'micOff' : 'mic'} size="2.6rem" weight={1.9} />
@@ -244,27 +235,24 @@ export function AssistSheet() {
     </Sheet>
   );
 
-  async function playReply(result: AssistResult): Promise<void> {
+  function playReply(result: AssistResult, id: number): void {
     const src = audioSrc(result.audioUrl);
     const el = player.current;
-    if (!src || !el) return;
-
-    try {
-      assistWakePaused.value = true;
-      el.pause();
-      el.src = src;
-      el.currentTime = 0;
-      el.onended = () => {
-        assistWakePaused.value = false;
-      };
-      el.onerror = () => {
-        assistWakePaused.value = false;
-      };
-      await el.play();
-    } catch {
-      assistWakePaused.value = false;
-      showToast('Assist answered, but audio playback was blocked', 'error');
-    }
+    if (!src || !el) { assistWakePaused.value = false; return; }
+    assistWakePaused.value = true;
+    el.pause();
+    el.src = src;
+    el.currentTime = 0;
+    const done = (): void => { if (isCurrent(id)) assistWakePaused.value = false; };
+    el.onended = done;
+    el.onerror = () => {
+      done();
+      if (isCurrent(id)) showToast('Assist answered, but its audio could not play', 'error');
+    };
+    void el.play().catch(() => {
+      done();
+      if (isCurrent(id)) showToast('Assist answered, but audio playback was blocked', 'error');
+    });
   }
 }
 
@@ -309,25 +297,6 @@ async function playListeningChime(): Promise<void> {
     };
   } catch {
     /* A blocked chime must not block microphone capture. */
-  }
-}
-
-async function pauseNativeWakeForCapture(): Promise<void> {
-  try {
-    window.CiscoNavigatorNativePauseWake?.();
-  } catch {
-    /* Native bridge is optional outside the Android wrapper. */
-  }
-  if (window.CiscoNavigatorNativePauseWake) {
-    await new Promise((resolve) => setTimeout(resolve, NATIVE_WAKE_PAUSE_MS));
-  }
-}
-
-function resumeNativeWake(): void {
-  try {
-    window.CiscoNavigatorNativeResumeWake?.();
-  } catch {
-    /* Native bridge is optional outside the Android wrapper. */
   }
 }
 
