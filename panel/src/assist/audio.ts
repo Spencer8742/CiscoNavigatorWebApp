@@ -1,7 +1,12 @@
+import { hasNativeAudio, NativeRecorder, type VoiceRecorder } from './native.ts';
+
 export const TARGET_SAMPLE_RATE = 16_000;
 
 type PcmRecorderOptions = {
   processing?: boolean;
+  signal?: AbortSignal;
+  onError?: (error: Error) => void;
+  retainAudio?: boolean;
 };
 
 export class PcmRecorder {
@@ -11,6 +16,7 @@ export class PcmRecorder {
   readonly #processor: ScriptProcessorNode;
   readonly #chunks: Int16Array[] = [];
   #stopped = false;
+  #cleanup = (): void => {};
 
   private constructor(
     context: AudioContext,
@@ -27,7 +33,7 @@ export class PcmRecorder {
   static async start(
     targetSampleRate = TARGET_SAMPLE_RATE,
     options: PcmRecorderOptions = {},
-  ): Promise<PcmRecorder> {
+  ): Promise<VoiceRecorder> {
     return PcmRecorder.startWithChunks(() => undefined, targetSampleRate, options);
   }
 
@@ -35,7 +41,9 @@ export class PcmRecorder {
     onChunk: (chunk: Int16Array) => void,
     targetSampleRate = TARGET_SAMPLE_RATE,
     options: PcmRecorderOptions = {},
-  ): Promise<PcmRecorder> {
+  ): Promise<VoiceRecorder> {
+    if (hasNativeAudio()) return NativeRecorder.start(onChunk, options.signal, options.onError);
+    if (options.signal?.aborted) throw new DOMException('Capture cancelled', 'AbortError');
     const processing = options.processing ?? true;
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: processing
@@ -54,28 +62,54 @@ export class PcmRecorder {
             autoGainControl: false,
           },
     });
+    if (options.signal?.aborted) {
+      stream.getTracks().forEach((track) => track.stop());
+      throw new DOMException('Capture cancelled', 'AbortError');
+    }
     const Ctor = window.AudioContext ?? window.webkitAudioContext;
-    if (!Ctor) throw new Error('Audio capture is not available');
-    const context = new Ctor();
-    const source = context.createMediaStreamSource(stream);
-    const processor = context.createScriptProcessor(4096, 1, 1);
-    const recorder = new PcmRecorder(context, stream, source, processor);
+    if (!Ctor) {
+      stream.getTracks().forEach((track) => track.stop());
+      throw new Error('Audio capture is not available');
+    }
+    let context: AudioContext;
+    try { context = new Ctor(); } catch (error) {
+      stream.getTracks().forEach((track) => track.stop());
+      throw error;
+    }
+    try {
+      const source = context.createMediaStreamSource(stream);
+      const processor = context.createScriptProcessor(4096, 1, 1);
+      const recorder = new PcmRecorder(context, stream, source, processor);
 
-    processor.onaudioprocess = (event) => {
-      const input = event.inputBuffer.getChannelData(0);
-      const chunk = toPcm16(input, context.sampleRate, targetSampleRate);
-      recorder.#chunks.push(chunk);
-      onChunk(chunk);
-    };
+      processor.onaudioprocess = (event) => {
+        const input = event.inputBuffer.getChannelData(0);
+        const chunk = toPcm16(input, context.sampleRate, targetSampleRate);
+        if (options.retainAudio !== false) recorder.#chunks.push(chunk);
+        onChunk(chunk);
+      };
 
-    source.connect(processor);
-    processor.connect(context.destination);
-    return recorder;
+      source.connect(processor);
+      processor.connect(context.destination);
+      const abort = (): void => { void recorder.stop(); };
+      options.signal?.addEventListener('abort', abort, { once: true });
+      recorder.#cleanup = () => options.signal?.removeEventListener('abort', abort);
+      await context.resume();
+      if (options.signal?.aborted) {
+        await recorder.stop();
+        throw new DOMException('Capture cancelled', 'AbortError');
+      }
+      return recorder;
+    } catch (error) {
+      stream.getTracks().forEach((track) => track.stop());
+      await context.close().catch(() => undefined);
+      throw error;
+    }
   }
 
   async stop(): Promise<ArrayBuffer> {
     if (this.#stopped) return new ArrayBuffer(0);
     this.#stopped = true;
+    this.#cleanup();
     this.#processor.disconnect();
     this.#source.disconnect();
     for (const track of this.#stream.getTracks()) track.stop();
@@ -100,8 +134,8 @@ declare global {
 
 export function canRecordVoice(): boolean {
   return Boolean(
-    typeof navigator.mediaDevices?.getUserMedia === 'function' &&
-      (window.AudioContext || window.webkitAudioContext),
+    hasNativeAudio() || (typeof navigator.mediaDevices?.getUserMedia === 'function' &&
+      (window.AudioContext || window.webkitAudioContext))
   );
 }
 

@@ -1,11 +1,13 @@
 import { effect } from '@preact/signals';
 import { idleConfig } from '~/config/index.ts';
 import type { IdleConfig } from '@shared/config.ts';
+import { ringingTimers, timers } from '~/state/timers.ts';
 import {
   lastActivity,
   markActivity,
   route,
   screensaverActive,
+  timersOpen,
 } from '~/state/ui.ts';
 
 /**
@@ -120,7 +122,8 @@ function tick(): void {
   // is markActivity()'s job, on the first touch.
   if (screensaverActive.value) return;
 
-  const holding = holdingOnControls(cfg, idleMs);
+  const holding = holdingOnControls(cfg, idleMs) || ringingTimers.value.length > 0
+    || (timersOpen.value && timers.value.some((timer) => timer.state === 'running'));
 
   // Starting the screensaver is the only thing left to decide. The route is
   // deliberately untouched: the panel screensaves from wherever it is and

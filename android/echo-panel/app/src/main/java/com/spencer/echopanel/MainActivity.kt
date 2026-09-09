@@ -3,103 +3,126 @@ package com.spencer.echopanel
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
-import android.media.AudioManager
-import android.media.ToneGenerator
-import android.content.BroadcastReceiver
-import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
+import android.content.*
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
+import android.media.AudioManager
+import android.media.AudioFormat
+import android.media.AudioTrack
 import android.net.Uri
-import android.os.Build
-import android.os.Bundle
-import android.os.SystemClock
+import android.os.*
+import android.util.Base64
 import android.util.Log
-import android.view.View
-import android.view.ViewGroup
-import android.view.WindowInsets
-import android.view.WindowManager
-import android.webkit.JavascriptInterface
-import android.webkit.PermissionRequest
-import android.webkit.WebChromeClient
-import android.webkit.WebResourceRequest
-import android.webkit.WebView
-import android.webkit.WebViewClient
+import android.view.*
+import android.webkit.*
 import android.widget.FrameLayout
 import android.widget.TextView
 import com.spencer.echopanel.wake.WakeWordService
+import org.json.JSONObject
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import kotlin.math.PI
+import kotlin.math.sin
 
 private const val PERMISSION_REQUEST = 8742
 private const val DEFAULT_PANEL_URL = "https://assistant.ts.blasters.app/?panel=echo-show&nativeWake=1"
 private const val PREFS = "echo-panel"
-private const val EXTRA_PANEL_URL = "panel_url"
-private const val EXTRA_WAKE_MODEL_NAME = "wake_model_name"
-private const val EXTRA_WAKE_MODEL_PATH = "wake_model_path"
-private const val EXTRA_WAKE_THRESHOLD = "wake_threshold"
 
 class MainActivity : Activity() {
     private lateinit var webView: WebView
     private lateinit var status: TextView
-    private var lastChimeAt = 0L
+    private var voice: WakeWordService? = null
+    private var bound = false
+    private var chime: AudioTrack? = null
+    private var lastWakeAt = 0L
+    private var destroyed = false
+
+    private val audioListener = object : WakeWordService.Listener {
+        override fun onCaptureReady(id: Int) {
+            runOnUiThread {
+                if (destroyed) return@runOnUiThread
+                playListeningChime()
+                audioEvent(JSONObject().put("id", id).put("type", "ready"))
+            }
+        }
+        override fun onAudio(id: Int, pcm: ShortArray) {
+            val bytes = ByteBuffer.allocate(pcm.size * 2).order(ByteOrder.LITTLE_ENDIAN)
+            bytes.asShortBuffer().put(pcm)
+            audioEvent(JSONObject().put("id", id).put("type", "audio")
+                .put("pcm", Base64.encodeToString(bytes.array(), Base64.NO_WRAP)))
+        }
+        override fun onError(id: Int, message: String) {
+            audioEvent(JSONObject().put("id", id).put("type", "error").put("message", message))
+        }
+    }
+
+    private val connection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName, binder: IBinder) {
+            voice = (binder as WakeWordService.LocalBinder).service.also { it.listener = audioListener }
+        }
+        override fun onServiceDisconnected(name: ComponentName) { voice = null }
+    }
 
     private val wakeReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action == WakeWordService.ACTION_WAKE_DETECTED) {
-                triggerAssistFromWake()
-            }
+            if (intent.action != WakeWordService.ACTION_WAKE_DETECTED) return
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastWakeAt < 1500) return
+            lastWakeAt = now
+            hideSystemUi()
+            // Exactly one event. The web handler is mounted above every route and overlay.
+            webView.evaluateJavascript("window.CiscoNavigatorNativeWake && window.CiscoNavigatorNativeWake()", null)
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        volumeControlStream = AudioManager.STREAM_MUSIC
         applyIntentSettings(intent)
-
-        val root = FrameLayout(this)
         webView = WebView(this)
         status = TextView(this).apply {
             text = "Loading Echo Panel..."
             setTextColor(0xffffffff.toInt())
             setBackgroundColor(0xff08090c.toInt())
             textSize = 18f
-            gravity = android.view.Gravity.CENTER
+            gravity = Gravity.CENTER
         }
-        root.addView(
-            webView,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-            ),
-        )
-        root.addView(
-            status,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-            ),
-        )
+        val root = FrameLayout(this)
+        val fill = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        root.addView(webView, fill)
+        root.addView(status, fill)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         webView.keepScreenOn = true
         setContentView(root)
         hideSystemUi()
-
         configureWebView()
         webView.addJavascriptInterface(NativeBridge(), "CiscoNavigatorAndroid")
-        registerWakeReceiver()
+        val filter = IntentFilter(WakeWordService.ACTION_WAKE_DETECTED)
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(wakeReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        else registerReceiver(wakeReceiver, filter)
+        prepareChime()
         requestRuntimePermissions()
-        loadPanel()
+        webView.loadUrl(panelUrl())
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         if (applyIntentSettings(intent)) {
-            loadPanel()
-            restartWakeService()
+            voice?.resetClient()
+            if (listOf("wake_model_name", "wake_model_path", "wake_threshold").any { intent.hasExtra(it) })
+                voice?.reloadModels()
+            webView.loadUrl(panelUrl())
         }
     }
 
     override fun onDestroy() {
+        destroyed = true
         unregisterReceiver(wakeReceiver)
+        voice?.listener = null
+        voice?.resetClient()
+        if (bound) unbindService(connection)
+        chime?.release()
         webView.destroy()
         super.onDestroy()
     }
@@ -109,288 +132,172 @@ class MainActivity : Activity() {
         if (hasFocus) hideSystemUi()
     }
 
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray,
-    ) {
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == PERMISSION_REQUEST && hasAudioPermission()) startWakeService()
+        if (requestCode == PERMISSION_REQUEST && hasAudioPermission()) startVoiceService()
     }
 
     override fun onBackPressed() {
-        if (webView.canGoBack()) webView.goBack()
+        webView.evaluateJavascript("document.querySelector('[role=dialog] [aria-label=Close]')?.click()", null)
     }
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun configureWebView() {
-        WebView.setWebContentsDebuggingEnabled(true)
+        WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
         webView.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
             mediaPlaybackRequiresUserGesture = false
-            loadWithOverviewMode = false
             useWideViewPort = true
-            builtInZoomControls = false
-            displayZoomControls = false
             setSupportZoom(false)
         }
-
         webView.webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(request: PermissionRequest) {
-                val audioOnly = request.resources.all { it == PermissionRequest.RESOURCE_AUDIO_CAPTURE }
-                if (audioOnly && hasAudioPermission()) request.grant(request.resources)
+                if (trusted(request.origin) && request.resources.all { it == PermissionRequest.RESOURCE_AUDIO_CAPTURE } && hasAudioPermission())
+                    request.grant(request.resources)
                 else request.deny()
             }
         }
-
         webView.webViewClient = object : WebViewClient() {
-            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                return false
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = !trusted(request.url)
+
+            override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+                voice?.resetClient()
             }
 
             override fun onPageFinished(view: WebView, url: String) {
                 status.visibility = View.GONE
-                injectNativeWakeBridge()
+                view.evaluateJavascript("window.CiscoNavigatorNative = true", null)
+            }
+
+            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                if (request.method != "GET" || !trusted(request.url)) return null
+                val path = request.url.path ?: return null
+                val asset = when {
+                    path == "/" || path == "/index.html" -> "panel/index.html"
+                    path.startsWith("/a/") && !path.contains("..") -> "panel" + path
+                    else -> return null
+                }
+                val mime = when {
+                    asset.endsWith(".html") -> "text/html"
+                    asset.endsWith(".js") -> "application/javascript"
+                    asset.endsWith(".css") -> "text/css"
+                    asset.endsWith(".woff2") -> "font/woff2"
+                    asset.endsWith(".svg") -> "image/svg+xml"
+                    else -> "application/octet-stream"
+                }
+                return runCatching {
+                    WebResourceResponse(mime, "utf-8", 200, "OK", mapOf("Cache-Control" to "no-store"), assets.open(asset))
+                }.getOrNull()
             }
         }
     }
 
-    private fun loadPanel() {
-        webView.loadUrl(panelUrl())
+    private fun trusted(uri: Uri): Boolean {
+        val panel = Uri.parse(panelUrl())
+        return uri.scheme == panel.scheme && uri.host == panel.host && uri.port == panel.port
     }
 
     private fun panelUrl(): String {
-        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
-        val configured = prefs.getString("panel_url", DEFAULT_PANEL_URL) ?: DEFAULT_PANEL_URL
+        val configured = getSharedPreferences(PREFS, MODE_PRIVATE).getString("panel_url", DEFAULT_PANEL_URL) ?: DEFAULT_PANEL_URL
         val parsed = Uri.parse(configured)
         val builder = parsed.buildUpon()
         if (parsed.getQueryParameter("nativeWake") == null) builder.appendQueryParameter("nativeWake", "1")
         return builder.build().toString()
     }
 
-    private fun injectNativeWakeBridge() {
-        webView.evaluateJavascript(
-            """
-            window.CiscoNavigatorNative = true;
-            window.CiscoNavigatorNativeWake = window.CiscoNavigatorNativeWake || function() {
-              window.dispatchEvent(new CustomEvent('navigator-native-wake'));
-            };
-            window.CiscoNavigatorNativePauseWake = function() {
-              if (window.CiscoNavigatorAndroid) window.CiscoNavigatorAndroid.pauseWakeListening();
-            };
-            window.CiscoNavigatorNativeResumeWake = function() {
-              if (window.CiscoNavigatorAndroid) window.CiscoNavigatorAndroid.resumeWakeListening();
-            };
-            (function() {
-              var media = navigator.mediaDevices;
-              if (!media || typeof media.getUserMedia !== 'function' || media.__CiscoNavigatorWakePatched) return;
-              var originalGetUserMedia = media.getUserMedia.bind(media);
-              Object.defineProperty(media, '__CiscoNavigatorWakePatched', { value: true });
-              media.getUserMedia = async function(constraints) {
-                var wantsAudio = !!(constraints && constraints.audio);
-                if (!wantsAudio) return originalGetUserMedia(constraints);
-
-                window.CiscoNavigatorNativePauseWake();
-                await new Promise(function(resolve) { setTimeout(resolve, 250); });
-
-                try {
-                  var stream = await originalGetUserMedia(constraints);
-                  var tracks = typeof stream.getAudioTracks === 'function' ? stream.getAudioTracks() : [];
-                  var resumed = false;
-                  var maybeResumeWake = function() {
-                    if (resumed) return;
-                    if (!tracks.every(function(track) { return track.readyState === 'ended'; })) return;
-                    resumed = true;
-                    setTimeout(function() { window.CiscoNavigatorNativeResumeWake(); }, 250);
-                  };
-                  tracks.forEach(function(track) {
-                    var originalStop = track.stop.bind(track);
-                    track.stop = function() {
-                      originalStop();
-                      maybeResumeWake();
-                    };
-                    if (typeof track.addEventListener === 'function') {
-                      track.addEventListener('ended', maybeResumeWake);
-                    }
-                  });
-                  return stream;
-                } catch (err) {
-                  window.CiscoNavigatorNativeResumeWake();
-                  throw err;
-                }
-              };
-            })();
-            """.trimIndent(),
-            null,
-        )
-    }
-
-    private fun triggerAssistFromWake() {
-        runOnUiThread {
-            hideSystemUi()
-            playListeningChime()
-            webView.evaluateJavascript(
-                """
-                (function() {
-                  var safeCall = function(fn) {
-                    try {
-                      if (typeof fn === 'function') fn();
-                    } catch (err) {
-                      console.warn('[native-wake] callback failed', err);
-                    }
-                  };
-
-                  safeCall(window.CiscoNavigatorNativeWake);
-                  window.dispatchEvent(new CustomEvent('navigator-native-wake', {
-                    detail: { source: 'openwakeword' }
-                  }));
-
-                  var isAssistOpen = function() {
-                    return !!document.querySelector('[role="dialog"][aria-label="Assist"]');
-                  };
-                  var clickByLabel = function(label) {
-                    var match = Array.prototype.find.call(
-                      document.querySelectorAll('[aria-label]'),
-                      function(el) { return el.getAttribute('aria-label') === label; }
-                    );
-                    if (match && typeof match.click === 'function') {
-                      match.click();
-                      return true;
-                    }
-                    return false;
-                  };
-
-                  window.setTimeout(function() {
-                    if (!isAssistOpen()) clickByLabel('Assist');
-                    window.setTimeout(function() {
-                      if (isAssistOpen()) clickByLabel('Start listening');
-                    }, 350);
-                  }, 350);
-                })();
-                """.trimIndent(),
-                null,
-            )
-        }
-    }
-
     private fun requestRuntimePermissions() {
         val missing = mutableListOf<String>()
         if (!hasAudioPermission()) missing += Manifest.permission.RECORD_AUDIO
-        if (Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
             missing += Manifest.permission.POST_NOTIFICATIONS
-        }
-
-        if (missing.isEmpty()) startWakeService()
-        else requestPermissions(missing.toTypedArray(), PERMISSION_REQUEST)
+        if (missing.isEmpty()) startVoiceService() else requestPermissions(missing.toTypedArray(), PERMISSION_REQUEST)
     }
 
-    private fun hasAudioPermission(): Boolean {
-        return checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-    }
+    private fun hasAudioPermission() = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
-    private fun startWakeService() {
+    private fun startVoiceService() {
         val intent = Intent(this, WakeWordService::class.java)
-        if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent)
-        else startService(intent)
-    }
-
-    private fun restartWakeService() {
-        stopService(Intent(this, WakeWordService::class.java))
-        if (hasAudioPermission()) startWakeService()
+        if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
+        if (!bound) bound = bindService(intent, connection, Context.BIND_AUTO_CREATE)
     }
 
     private fun applyIntentSettings(intent: Intent?): Boolean {
         if (intent == null) return false
-
-        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
-        val editor = prefs.edit()
+        val editor = getSharedPreferences(PREFS, MODE_PRIVATE).edit()
         var changed = false
-
-        intent.getStringExtra(EXTRA_PANEL_URL)?.trim()?.takeIf { it.startsWith("https://") }?.let {
-            editor.putString(EXTRA_PANEL_URL, it)
+        for (key in listOf("panel_url", "wake_model_name", "wake_model_path")) {
+            intent.getStringExtra(key)?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                if (key != "panel_url" || it.startsWith("https://")) {
+                    editor.putString(key, it)
+                    changed = true
+                }
+            }
+        }
+        if (intent.hasExtra("wake_threshold")) {
+            editor.putFloat("wake_threshold", intent.getFloatExtra("wake_threshold", 0.15f).coerceIn(0.01f, 0.99f))
             changed = true
         }
-        intent.getStringExtra(EXTRA_WAKE_MODEL_NAME)?.trim()?.takeIf { it.isNotEmpty() }?.let {
-            editor.putString(EXTRA_WAKE_MODEL_NAME, it)
-            changed = true
-        }
-        intent.getStringExtra(EXTRA_WAKE_MODEL_PATH)?.trim()?.takeIf { it.endsWith(".onnx") }?.let {
-            editor.putString(EXTRA_WAKE_MODEL_PATH, it)
-            changed = true
-        }
-        if (intent.hasExtra(EXTRA_WAKE_THRESHOLD)) {
-            editor.putFloat(EXTRA_WAKE_THRESHOLD, intent.getFloatExtra(EXTRA_WAKE_THRESHOLD, 0.5f).coerceIn(0.01f, 0.99f))
-            changed = true
-        }
-
         if (changed) editor.apply()
         return changed
     }
 
-    private fun registerWakeReceiver() {
-        val filter = IntentFilter(WakeWordService.ACTION_WAKE_DETECTED)
-        if (Build.VERSION.SDK_INT >= 33) registerReceiver(wakeReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        else registerReceiver(wakeReceiver, filter)
-    }
-
-    private fun hideSystemUi() {
-        if (Build.VERSION.SDK_INT >= 30) {
-            window.decorView.windowInsetsController?.hide(
-                WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars(),
-            )
-        } else {
-            @Suppress("DEPRECATION")
-            window.decorView.systemUiVisibility =
-                View.SYSTEM_UI_FLAG_FULLSCREEN or
-                    View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
-                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
-                    View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
-                    View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
-                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-        }
-    }
-
     private inner class NativeBridge {
-        @JavascriptInterface
-        fun pauseWakeListening() {
-            Log.i(TAG, "Pausing native wake listening for WebView audio capture")
-            playListeningChime()
+        @JavascriptInterface fun audioVersion(): Int = 1
+        @JavascriptInterface fun startCapture(id: Int) {
             runOnUiThread {
-                stopService(Intent(this@MainActivity, WakeWordService::class.java))
+                val service = voice
+                if (service == null) audioListener.onError(id, "Microphone is starting; try again")
+                else service.startCapture(id)
             }
         }
+        @JavascriptInterface fun stopCapture(id: Int) { runOnUiThread { voice?.stopCapture(id) } }
+        @JavascriptInterface fun setWakePaused(paused: Boolean) { runOnUiThread { voice?.setPaused(paused) } }
+        @JavascriptInterface fun playTimerAlert() { runOnUiThread { if (!destroyed) playListeningChime() } }
+    }
 
-        @JavascriptInterface
-        fun resumeWakeListening() {
-            Log.i(TAG, "Resuming native wake listening after WebView audio capture")
-            runOnUiThread {
-                if (hasAudioPermission()) startWakeService()
-            }
+    private fun audioEvent(event: JSONObject) {
+        runOnUiThread {
+            if (!destroyed) webView.evaluateJavascript("window.CiscoNavigatorNativeAudio && window.CiscoNavigatorNativeAudio($event)", null)
         }
+    }
+
+    private fun prepareChime() {
+        runCatching {
+            val rate = 48000
+            // Include a short lead-in and tail so the Echo amplifier has time to wake.
+            val pcm = ShortArray(rate * 600 / 1000) { i ->
+                val t = i.toDouble() / rate - 0.06
+                if (t < 0 || t > 0.22) 0 else {
+                    val envelope = sin(PI * t / 0.22)
+                    (sin(2 * PI * (880 * t + 700 * t * t)) * envelope * 18000).toInt().toShort()
+                }
+            }
+            chime = AudioTrack.Builder()
+                .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
+                .setAudioFormat(AudioFormat.Builder().setSampleRate(rate).setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
+                .setTransferMode(AudioTrack.MODE_STATIC).setBufferSizeInBytes(pcm.size * 2).build().also {
+                    check(it.write(pcm, 0, pcm.size) == pcm.size)
+                }
+        }.onFailure { Log.e("MainActivity", "Chime initialization failed", it) }
     }
 
     private fun playListeningChime() {
-        val now = SystemClock.elapsedRealtime()
-        if (now - lastChimeAt < CHIME_DEBOUNCE_MS) return
-        lastChimeAt = now
-
         runCatching {
-            Log.i(TAG, "Playing listening chime")
-            val tone = ToneGenerator(AudioManager.STREAM_ALARM, CHIME_VOLUME)
-            tone.startTone(ToneGenerator.TONE_PROP_PROMPT, CHIME_MS)
-            webView.postDelayed({ tone.release() }, CHIME_MS + 250L)
-        }.onFailure {
-            Log.w(TAG, "Could not play listening chime", it)
-        }
+            chime?.apply { stop(); reloadStaticData(); setPlaybackHeadPosition(0); play() }
+            Log.i("MainActivity", "Listening chime started")
+        }.onFailure { Log.e("MainActivity", "Chime playback failed", it) }
     }
 
-    companion object {
-        private const val TAG = "MainActivity"
-        private const val CHIME_MS = 240
-        private const val CHIME_VOLUME = 100
-        private const val CHIME_DEBOUNCE_MS = 800L
+    private fun hideSystemUi() {
+        if (Build.VERSION.SDK_INT >= 30) window.decorView.windowInsetsController?.hide(WindowInsets.Type.systemBars())
+        else {
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+                View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+        }
     }
 }

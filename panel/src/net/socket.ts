@@ -621,6 +621,7 @@ export function askAssist(req: {
         t: 'assist',
         id,
         text,
+        panelCommands: true,
         ...(req.conversationId ? { conversationId: req.conversationId } : {}),
         ...(req.language ? { language: req.language } : {}),
         ...(req.agentId ? { agentId: req.agentId } : {}),
@@ -640,6 +641,7 @@ export async function askAssistAudio(audio: ArrayBuffer, req: {
   conversationId?: string | null;
 } = {}): Promise<AssistResult> {
   const query = new URLSearchParams();
+  query.set('panelCommands', '1');
   if (req.conversationId) query.set('conversationId', req.conversationId);
   const res = await fetch(`/api/assist/audio${query.toString() ? `?${query}` : ''}`, {
     method: 'POST',
@@ -665,7 +667,7 @@ export type AssistWakeAudioResponse =
   | { matched: true; text: string; command: string; result: AssistResult };
 
 export async function askAssistWakeAudio(audio: ArrayBuffer): Promise<AssistWakeAudioResponse> {
-  const res = await fetch('/api/assist/wake-audio', {
+  const res = await fetch('/api/assist/wake-audio?panelCommands=1', {
     method: 'POST',
     headers: {
       ...authHeaders(),

@@ -105,6 +105,17 @@ export const openDeviceAlerts = signal<string | null>(null);
 
 /** Whether the Home Assistant Assist sheet is open. */
 export const assistOpen = signal(false);
+export const timersOpen = signal(false);
+
+export function openTimerPopup(): void {
+  assistOpen.value = false;
+  openEntity.value = null;
+  openSources.value = null;
+  openDeviceSource.value = null;
+  openDeviceAlerts.value = null;
+  timersOpen.value = true;
+  markActivity();
+}
 
 /** Incremented by any UI affordance that should open Assist and record now. */
 export const assistListenRequests = signal(0);
@@ -116,16 +127,10 @@ export const assistWakeResult = signal<{ seq: number; result: AssistResult } | n
 export const assistWakePaused = signal(false);
 
 export function openAssistAndListen(): void {
-  const wasOpen = assistOpen.value;
+  timersOpen.value = false;
   assistWakePaused.value = true;
   assistOpen.value = true;
-
-  const request = (): void => {
-    assistListenRequests.value += 1;
-  };
-  if (wasOpen) request();
-  else window.setTimeout(request, 0);
-
+  assistListenRequests.value += 1;
   markActivity();
 }
 
@@ -165,6 +170,7 @@ export function navigate(to: Route): void {
   if (to !== 'rooms') activeRoom.value = null;
   openEntity.value = null;
   assistOpen.value = false;
+  timersOpen.value = false;
   route.value = to;
   markActivity();
 }

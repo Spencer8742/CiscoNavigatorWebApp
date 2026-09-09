@@ -11,8 +11,9 @@ android {
         applicationId = "com.spencer.echopanel"
         minSdk = 23
         targetSdk = 35
-        versionCode = 10
-        versionName = "1.9"
+        versionCode = 12
+        versionName = "2.1"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
@@ -33,9 +34,20 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    buildFeatures { buildConfig = true }
+    sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/panelAssets"))
 }
 
+val bundlePanel by tasks.registering(Sync::class) {
+    from("../../../panel/dist") { exclude("**/*.map") }
+    into(layout.buildDirectory.dir("generated/panelAssets/panel"))
+    doFirst { check(file("../../../panel/dist/index.html").exists()) { "Run npm run build --workspace panel first" } }
+}
+tasks.named("preBuild") { dependsOn(bundlePanel) }
+
 dependencies {
-    implementation("xyz.rementia:openwakeword:0.1.5")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.18.0")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("junit:junit:4.13.2")
 }
