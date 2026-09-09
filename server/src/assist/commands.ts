@@ -8,9 +8,11 @@ const DURATION_PART = new RegExp(`(.+?)\\s+(${UNIT})(?=\\s|$)`, 'g');
 
 export function parsePanelCommand(raw: string): ParsedCommand | null {
   if (raw.length > 200) return null;
-  const text = raw.toLowerCase().trim().replace(/[.!?,]+$/g, '')
-    .replace(/^(?:please\s+|(?:hey|okay|ok) jarvis[ ,]+|can you\s+|could you\s+)/g, '')
-    .replace(/\s+please$/, '').replace(/\s+/g, ' ');
+  // STT punctuation represents pauses; keep decimal points and duration signs intact.
+  const text = raw.toLowerCase().replace(/[,!?:;]|\.(?!\d)/g, ' ')
+    .replace(/\s+/g, ' ').trim()
+    .replace(/^(?:(?:please|(?:hey|okay|ok) jarvis|can you|could you)\s+)+/, '')
+    .replace(/\s+please$/, '');
   // Never let "stop the music" or "cancel my meeting" become a panel cancellation.
   if (/^(?:stop|cancel|never ?mind|stop listening|cancel that)$/.test(text)) return { type: 'cancel-assist' };
   if (/^(?:show|open)(?: me)? (?:the |my )?timers?$/.test(text)) return { type: 'timer-show' };
@@ -20,8 +22,8 @@ export function parsePanelCommand(raw: string): ParsedCommand | null {
     return { type: 'timer-control', operation: verb === 'pause' ? 'pause' : /^(resume|continue)$/.test(verb!) ? 'resume' : 'cancel',
       ...(control[2] ? { all: true } : {}), ...(control[3] ? { label: control[3] } : {}) };
   }
-  const start = /^(?:start|set|create)(?: me)? (?:a |an )?timer (?:for )?(.+)$/.exec(text)
-    ?? /^(?:start|set|create)(?: me)? (?:a |an )?(.+?) timer$/.exec(text);
+  const start = /^(?:start|set|create)(?: me)? (?:a |an |the |my )?timer (?:for )?(.+)$/.exec(text)
+    ?? /^(?:start|set|create)(?: me)? (?:a |an |the |my )?(.+?) timer$/.exec(text);
   if (!start) return null;
   const [, durationText, label] = /^(.+?)(?: (?:called|named) (.+))?$/.exec(start[1]!)!;
   const durationMs = parseTimerDuration(durationText!);

@@ -363,6 +363,27 @@ test('spoken timer returns a countdown action without creating a second HA timer
   assert.equal(ha.assistPipelineRuns[0].end_stage, 'stt');
 });
 
+test('Echo timer transcript punctuation is handled locally before HA timer intent', async () => {
+  const transcript = 'Set a timer, five minutes';
+  const reply = await panelAudio(transcript);
+  assert.equal(reply.success, true);
+  assert.equal(reply.text, transcript);
+  assert.equal(reply.responseType, 'panel_command');
+  assert.deepEqual(reply.panelCommand, { type: 'timer-start', durationMs: 300000 });
+  assert.equal(reply.audioUrl, null);
+  assert.equal(ha.conversations.length, 0);
+  assert.deepEqual(ha.assistPipelineRuns.map((run) => [run.start_stage, run.end_stage]), [['stt', 'stt']]);
+});
+
+test('unrelated punctuated audio reaches HA unchanged', async () => {
+  const transcript = 'Can you please, stop the music?';
+  const reply = await panelAudio(transcript);
+  assert.equal(reply.panelCommand, undefined);
+  assert.equal(reply.text, transcript);
+  assert.deepEqual(ha.assistPipelineRuns.map((run) => [run.start_stage, run.end_stage]), [['stt', 'stt'], ['intent', 'tts']]);
+  assert.equal(ha.assistPipelineRuns[1].input.text, transcript);
+});
+
 test('ordinary panel audio reuses transcription and conversation context with normal TTS', async () => {
   const reply = await panelAudio('stop the music', 16);
   assert.equal(reply.panelCommand, undefined);
@@ -377,7 +398,7 @@ test('typed timer and stop commands use the same panel routing', async () => {
   const panel = new TestPanel();
   try {
     await panel.connect();
-    const timer = await panel.replyFor(panel.assist('set a five minute timer', undefined, true));
+    const timer = await panel.replyFor(panel.assist('Can you please set a timer, five minutes?', undefined, true));
     assert.equal(timer.result.panelCommand.durationMs, 300000);
     const stop = await panel.replyFor(panel.assist('stop', undefined, true));
     assert.equal(stop.result.panelCommand.type, 'cancel-assist');
@@ -394,4 +415,16 @@ test('browser wake fallback intercepts stop before intent too', async () => {
   assert.equal(reply.matched, true);
   assert.equal(reply.result.panelCommand.type, 'cancel-assist');
   assert.equal(ha.assistPipelineRuns.length, 1);
+});
+
+test('browser wake fallback handles punctuated timers before HA intent too', async () => {
+  ha.assistTranscript = 'Okay Nabu, please set a timer, five minutes.';
+  const res = await fetch(`http://127.0.0.1:${PANEL_PORT}/api/assist/wake-audio?panelCommands=1`, {
+    method: 'POST', headers: { authorization: `Bearer ${TOKEN}` }, body: Buffer.alloc(16000),
+  });
+  assert.equal(res.status, 200);
+  const reply = await res.json();
+  assert.equal(reply.matched, true);
+  assert.deepEqual(reply.result.panelCommand, { type: 'timer-start', durationMs: 300000 });
+  assert.deepEqual(ha.assistPipelineRuns.map((run) => [run.start_stage, run.end_stage]), [['stt', 'stt']]);
 });
