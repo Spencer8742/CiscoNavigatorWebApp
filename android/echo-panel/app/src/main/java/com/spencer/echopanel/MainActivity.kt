@@ -229,15 +229,45 @@ class MainActivity : Activity() {
     private fun triggerAssistFromWake() {
         runOnUiThread {
             hideSystemUi()
+            playListeningChime()
             webView.evaluateJavascript(
                 """
-                if (typeof window.CiscoNavigatorNativeWake === 'function') {
-                  window.CiscoNavigatorNativeWake();
-                } else {
+                (function() {
+                  var safeCall = function(fn) {
+                    try {
+                      if (typeof fn === 'function') fn();
+                    } catch (err) {
+                      console.warn('[native-wake] callback failed', err);
+                    }
+                  };
+
+                  safeCall(window.CiscoNavigatorNativeWake);
                   window.dispatchEvent(new CustomEvent('navigator-native-wake', {
                     detail: { source: 'openwakeword' }
                   }));
-                }
+
+                  var isAssistOpen = function() {
+                    return !!document.querySelector('[role="dialog"][aria-label="Assist"]');
+                  };
+                  var clickByLabel = function(label) {
+                    var match = Array.prototype.find.call(
+                      document.querySelectorAll('[aria-label]'),
+                      function(el) { return el.getAttribute('aria-label') === label; }
+                    );
+                    if (match && typeof match.click === 'function') {
+                      match.click();
+                      return true;
+                    }
+                    return false;
+                  };
+
+                  window.setTimeout(function() {
+                    if (!isAssistOpen()) clickByLabel('Assist');
+                    window.setTimeout(function() {
+                      if (isAssistOpen()) clickByLabel('Start listening');
+                    }, 350);
+                  }, 350);
+                })();
                 """.trimIndent(),
                 null,
             )
@@ -348,8 +378,9 @@ class MainActivity : Activity() {
         lastChimeAt = now
 
         runCatching {
-            val tone = ToneGenerator(AudioManager.STREAM_MUSIC, CHIME_VOLUME)
-            tone.startTone(ToneGenerator.TONE_PROP_ACK, CHIME_MS)
+            Log.i(TAG, "Playing listening chime")
+            val tone = ToneGenerator(AudioManager.STREAM_ALARM, CHIME_VOLUME)
+            tone.startTone(ToneGenerator.TONE_PROP_PROMPT, CHIME_MS)
             webView.postDelayed({ tone.release() }, CHIME_MS + 250L)
         }.onFailure {
             Log.w(TAG, "Could not play listening chime", it)
@@ -358,8 +389,8 @@ class MainActivity : Activity() {
 
     companion object {
         private const val TAG = "MainActivity"
-        private const val CHIME_MS = 160
-        private const val CHIME_VOLUME = 70
+        private const val CHIME_MS = 240
+        private const val CHIME_VOLUME = 100
         private const val CHIME_DEBOUNCE_MS = 800L
     }
 }

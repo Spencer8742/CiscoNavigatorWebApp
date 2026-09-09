@@ -121,6 +121,9 @@ before(async () => {
 
 beforeEach(() => {
   ha.assistTranscript = 'turn on the desk lights';
+  ha.conversationSpeech = 'The desk lights are on';
+  ha.conversationResponseType = 'action_done';
+  ha.conversationResponseData = { success: [], failed: [] };
   ha.conversations = [];
   ha.assistPipelineRuns = [];
   ha.assistAudioChunks = [];
@@ -175,6 +178,25 @@ test('Assist rejects empty text before it reaches Home Assistant', async () => {
     const ref = panel.assist('   ');
     const error = await panel.errorFor(ref);
     assert.equal(error.message, 'Nothing to send');
+  } finally {
+    panel.close();
+  }
+});
+
+test('Assist normalizes Home Assistant unknown error responses', async () => {
+  const panel = new TestPanel();
+  try {
+    ha.conversationResponseType = 'error';
+    ha.conversationSpeech = 'Error Unknown';
+    ha.conversationResponseData = { code: 'unknown' };
+
+    await panel.connect();
+    const ref = panel.assist('turn on the desk lights');
+    const reply = await panel.replyFor(ref);
+
+    assert.equal(reply.result.success, false);
+    assert.equal(reply.result.responseType, 'error');
+    assert.equal(reply.result.speech, 'Home Assistant returned an unknown Assist error');
   } finally {
     panel.close();
   }

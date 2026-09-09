@@ -33,6 +33,8 @@ export class MockHomeAssistant {
 
   /** Response text for conversation/process. */
   conversationSpeech = 'Done';
+  conversationResponseType = 'action_done';
+  conversationResponseData = { success: [], failed: [] };
 
   /** Every assist_pipeline/run message received, for assertions. */
   assistPipelineRuns = [];
@@ -194,16 +196,13 @@ export class MockHomeAssistant {
           result: {
             conversation_id: msg.conversation_id ?? 'mock-conversation',
             response: {
-              response_type: 'action_done',
+              response_type: this.conversationResponseType,
               speech: {
                 plain: {
                   speech: this.conversationSpeech,
                 },
               },
-              data: {
-                success: [],
-                failed: [],
-              },
+              data: this.conversationResponseData,
             },
           },
         }));
@@ -379,16 +378,13 @@ export class MockHomeAssistant {
     return {
       conversation_id: conversationId,
       response: {
-        response_type: 'action_done',
+        response_type: this.conversationResponseType,
         speech: {
           plain: {
             speech: this.conversationSpeech,
           },
         },
-        data: {
-          success: [],
-          failed: [],
-        },
+        data: this.conversationResponseData,
       },
     };
   }
