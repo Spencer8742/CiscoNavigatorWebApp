@@ -253,6 +253,7 @@ class MainActivity : Activity() {
         }
         @JavascriptInterface fun stopCapture(id: Int) { runOnUiThread { voice?.stopCapture(id) } }
         @JavascriptInterface fun setWakePaused(paused: Boolean) { runOnUiThread { voice?.setPaused(paused) } }
+        @JavascriptInterface fun playTimerAlert() { runOnUiThread { if (!destroyed) playListeningChime() } }
     }
 
     private fun audioEvent(event: JSONObject) {

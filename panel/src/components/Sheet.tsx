@@ -26,9 +26,10 @@ export interface SheetProps {
   subtitle?: string;
   onClose: () => void;
   children?: ComponentChildren;
+  actions?: ComponentChildren;
 }
 
-export function Sheet({ title, subtitle, onClose, children }: SheetProps) {
+export function Sheet({ title, subtitle, onClose, children, actions }: SheetProps) {
   const panel = useRef<HTMLDivElement | null>(null);
 
   // Escape closes it. Irrelevant on the Navigator, essential when developing
@@ -52,6 +53,7 @@ export function Sheet({ title, subtitle, onClose, children }: SheetProps) {
             <h2 class="sheet-title truncate">{title}</h2>
             {subtitle ? <div class="sheet-subtitle truncate">{subtitle}</div> : null}
           </div>
+          {actions}
           <Pressable class="sheet-close p-sm" onPress={onClose} ariaLabel="Close">
             <Icon name="close" size="1.4rem" weight={2} />
           </Pressable>

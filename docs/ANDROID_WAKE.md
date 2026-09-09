@@ -13,14 +13,15 @@ ONNX Runtime and the original openWakeWord models.
 5. `MainActivity` calls `window.CiscoNavigatorNativeWake()` in the WebView.
 6. The panel opens Assist on any route and requests PCM from the already-open native microphone.
 7. The native client plays a listening chime through the media stream.
-8. After about 650-720 ms of silence following speech, the panel sends PCM to Home Assistant.
+8. After two seconds of silence following speech, and never before two seconds of capture,
+   the panel sends PCM to Home Assistant. Capture starts immediately; the delay does not discard audio.
 9. Wake inference resumes after the request and TTS playback finish, or immediately after cancellation.
 
 `nativeWake=1` disables the web-based wake listener so the Echo does not run two microphone loops.
 The service keeps one 16 kHz PCM16 microphone stream open. Wake detection and command capture
 share that stream, so there is no WebView microphone handoff. The three ONNX sessions stay loaded.
 Audio remains in memory on the device during wake monitoring; only command recordings are uploaded.
-No-speech recordings time out locally without sending silence to Assist.
+No-speech recordings wait up to eight seconds, then time out locally without sending silence to Assist.
 Quiet native command recordings receive bounded gain before upload; endpoint detection uses
 the unamplified signal and an adaptive noise floor.
 
@@ -28,6 +29,40 @@ The Android APK includes the matching panel client. Only the HTML shell and its 
 assets are served from the APK, at the configured HTTPS origin. API requests, authentication,
 photos, and WebSockets still use the configured server. Updating the Android APK therefore
 updates its client even when Unraid is running an older compatible server.
+
+## Cancellation And Timers (2.1)
+
+Deploy the matching backend before installing APK 2.1. Panel command handling requires both
+updates: the old server ignores the opt-in `panelCommands` field. Existing 2.0 clients continue
+using their original pipeline when connected to the new backend.
+
+New clients request STT first. The backend intercepts exact panel commands before starting any
+HA intent or TTS stage. Ordinary requests reuse that transcript in the configured HA pipeline,
+including its existing TTS provider and conversation context. No new HA entities or integrations
+are required. Local timer actions are acknowledged by the countdown popup, not a synthesized reply.
+
+- While Assist is listening, say `stop`, `cancel`, or `never mind` to dismiss an accidental wake.
+  Cancellation is recognized after STT; this is not a separate always-on stop-word model or
+  interruption during TTS. Outside a listening session, use the wake word or microphone first.
+- `stop the music` still goes to Home Assistant. Bare `stop` does not cancel a running timer,
+  but it does dismiss any timer alerts that are currently ringing.
+- `start timer for five minutes` or `set a five-minute timer` opens a live countdown.
+- `start a timer for ten minutes called pasta` creates a named timer. `pause the pasta timer`,
+  `resume the pasta timer`, and `cancel the pasta timer` target it. `cancel all timers` is explicit;
+  an ambiguous singular command asks the user to choose in the popup instead of guessing.
+- The timer popup offers touch presets, a duration/name form, pause/resume, add one minute,
+  restart, removal, and a repeating end alert. It does not add a navigation tab or change the
+  underlying page. Close it without canceling the countdown; `show my timers` reopens it.
+  Expiration opens the popup over any page; alerts pause during Assist recording/TTS.
+  Closing a ringing popup dismisses its alerts. Active countdowns hold off the screensaver
+  only while the popup is open.
+
+Timers belong to the initiating panel, not to HA. Absolute deadlines are cached in local storage
+under its `panel` id, so navigation and reloads do not reset a countdown. Overdue timers alert
+when the app starts again. The app must be running to sound at the deadline; this is not an
+Android system alarm that runs while the app/device is off. Clearing browser data (including
+RoomOS's periodic storage clearing) removes timers. The UI warns when storage cannot be written.
+
 
 ## Required Model Assets
 

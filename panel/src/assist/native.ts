@@ -11,6 +11,7 @@ declare global {
       startCapture(id: number): void;
       stopCapture(id: number): void;
       setWakePaused(paused: boolean): void;
+      playTimerAlert?(): void;
     };
     CiscoNavigatorNativeAudio?: (event: NativeAudioEvent) => void;
   }

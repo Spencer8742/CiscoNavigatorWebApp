@@ -11,11 +11,11 @@ const { NativeRecorder } = await load('../src/assist/native.ts');
 const quiet = new Int16Array(1280);
 const speech = new Int16Array(1280).fill(1000);
 
-test('speech ends within 720 ms of silence instead of a fixed seven seconds', () => {
+test('speech waits for two seconds of trailing silence', () => {
   const endpoint = new SpeechEndpoint();
   for (let i = 0; i < 5; i++) assert.equal(endpoint.push(quiet), null);
   for (let i = 0; i < 15; i++) assert.equal(endpoint.push(speech), null);
-  for (let i = 0; i < 8; i++) assert.equal(endpoint.push(quiet), null);
+  for (let i = 0; i < 24; i++) assert.equal(endpoint.push(quiet), null);
   assert.equal(endpoint.push(quiet), 'speech-end');
 });
 
@@ -24,7 +24,7 @@ test('quiet and a short click never become an Assist command', () => {
   for (let i = 0; i < 5; i++) endpoint.push(quiet);
   endpoint.push(speech);
   let result;
-  for (let i = 0; i < 69; i++) result = endpoint.push(quiet);
+  for (let i = 0; i < 94; i++) result = endpoint.push(quiet);
   assert.equal(result, 'no-speech');
   assert.equal(endpoint.hasSpeech, false);
 });
@@ -35,7 +35,7 @@ test('recognizes quiet Echo speech above its measured microphone noise floor', (
   const softSpeech = new Int16Array(1280).fill(80);
   for (let i = 0; i < 10; i++) assert.equal(endpoint.push(noise), null);
   for (let i = 0; i < 10; i++) assert.equal(endpoint.push(softSpeech), null);
-  for (let i = 0; i < 8; i++) assert.equal(endpoint.push(noise), null);
+  for (let i = 0; i < 24; i++) assert.equal(endpoint.push(noise), null);
   assert.equal(endpoint.push(noise), 'speech-end');
 });
 
@@ -47,6 +47,21 @@ test('chime at startup is ignored and a continuous command is bounded', () => {
   let result;
   for (let i = 0; i < 175; i++) result = endpoint.push(speech);
   assert.equal(result, 'speech-end');
+});
+
+test('a wake tail and a pause before the command do not cause an early send', () => {
+  const endpoint = new SpeechEndpoint();
+  for (let i = 0; i < 8; i++) assert.equal(endpoint.push(speech), null);
+  for (let i = 0; i < 20; i++) assert.equal(endpoint.push(quiet), null);
+  for (let i = 0; i < 10; i++) assert.equal(endpoint.push(speech), null);
+  for (let i = 0; i < 24; i++) assert.equal(endpoint.push(quiet), null);
+  assert.equal(endpoint.push(quiet), 'speech-end');
+});
+
+test('silence at wake waits eight seconds for a command', () => {
+  const endpoint = new SpeechEndpoint();
+  for (let i = 0; i < 99; i++) assert.equal(endpoint.push(quiet), null);
+  assert.equal(endpoint.push(quiet), 'no-speech');
 });
 
 test('native capture cancels during startup and ignores a late ready event', async () => {

@@ -7,6 +7,8 @@ import { Rooms } from '~/screens/Rooms.tsx';
 import { Controls } from '~/screens/Controls.tsx';
 import { AppleTv } from '~/screens/AppleTv.tsx';
 import { Media } from '~/screens/Media.tsx';
+import { TimerSheet } from '~/components/TimerSheet.tsx';
+import { TimerAlerts } from '~/components/TimerAlerts.tsx';
 import { Photos } from '~/screens/Photos.tsx';
 import { Settings } from '~/screens/Settings.tsx';
 import { ConnectionHelp } from '~/screens/ConnectionHelp.tsx';
@@ -150,6 +152,8 @@ export function App() {
       <DeviceAlertsSheet />
       {!CAST && !NATIVE_WAKE ? <AssistWakeListener /> : null}
       <AssistSheet />
+      <TimerSheet />
+      <TimerAlerts />
       <Toast />
     </ErrorBoundary>
   );

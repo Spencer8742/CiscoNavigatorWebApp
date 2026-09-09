@@ -24,8 +24,9 @@ export class SpeechEndpoint {
       this.silence += ms;
       if (!this.hasSpeech && this.silence >= 240) this.speech = 0;
     }
-    if (this.hasSpeech && (this.silence >= 650 || this.elapsed >= 15000)) return 'speech-end';
-    if (!this.hasSpeech && this.elapsed >= 6000) return 'no-speech';
+    // Keep capturing immediately, but allow time after the wake word and between phrases.
+    if (this.hasSpeech && this.elapsed >= 2000 && (this.silence >= 2000 || this.elapsed >= 15000)) return 'speech-end';
+    if (!this.hasSpeech && this.elapsed >= 8000) return 'no-speech';
     return null;
   }
 }

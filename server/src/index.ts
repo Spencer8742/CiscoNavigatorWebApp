@@ -10,6 +10,7 @@ import { applySecurityHeaders } from '~/http/headers.ts';
 import { PanelAuth } from '~/http/auth.ts';
 import { ArtworkProxy } from '~/http/artwork.ts';
 import { HaTtsProxy } from '~/http/ha-tts.ts';
+import { panelCommandResult } from '~/assist/commands.ts';
 import { MediaArt } from '~/http/media-art.ts';
 import { Hub } from '~/hub/index.ts';
 import { AssistPipelineError, HaClient } from '~/ha/client.ts';
@@ -47,7 +48,7 @@ const VERSION = process.env['APP_VERSION'] ?? 'dev';
 const STARTED_AT = Date.now();
 const MAX_ASSIST_TEXT = 500;
 const ASSIST_AUDIO_SAMPLE_RATE = 16_000;
-const MAX_ASSIST_AUDIO_BYTES = ASSIST_AUDIO_SAMPLE_RATE * 2 * 12;
+const MAX_ASSIST_AUDIO_BYTES = ASSIST_AUDIO_SAMPLE_RATE * 2 * 20;
 
 /** One second of 8 kHz mono silence, as a WAV. See the /silence.wav route. */
 const SILENCE = silentWav(8000);
@@ -417,6 +418,8 @@ async function main(): Promise<void> {
       const text = typeof msg.text === 'string' ? msg.text.trim() : '';
       if (text.length === 0) throw new Error('Nothing to send');
       if (text.length > MAX_ASSIST_TEXT) throw new Error('That request is too long');
+      const local = msg.panelCommands ? panelCommandResult(text) : null;
+      if (local) return local;
 
       if (msg.agentId) {
         return proxyAssistAudio(await haClient.processConversation({
@@ -623,11 +626,15 @@ async function main(): Promise<void> {
           res.end(JSON.stringify({ error: 'Record a little longer and try again' }));
           return;
         }
-        const result = await haClient.processAssistAudio({
-          pcm: audio,
-          sampleRate: ASSIST_AUDIO_SAMPLE_RATE,
-          conversationId: query.get('conversationId') ?? undefined,
-        });
+        const conversationId = query.get('conversationId') ?? undefined;
+        // End STT before deciding whether intent may run: "stop" must never reach HA controls.
+        const text = query.get('panelCommands') === '1' ? await haClient.transcribeAssistAudio({
+          pcm: audio, sampleRate: ASSIST_AUDIO_SAMPLE_RATE,
+        }) : null;
+        if (text !== null && !text.trim()) throw new Error('I did not hear a command. Try again.');
+        const result = text !== null
+          ? panelCommandResult(text) ?? await haClient.processAssistText({ text, conversationId })
+          : await haClient.processAssistAudio({ pcm: audio, sampleRate: ASSIST_AUDIO_SAMPLE_RATE, conversationId });
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
         res.end(JSON.stringify(proxyAssistAudio(result)));
       } catch (err) {
@@ -665,7 +672,8 @@ async function main(): Promise<void> {
           return;
         }
 
-        const result = await haClient.processAssistText({ text: command });
+        const local = query.get('panelCommands') === '1' ? panelCommandResult(command) : null;
+        const result = local ?? await haClient.processAssistText({ text: command });
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
         res.end(JSON.stringify({
           matched: true,

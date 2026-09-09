@@ -9,7 +9,9 @@ import { getToken } from '~/net/auth.ts';
 import { askAssist, askAssistAudio } from '~/net/socket.ts';
 import {
   assistListenRequests, assistOpen, assistWakePaused, assistWakeResult, markActivity, showToast,
+  openTimerPopup, timersOpen,
 } from '~/state/ui.ts';
+import { dismissTimerAlerts, runTimerCommand, timers } from '~/state/timers.ts';
 import type { AssistResult } from '@shared/protocol.ts';
 
 type AssistPhase = 'idle' | 'starting' | 'recording' | 'sending' | 'answered' | 'unsupported';
@@ -76,6 +78,25 @@ export function AssistSheet() {
 
   function applyReply(result: AssistResult, id: number): void {
     if (!isCurrent(id)) return;
+    if (result.panelCommand) {
+      cancel();
+      setConversationId(null);
+      setHeard('');
+      setReply(null);
+      assistOpen.value = false;
+      if (result.panelCommand.type === 'cancel-assist') {
+        dismissTimerAlerts();
+        return;
+      }
+      openTimerPopup();
+      try {
+        runTimerCommand(result.panelCommand);
+        if (result.panelCommand.type === 'timer-control' && result.panelCommand.operation === 'cancel' && timers.value.length === 0)
+          timersOpen.value = false;
+      }
+      catch (error) { showToast(error instanceof Error ? error.message : 'Timer could not be changed', 'error'); }
+      return;
+    }
     setConversationId(result.success ? result.conversationId : null);
     setHeard(result.text);
     setReply(result);

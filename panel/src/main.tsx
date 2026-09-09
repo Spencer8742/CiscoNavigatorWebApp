@@ -6,12 +6,14 @@ import { initAuth } from '~/net/auth.ts';
 import { connect } from '~/net/socket.ts';
 import { resyncClock, startClock } from '~/state/clock.ts';
 import { startIdleMonitor } from '~/state/idle.ts';
+import { startTimers } from '~/state/timers.ts';
 import { assistWakePaused, openAssistAndListen } from '~/state/ui.ts';
 
 import '~/styles/tokens.css';
 import '~/styles/base.css';
 import '~/styles/components.css';
 import '~/styles/screens.css';
+import '~/styles/timers.css';
 
 /**
  * Entry point.
@@ -22,6 +24,7 @@ import '~/styles/screens.css';
  */
 
 initAuth();
+startTimers();
 
 const root = document.getElementById('app');
 if (root) {

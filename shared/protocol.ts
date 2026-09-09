@@ -460,7 +460,15 @@ export type BrowseResult = BrowseList | BrowseGroups | QueuePage;
 
 /* ── Assist ───────────────────────────────────────────────────────────── */
 
+export type PanelCommand =
+  | { type: 'cancel-assist' }
+  | { type: 'timer-start'; durationMs: number; label?: string }
+  | { type: 'timer-control'; operation: 'pause' | 'resume' | 'cancel'; label?: string; all?: boolean }
+  | { type: 'timer-show' };
+
 export interface AssistResult {
+  /** A panel-owned action, intercepted before Home Assistant intent execution. */
+  panelCommand?: PanelCommand;
   /** What the panel sent, echoed back so overlapping requests cannot confuse the UI. */
   text: string;
   /** Human-readable response from Home Assistant, when the agent returned one. */
@@ -836,6 +844,7 @@ export type ClientMessage =
       t: 'assist';
       id: number;
       text: string;
+      panelCommands?: boolean;
       language?: string;
       agentId?: string;
       conversationId?: string;
