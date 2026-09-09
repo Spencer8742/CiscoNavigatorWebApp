@@ -22,6 +22,47 @@ test('timer requests accept spoken numbers, compound units and named timers', ()
   assert.equal(parseTimerDuration('24 hours'), 86400000);
 });
 
+test('timer requests tolerate speech punctuation and repeated polite prefixes', () => {
+  for (const text of [
+    'Set a timer, five minutes',
+    'Set a timer, five minutes.',
+    'Set a timer: five minutes!',
+    'Set a timer. Five minutes.',
+    'Can you please, set a timer for five minutes?',
+    'Hey, Jarvis. Can you please start the timer for five minutes?',
+    'Could you please set me a five-minute timer, please?',
+    'Start my timer for five minutes.',
+    '  Please,  start\n a timer,\t five minutes.  ',
+  ]) {
+    assert.deepEqual(parsePanelCommand(text), { type: 'timer-start', durationMs: 300000 }, text);
+  }
+  assert.deepEqual(parsePanelCommand('Set a timer, one hour, thirty minutes, called pasta.'), {
+    type: 'timer-start', durationMs: 5400000, label: 'pasta',
+  });
+});
+
+test('speech punctuation does not change numeric durations or hide unrelated commands', () => {
+  assert.deepEqual(parsePanelCommand('Set a timer, 1.5 minutes.'), { type: 'timer-start', durationMs: 90000 });
+  assert.deepEqual(parsePanelCommand('Set a timer, .5 minutes.'), { type: 'timer-start', durationMs: 30000 });
+  for (const text of [
+    'Set a timer, -5 minutes.',
+    'Set a timer, minus five minutes.',
+    'Set a timer, 1,5 minutes.',
+    'Set a timer, five minutes, then turn off the lights.',
+  ]) {
+    assert.equal(panelCommandResult(text)?.success, false, text);
+  }
+  for (const text of [
+    'Can you please, stop the music?',
+    'Stop! Turn off the lights.',
+    'Please, do not set a timer for five minutes.',
+    'Turn off the lights, in five minutes.',
+  ]) {
+    assert.equal(parsePanelCommand(text), null, text);
+  }
+  assert.deepEqual(parsePanelCommand('Hey, Jarvis! Can you please, stop?'), { type: 'cancel-assist' });
+});
+
 test('timer parsing rejects guesses, negative, excessive and unrelated durations', () => {
   for (const text of ['5', '-5 minutes', 'minus five minutes', 'zero minutes', '25 hours', 'forever', 'five minutes then turn off lights', '1e10 seconds'])
     assert.equal(parseTimerDuration(text), null, text);
