@@ -11,8 +11,8 @@ android {
         applicationId = "com.spencer.echopanel"
         minSdk = 23
         targetSdk = 35
-        versionCode = 12
-        versionName = "2.1"
+        versionCode = 13
+        versionName = "2.1.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

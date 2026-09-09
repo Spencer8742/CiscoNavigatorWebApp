@@ -2,12 +2,13 @@
  * Responsive audit — every screen, at every viewport worth caring about.
  *
  * This exists because "does it fit?" kept being answered by looking at one
- * panel and hoping. It measures three things that are facts rather than
+ * panel and hoping. It measures four things that are facts rather than
  * opinions, so a change can be shown to have improved something:
  *
  *   overflow  anything forcing the page wider than the viewport
  *   cramped   interactive targets under 44px in either axis
  *   clipped   labels truncated past ~1.5x, i.e. unreadable rather than tidy
+ *   collapsed the Home photo leaves unused height on a wide panel
  *
  * It is NOT in CI: it needs a running backend and a real browser. Run it
  * after any layout change.
@@ -40,6 +41,7 @@ const SIZES = [
   ['navigator-alt', 1280, 800],
   ['ipad-land', 1133, 744],
   ['ipad-port', 744, 1133],
+  ['echo-show', 961, 601],
   ['hub-max', 1024, 600],
   ['hub', 800, 480],
   ['phone', 390, 844],
@@ -61,7 +63,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const evalx = async (e) => (await send('Runtime.evaluate', { returnByValue: true, expression: e })).result?.value;
 
 const AUDIT = `(() => {
-  const out = { overflow: 0, cramped: [], clipped: [] };
+  const out = { overflow: 0, cramped: [], clipped: [], collapsed: [] };
   const de = document.documentElement;
   out.overflow = Math.max(0, de.scrollWidth - de.clientWidth);
 
@@ -82,6 +84,15 @@ const AUDIT = `(() => {
   }
   out.cramped = [...new Set(out.cramped)].slice(0, 4);
   out.clipped = [...new Set(out.clipped)].slice(0, 4);
+  const photo = document.querySelector('.photo-peek');
+  const home = document.querySelector('.home-body');
+  if (photo && home && matchMedia('(min-width: 60rem) and (min-height: 34.01rem)').matches) {
+    const r = photo.getBoundingClientRect();
+    const bottom = home.getBoundingClientRect().bottom - parseFloat(getComputedStyle(home).paddingBottom);
+    if (r.height > 0 && r.bottom < bottom - 2) {
+      out.collapsed.push('photo-peek ' + Math.round(r.width) + 'x' + Math.round(r.height));
+    }
+  }
   return JSON.stringify(out);
 })()`;
 
@@ -95,7 +106,7 @@ const tap = async (label) => {
 };
 
 await send('Page.enable'); await send('Runtime.enable');
-let totalOverflow = 0, totalCramped = 0, totalClipped = 0;
+let totalOverflow = 0, totalCramped = 0, totalClipped = 0, totalCollapsed = 0;
 
 for (const [name, w, h] of SIZES) {
   await send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false });
@@ -107,17 +118,20 @@ for (const [name, w, h] of SIZES) {
     const r = JSON.parse(await evalx(AUDIT));
     totalOverflow += r.overflow > 0 ? 1 : 0;
     totalCramped += r.cramped.length; totalClipped += r.clipped.length;
+    totalCollapsed += r.collapsed.length;
     const bits = [];
     if (r.overflow > 0) bits.push(`overflow+${r.overflow}`);
     if (r.cramped.length) bits.push(`cramped:${r.cramped.length}`);
     if (r.clipped.length) bits.push(`clipped:${r.clipped.length}`);
+    if (r.collapsed.length) bits.push(`collapsed:${r.collapsed.length}`);
     rows.push(`${screen}:${bits.length ? bits.join(',') : 'ok'}`);
-    if (process.env.VERBOSE && (r.cramped.length || r.clipped.length)) {
+    if (process.env.VERBOSE && (r.cramped.length || r.clipped.length || r.collapsed.length)) {
       for (const c of r.cramped) console.log(`      cramped ${name}/${screen} ${c}`);
       for (const c of r.clipped) console.log(`      clipped ${name}/${screen} ${c}`);
+      for (const c of r.collapsed) console.log(`      collapsed ${name}/${screen} ${c}`);
     }
   }
   console.log(`${name.padEnd(14)} ${w}x${h}  ${rows.join('  ')}`);
 }
-console.log(`TOTALS overflowing-screens=${totalOverflow} cramped=${totalCramped} clipped=${totalClipped}`);
+console.log(`TOTALS overflowing-screens=${totalOverflow} cramped=${totalCramped} clipped=${totalClipped} collapsed=${totalCollapsed}`);
 ws.close();

@@ -1240,10 +1240,11 @@
  * happened, squeezing it to a strip about thirty pixels tall, because it is
  * the one element told to take whatever height is left.
  *
- * So both dimensions have to qualify: wide enough not to be a phone, tall
- * enough to have room to fill.
+ * Tall tablets can fill their height. Short, wide panels can too: their
+ * controls sit beside the photo instead of competing for height above it.
  */
-@media (min-width: 34rem) and (min-height: 40rem) {
+@media (min-width: 34rem) and (min-height: 40rem),
+       (min-width: 60rem) and (min-height: 34.01rem) {
   /* Compound selector so this wins over the generic `.scroll` utility the
      other screens share — Home is the one screen that must not scroll. */
   .screen-body.home-body {
