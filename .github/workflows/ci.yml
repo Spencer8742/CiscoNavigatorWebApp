@@ -225,8 +225,8 @@ jobs:
           94a13cfe60075b132f6a472e7e462e8123ee70861bc3fb58434a73712ee0d2cb  hey_jarvis_v0.1.onnx
           EOF
 
-      - name: Build debug APK
-        run: gradle -p android/echo-panel assembleDebug
+      - name: Test and build debug APK
+        run: gradle -p android/echo-panel testDebugUnitTest assembleDebug
 
       - uses: actions/upload-artifact@v4
         with:

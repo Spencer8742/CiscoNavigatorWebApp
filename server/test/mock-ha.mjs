@@ -28,6 +28,10 @@ export class MockHomeAssistant {
   /** Every call_service message received, for assertions. */
   serviceCalls = [];
 
+  /** Daily response data returned by weather.get_forecasts, keyed by entity. */
+  weatherForecasts = {};
+  weatherError = null;
+
   /** Every conversation/process message received, for assertions. */
   conversations = [];
 
@@ -167,6 +171,13 @@ export class MockHomeAssistant {
 
       case 'call_service':
         this.serviceCalls.push(msg);
+
+        if (msg.domain === 'weather' && msg.service === 'get_forecasts') {
+          ws.send(JSON.stringify(this.weatherError
+            ? { id: msg.id, type: 'result', success: false, error: { code: 'home_assistant_error', message: this.weatherError } }
+            : { id: msg.id, type: 'result', success: true, result: { response: this.weatherForecasts } }));
+          break;
+        }
 
         // Behave like a real media player for grouping, so a test exercises the
         // whole round trip — tap, service call, state change, UI update —

@@ -64,6 +64,30 @@ Android system alarm that runs while the app/device is off. Clearing browser dat
 RoomOS's periodic storage clearing) removes timers. The UI warns when storage cannot be written.
 
 
+## Sensitivity And Forecasts (2.2)
+
+Settings now includes **Wake word > Sensitivity** on APK 2.2 and later. The slider
+runs from 1 to 99%; higher values make waking easier and can increase false activations.
+The default 85% preserves the existing model threshold of 0.15. The reset icon restores
+that default. This percentage is a control scale, not a recognition accuracy estimate.
+Changes apply when the slider is released, persist in Android shared preferences, and
+update the running inference loop without reloading ONNX or restarting the microphone.
+This control is hidden on browsers and older APKs; it is not a shared server preference.
+
+Local weather questions such as "What's the weather?" or "Will it rain tomorrow?" show
+a temporary three-day graphic in Assist, with daily conditions, highs/lows and rain
+probability. TTS remains on the existing HA pipeline and does not wait for the graphic.
+Closing Assist or starting another command cancels the graphic's pending request.
+Explicit requests for a different location do not attach a misleading home forecast.
+
+Deploy the matching backend for forecasts. The authenticated `/api/weather/forecast`
+endpoint requests `weather.get_forecasts` with `type: daily` and `return_response: true`,
+using only `home.weather` from dashboard.yaml. The provider must support daily forecasts.
+It displays today and the following two calendar days in `ui.timezone`, using the
+entity's temperature units. Missing days/readings remain unavailable, never zero-filled.
+Requests share a five-minute server cache; provider errors show a retry control without
+interrupting speech. An older backend shows an update-required message instead.
+
 ## Required Model Assets
 
 The native engine expects these files in:
@@ -118,7 +142,8 @@ adb shell am start -n com.spencer.echopanel/.MainActivity \
 ```
 
 `wake_model_path` must point to an ONNX file that was packaged in the APK assets directory.
-Changing the wake settings reloads the model without restarting the microphone.
+Changing the model name/path reloads the model without restarting the microphone.
+Changing only the threshold updates live without a model reload.
 
 ## Build
 
@@ -127,7 +152,7 @@ GitHub Actions builds this module on PRs. To build locally, install a JDK and An
 ```bash
 npm ci
 npm run build --workspace panel
-gradle -p android/echo-panel assembleDebug
+gradle -p android/echo-panel testDebugUnitTest assembleDebug
 ```
 
 The ONNX assets listed above must also be downloaded before a local build.

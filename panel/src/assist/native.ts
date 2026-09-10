@@ -12,6 +12,8 @@ declare global {
       stopCapture(id: number): void;
       setWakePaused(paused: boolean): void;
       playTimerAlert?(): void;
+      wakeSensitivity?(): number;
+      setWakeSensitivity?(value: number): number;
     };
     CiscoNavigatorNativeAudio?: (event: NativeAudioEvent) => void;
   }
@@ -26,6 +28,28 @@ export function hasNativeAudio(): boolean {
 
 export function setNativeWakePaused(paused: boolean): void {
   try { window.CiscoNavigatorAndroid?.setWakePaused(paused); } catch { /* Optional bridge. */ }
+}
+
+export const DEFAULT_WAKE_SENSITIVITY = 85;
+
+export function readWakeSensitivity(): number | null {
+  try {
+    const bridge = window.CiscoNavigatorAndroid;
+    if (!bridge?.setWakeSensitivity) return null;
+    const value = bridge.wakeSensitivity?.();
+    return validSensitivity(value) ? value : null;
+  } catch { return null; }
+}
+
+export function saveWakeSensitivity(value: number): number {
+  if (!validSensitivity(value)) throw new Error('Invalid wake word sensitivity');
+  const saved = window.CiscoNavigatorAndroid?.setWakeSensitivity?.(value);
+  if (!validSensitivity(saved)) throw new Error('Wake word sensitivity could not be saved');
+  return saved;
+}
+
+function validSensitivity(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 99;
 }
 
 export class NativeRecorder implements VoiceRecorder {

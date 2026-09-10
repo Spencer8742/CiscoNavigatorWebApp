@@ -483,6 +483,25 @@ export interface AssistResult {
   success: boolean;
 }
 
+export interface WeatherForecastDay {
+  /** Calendar date in the configured home timezone, not the panel's timezone. */
+  date: string;
+  available: boolean;
+  condition: string | null;
+  high: number | null;
+  low: number | null;
+  rainChance: number | null;
+}
+
+export interface WeatherForecast {
+  entityId: string;
+  temperatureUnit: string;
+  timezone: string;
+  fetchedAt: string;
+  /** Today and the following two calendar days. Missing days are explicit. */
+  days: WeatherForecastDay[];
+}
+
 /* ── Music commands ────────────────────────────────────────────────────── */
 
 /** What to do with the queue when playing something new. */

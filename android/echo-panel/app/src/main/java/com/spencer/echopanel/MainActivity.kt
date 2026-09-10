@@ -18,6 +18,7 @@ import android.webkit.*
 import android.widget.FrameLayout
 import android.widget.TextView
 import com.spencer.echopanel.wake.WakeWordService
+import com.spencer.echopanel.wake.WakeSensitivity
 import org.json.JSONObject
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -110,7 +111,7 @@ class MainActivity : Activity() {
         setIntent(intent)
         if (applyIntentSettings(intent)) {
             voice?.resetClient()
-            if (listOf("wake_model_name", "wake_model_path", "wake_threshold").any { intent.hasExtra(it) })
+            if (listOf("wake_model_name", "wake_model_path").any { intent.hasExtra(it) })
                 voice?.reloadModels()
             webView.loadUrl(panelUrl())
         }
@@ -235,7 +236,8 @@ class MainActivity : Activity() {
             }
         }
         if (intent.hasExtra("wake_threshold")) {
-            editor.putFloat("wake_threshold", intent.getFloatExtra("wake_threshold", 0.15f).coerceIn(0.01f, 0.99f))
+            editor.putFloat(WakeSensitivity.KEY, WakeSensitivity.normalizeThreshold(
+                intent.getFloatExtra(WakeSensitivity.KEY, WakeSensitivity.DEFAULT_THRESHOLD)))
             changed = true
         }
         if (changed) editor.apply()
@@ -244,6 +246,14 @@ class MainActivity : Activity() {
 
     private inner class NativeBridge {
         @JavascriptInterface fun audioVersion(): Int = 1
+        @JavascriptInterface fun wakeSensitivity(): Int = WakeSensitivity.fromThreshold(
+            getSharedPreferences(PREFS, MODE_PRIVATE).getFloat(WakeSensitivity.KEY, WakeSensitivity.DEFAULT_THRESHOLD))
+        @JavascriptInterface fun setWakeSensitivity(value: Int): Int {
+            val threshold = WakeSensitivity.toThreshold(value)
+            // JavascriptInterface calls run off the UI thread. Report a failed disk write.
+            val saved = getSharedPreferences(PREFS, MODE_PRIVATE).edit().putFloat(WakeSensitivity.KEY, threshold).commit()
+            return if (saved) WakeSensitivity.fromThreshold(threshold) else -1
+        }
         @JavascriptInterface fun startCapture(id: Int) {
             runOnUiThread {
                 val service = voice

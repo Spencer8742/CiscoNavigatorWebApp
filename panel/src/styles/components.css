@@ -609,6 +609,39 @@
 
 /* ── Assist ──────────────────────────────────────────────────────────────*/
 
+.weather-forecast { grid-column: 1 / -1; min-width: 0; letter-spacing: 0; }
+.forecast-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.8rem; }
+.forecast-head h3 { margin: 0; font-size: 1.1rem; font-weight: 600; letter-spacing: 0; }
+.forecast-head > span { font-size: 0.8rem; color: var(--text-dim); }
+.forecast-days { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.forecast-day { min-width: 0; padding: 0.4rem 0.5rem; text-align: center; }
+.forecast-day + .forecast-day { border-left: 1px solid var(--border); }
+.forecast-day h4 { margin: 0; font-size: 1rem; font-weight: 600; letter-spacing: 0; overflow-wrap: anywhere; }
+.forecast-day time { font-size: 0.8rem; color: var(--text-dim); }
+.forecast-symbol { height: 4.2rem; display: flex; align-items: center; justify-content: center; color: var(--text-dim); }
+.forecast-symbol[data-weather="sun"] { color: #ffd26f; }
+.forecast-symbol[data-weather="rain"] { color: #73c9ee; }
+.forecast-symbol[data-weather="storm"] { color: #efa0d8; }
+.forecast-symbol[data-weather="snow"], .forecast-symbol[data-weather="clear"] { color: #bfe4ed; }
+.forecast-condition { min-height: 2.4em; font-size: 0.85rem; line-height: 1.2; overflow-wrap: anywhere; }
+.forecast-temperatures { display: flex; gap: 0.65rem; justify-content: center; flex-wrap: wrap; font-size: 1.55rem; }
+.forecast-temperatures > span { display: flex; flex-direction: column; }
+.forecast-temperatures > span + span { color: var(--text-dim); }
+.forecast-temperatures small { font-size: 0.7rem; color: var(--text-dim); }
+.forecast-rain { min-height: 1.4rem; margin-top: 0.4rem; display: flex; gap: 0.3rem; align-items: center; justify-content: center; color: #73c9ee; font-size: 0.8rem; }
+.forecast-status { min-height: 12rem; display: flex; align-items: center; justify-content: center; gap: 1rem; color: var(--text-dim); }
+.forecast-status .sheet-close { min-width: var(--touch-min); min-height: var(--touch-min); }
+.assist-panel.assist-panel-weather { grid-template-columns: var(--touch) minmax(0, 1fr); }
+.assist-panel-weather .assist-mic { width: var(--touch); height: var(--touch); }
+.assist-panel-weather .assist-exchange { min-height: var(--touch); max-height: 7rem; overflow-y: auto; }
+.assist-panel-weather .assist-form { grid-column: 1 / -1; }
+
+@media (max-width: 25rem) {
+  .forecast-day { padding-inline: 0.2rem; }
+  .forecast-day h4 { font-size: 0.9rem; }
+  .forecast-temperatures { font-size: 1.35rem; gap: 0.4rem; }
+}
+
 .assist-panel {
   display: grid;
   grid-template-columns: 8.5rem 1fr;
