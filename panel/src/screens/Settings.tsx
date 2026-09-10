@@ -2,6 +2,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { config, ui } from '~/config/index.ts';
 import { health, linkStatus, prefs, socketState } from '~/state/ui.ts';
 import { Pressable } from '~/components/Pressable.tsx';
+import { WakeSettings } from '~/components/WakeSettings.tsx';
 import { reloadAllPanels, setPref } from '~/net/socket.ts';
 import { getPanelId } from '~/net/auth.ts';
 import { BOOLEAN_PREFS, PANEL_PAGES, type PanelPage, type PanelPrefs } from '@shared/protocol.ts';
@@ -76,6 +77,7 @@ export function Settings() {
       </div>
 
       <div class="screen-body scroll">
+        <WakeSettings />
         <div class="section-head">
           <h2 class="section-title">Home screen</h2>
         </div>

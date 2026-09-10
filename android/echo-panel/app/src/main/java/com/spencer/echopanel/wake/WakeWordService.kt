@@ -7,6 +7,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
@@ -37,13 +38,27 @@ class WakeWordService : Service() {
     @Volatile private var wakePendingUntil = 0L
     @Volatile private var resetModel = true
     @Volatile private var modelRevision = 0
+    @Volatile private var threshold = WakeSensitivity.DEFAULT_THRESHOLD
     @Volatile private var audioRecord: AudioRecord? = null
     private val queue = ArrayBlockingQueue<ShortArray>(8)
     private var captureThread: Thread? = null
     private var modelThread: Thread? = null
+    private val prefs by lazy { getSharedPreferences("echo-panel", MODE_PRIVATE) }
+    private val preferenceListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == WakeSensitivity.KEY) {
+            threshold = WakeSensitivity.normalizeThreshold(prefs.getFloat(key, WakeSensitivity.DEFAULT_THRESHOLD))
+            Log.i(TAG, "Wake sensitivity updated: threshold=$threshold")
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
+        // Old thresholds compensated for incorrectly normalized PCM. Migrate once.
+        if (prefs.getInt("wake_engine_version", 0) < 2) {
+            prefs.edit().putFloat(WakeSensitivity.KEY, WakeSensitivity.DEFAULT_THRESHOLD).putInt("wake_engine_version", 2).apply()
+        }
+        prefs.registerOnSharedPreferenceChangeListener(preferenceListener)
+        threshold = WakeSensitivity.normalizeThreshold(prefs.getFloat(WakeSensitivity.KEY, WakeSensitivity.DEFAULT_THRESHOLD))
         if (Build.VERSION.SDK_INT >= 26) {
             getSystemService(NotificationManager::class.java).createNotificationChannel(
                 NotificationChannel("wake_word", getString(R.string.wake_channel_name), NotificationManager.IMPORTANCE_LOW),
@@ -166,16 +181,10 @@ class WakeWordService : Service() {
     }
 
     private fun inferenceLoop() {
-        val prefs = getSharedPreferences("echo-panel", MODE_PRIVATE)
-        // Old thresholds compensated for incorrectly normalized PCM. Migrate once.
-        if (prefs.getInt("wake_engine_version", 0) < 2) {
-            prefs.edit().putFloat("wake_threshold", 0.15f).putInt("wake_engine_version", 2).apply()
-        }
         while (running) {
             val revision = modelRevision
             val path = prefs.getString("wake_model_path", "hey_jarvis_v0.1.onnx") ?: "hey_jarvis_v0.1.onnx"
             val name = prefs.getString("wake_model_name", "Hey Jarvis") ?: "Hey Jarvis"
-            val threshold = prefs.getFloat("wake_threshold", 0.15f).coerceIn(0.01f, 0.99f)
             try {
                 OpenWakeWordModel(assets, path).use { model ->
                     Log.i(TAG, "Wake models loaded once: $name threshold=$threshold")
@@ -217,6 +226,7 @@ class WakeWordService : Service() {
 
     override fun onDestroy() {
         running = false
+        prefs.unregisterOnSharedPreferenceChangeListener(preferenceListener)
         listener = null
         runCatching { audioRecord?.stop() }
         captureThread?.join(1000)

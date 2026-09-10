@@ -56,3 +56,4 @@ export { accountsFromUris } from '~/sonos/services.ts';
 export { sonosUri } from '~/sonos/spotify.ts';
 export { UriRegistry } from '~/sonos/uris.ts';
 export { parsePanelCommand, parseTimerDuration, panelCommandResult } from '~/assist/commands.ts';
+export { WeatherForecasts, normalizeForecast } from '~/ha/weather.ts';

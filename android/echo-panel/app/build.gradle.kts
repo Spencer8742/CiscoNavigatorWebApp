@@ -11,8 +11,8 @@ android {
         applicationId = "com.spencer.echopanel"
         minSdk = 23
         targetSdk = 35
-        versionCode = 13
-        versionName = "2.1.1"
+        versionCode = 14
+        versionName = "2.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -47,6 +47,7 @@ val bundlePanel by tasks.registering(Sync::class) {
 tasks.named("preBuild") { dependsOn(bundlePanel) }
 
 dependencies {
+    testImplementation("junit:junit:4.13.2")
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.18.0")
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("junit:junit:4.13.2")

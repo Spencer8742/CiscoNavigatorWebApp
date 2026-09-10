@@ -7,9 +7,34 @@ async function load(source) {
   return import('data:text/javascript;base64,' + Buffer.from(result.outputFiles[0].text).toString('base64'));
 }
 const { SpeechEndpoint } = await load('../src/assist/endpoint.ts');
-const { NativeRecorder } = await load('../src/assist/native.ts');
+const { NativeRecorder, readWakeSensitivity, saveWakeSensitivity, DEFAULT_WAKE_SENSITIVITY } = await load('../src/assist/native.ts');
 const quiet = new Int16Array(1280);
 const speech = new Int16Array(1280).fill(1000);
+
+test('wake settings preserve the default and are capability gated on old APKs and browsers', () => {
+  globalThis.window = {};
+  assert.equal(readWakeSensitivity(), null);
+  window.CiscoNavigatorAndroid = { audioVersion: () => 1 };
+  assert.equal(readWakeSensitivity(), null);
+  assert.throws(() => saveWakeSensitivity(85), /could not be saved/);
+  let value = DEFAULT_WAKE_SENSITIVITY;
+  const writes = [];
+  window.CiscoNavigatorAndroid = {
+    wakeSensitivity: () => value,
+    setWakeSensitivity: (next) => { writes.push(next); value = next; return value; },
+  };
+  assert.equal(readWakeSensitivity(), 85);
+  assert.equal(saveWakeSensitivity(92), 92);
+  assert.equal(readWakeSensitivity(), 92);
+  for (const bad of [0, 100, NaN, Infinity, 50.5]) assert.throws(() => saveWakeSensitivity(bad), /Invalid/);
+  assert.deepEqual(writes, [92]);
+  window.CiscoNavigatorAndroid.setWakeSensitivity = () => -1;
+  assert.throws(() => saveWakeSensitivity(85), /could not be saved/);
+  window.CiscoNavigatorAndroid.wakeSensitivity = () => NaN;
+  assert.equal(readWakeSensitivity(), null);
+  window.CiscoNavigatorAndroid.wakeSensitivity = () => { throw new Error('unavailable'); };
+  assert.equal(readWakeSensitivity(), null);
+});
 
 test('speech waits for two seconds of trailing silence', () => {
   const endpoint = new SpeechEndpoint();

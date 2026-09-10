@@ -2,6 +2,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { Icon } from '~/components/Icon.tsx';
 import { Pressable } from '~/components/Pressable.tsx';
 import { Sheet } from '~/components/Sheet.tsx';
+import { WeatherForecast } from '~/components/WeatherForecast.tsx';
+import { isHomeWeatherRequest } from '~/assist/weather.ts';
 import { canRecordVoice, PcmRecorder, TARGET_SAMPLE_RATE } from '~/assist/audio.ts';
 import { hasNativeAudio, type VoiceRecorder } from '~/assist/native.ts';
 import { SpeechEndpoint } from '~/assist/endpoint.ts';
@@ -202,10 +204,12 @@ export function AssistSheet() {
   const status = phase === 'starting' ? 'Starting microphone' : phase === 'recording' ? 'Listening'
     : phase === 'sending' ? 'Thinking' : phase === 'unsupported' ? 'Keyboard' : 'Ready';
   if (!open) return null;
+  const showForecast = reply !== null && isHomeWeatherRequest(reply.text);
 
   return (
     <Sheet title="Assist" subtitle={status} onClose={() => (assistOpen.value = false)}>
-      <div class="assist-panel">
+      <div class={showForecast ? 'assist-panel assist-panel-weather' : 'assist-panel'}>
+        {showForecast ? <WeatherForecast key={generation.current} /> : null}
         <Pressable
           class={phase === 'recording' ? 'assist-mic is-listening p-lg' : 'assist-mic p-lg'}
           onPress={primary}

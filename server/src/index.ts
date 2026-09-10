@@ -15,6 +15,7 @@ import { MediaArt } from '~/http/media-art.ts';
 import { Hub } from '~/hub/index.ts';
 import { AssistPipelineError, HaClient } from '~/ha/client.ts';
 import { HaStore, isEmptyPatch } from '~/ha/store.ts';
+import { WeatherForecasts } from '~/ha/weather.ts';
 import { ServiceGuard } from '~/ha/services.ts';
 import { SonosClient } from '~/sonos/client.ts';
 import { SonosStore } from '~/sonos/store.ts';
@@ -285,6 +286,9 @@ async function main(): Promise<void> {
       hub.broadcastHealth(getHealth());
     },
   });
+
+  const weatherForecasts = new WeatherForecasts((entityId) =>
+    haClient.callWithResponse('weather', 'get_forecasts', { entity_id: entityId }, { type: 'daily' }));
 
   /*
    * A preference change re-sends every panel ITS OWN preferences.
@@ -746,6 +750,33 @@ async function main(): Promise<void> {
 
     if (path === '/api/assist/tts') {
       await ttsAudio.serve(res, query.get('p'));
+      return;
+    }
+
+    if (path === '/api/weather/forecast') {
+      const entityId = config.current.home.weather;
+      const state = entityId ? store.get(entityId) : undefined;
+      const unavailable = !entityId ? 'No home weather source is configured'
+        : haClient.state !== 'connected' ? 'Home Assistant is not connected'
+        : !state || state.s === 'unavailable' || state.s === 'unknown' ? 'Home weather is unavailable' : null;
+      if (unavailable || !entityId || !state) {
+        res.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        res.end(req.method === 'HEAD' ? undefined : JSON.stringify({ error: unavailable }));
+        return;
+      }
+      try {
+        const unit = state.a['temperature_unit'];
+        const forecast = await weatherForecasts.get({
+          entityId, timezone: config.current.ui.timezone,
+          temperatureUnit: typeof unit === 'string' ? unit.slice(0, 10) : '',
+        });
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        res.end(req.method === 'HEAD' ? undefined : JSON.stringify(forecast));
+      } catch (error) {
+        log.warn(`Home forecast failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+        res.writeHead(502, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        res.end(req.method === 'HEAD' ? undefined : JSON.stringify({ error: 'Daily forecast is unavailable. Try again shortly.' }));
+      }
       return;
     }
 
