@@ -13,6 +13,8 @@ import json
 import os
 from typing import Any
 
+import aiohttp
+
 from pyatv import exceptions
 from pyatv.const import (
     DeviceState,
@@ -265,7 +267,18 @@ async def scan(loop, timeout=5, hosts=None, identifier=None, storage=None):
 
 async def connect(config, loop, storage=None, protocol=None, session=None):
     note("connect")
-    await misbehave(control().get("connect", "ok"), "connect")
+    # Faithful to pyatv: when it is not handed a session it makes its own, and
+    # it reclaims that one in a handler guarded by `except Exception`. A
+    # caller's deadline cancels with CancelledError, which is not an Exception,
+    # so that handler never runs and the session is orphaned.
+    owned = session is None
+    session = session or aiohttp.ClientSession()
+    try:
+        await misbehave(control().get("connect", "ok"), "connect")
+    except Exception:
+        if owned:
+            await session.close()
+        raise
     return AppleTV()
 
 

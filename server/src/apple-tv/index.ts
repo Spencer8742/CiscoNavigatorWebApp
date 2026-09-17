@@ -17,7 +17,7 @@ const log = logger('apple-tv');
  * Set them below it and the panel reports "did not respond" for a command the
  * bridge is about to answer properly, with a reason worth reading.
  */
-const DEVICE_TIMEOUT = 32_000;
+const DEVICE_TIMEOUT = 40_000;
 const SETUP_TIMEOUT = 20_000;
 
 interface BridgeReply { t: 'response'; id: number; ok: boolean; error?: string }

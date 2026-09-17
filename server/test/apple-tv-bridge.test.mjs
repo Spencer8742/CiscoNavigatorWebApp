@@ -24,8 +24,8 @@ afterEach(() => {
   harness = undefined;
 });
 
-function start(settings = {}) {
-  harness = new BridgeHarness();
+function start(settings = {}, env = {}) {
+  harness = new BridgeHarness(env);
   harness.control(settings);
   return harness.start();
 }
@@ -110,6 +110,24 @@ describe('Apple TV bridge', () => {
     bridge.control({ command: 'ok' });
     const recovered = await bridge.send({ t: 'command', device: 'living-room', op: 'select' });
     assert.equal(recovered.ok, true, 'the bridge must recover without being restarted');
+  });
+
+  it('does not orphan a connection when a connect times out', async () => {
+    // pyatv cleans up its own aiohttp session in a handler guarded by
+    // `except Exception`, and a deadline cancels the connect with
+    // CancelledError, which is not one. On a set that never finishes
+    // connecting the poller retries for as long as the container lives, so a
+    // session leaked per attempt is a leak without end.
+    const bridge = start({ connect: 'hang' }, { APPLE_TV_CONNECT_TIMEOUT: '1' });
+    await bridge.configure();
+
+    // Let the poller make several attempts. At most one session may be open
+    // at a time — the connect currently in flight. Anything beyond that is an
+    // attempt whose session was never reclaimed, and on this device that
+    // repeats for as long as the container runs.
+    await bridge.untilCalls((call) => call.event === 'connect', 4, 30_000);
+    const open = bridge.leakedSessions;
+    assert.ok(open.length <= 1, `${open.length} sessions left open across 4 connect attempts`);
   });
 
   it('reports a connect failure in words rather than an empty string', async () => {

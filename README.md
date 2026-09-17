@@ -216,7 +216,24 @@ docker exec navigator-panel /opt/pyatv/bin/python \
 
 It scans, lists each protocol with whether credentials are stored, connects,
 and exercises the Companion and media sessions that the remote and the
-now-playing card use. Nothing it does changes what is on screen.
+now-playing card use, timing each step. Nothing it does changes what is on
+screen and nothing appears on the TV. When the connect itself fails it then
+tries each protocol alone, so the output names the one at fault rather than
+only reporting that something is. Add `--debug` for pyatv's own log, which
+shows the individual Companion commands and which of them stalls.
+
+Connecting is slow on hardware that leaves Companion commands unanswered —
+pyatv allows five seconds each and a connect sends nine of them. The bridge
+waits 30 seconds by default, and the probe says so when a set needs longer:
+
+```yaml
+    environment:
+      - APPLE_TV_CONNECT_TIMEOUT=60
+```
+
+Button presses are not charged for that. They use a shorter budget and report
+"still connecting" rather than waiting out a reconnect the poller is already
+making in the background.
 
 Two properties are worth stating explicitly:
 

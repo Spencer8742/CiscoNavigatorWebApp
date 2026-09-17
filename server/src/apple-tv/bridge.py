@@ -4,12 +4,16 @@
 import asyncio
 import base64
 import json
+import logging
+import os
 import sys
 import time
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+import aiohttp
 import pyatv
 from pyatv import exceptions
 from pyatv.const import PairingRequirement, Protocol
@@ -25,7 +29,26 @@ COMMAND_TIMEOUT = 4.0
 # listing installed apps both take seconds on healthy hardware.
 POWER_TIMEOUT = 10.0
 APP_TIMEOUT = 10.0
-CONNECT_TIMEOUT = 8.0
+# Connecting is slow on hardware that leaves Companion commands unanswered.
+# pyatv gives each Companion command five seconds, and a connect sends nine of
+# them (_systemInfo, _touchStart, _sessionStart, TVRCSessionStart, _tiStart,
+# the _iMC subscribe, then FetchAttentionState and two status subscribes), so a
+# set that answers none of the later ones still needs well over the eight
+# seconds this used to allow. The poller is the patient one; a button press
+# uses the short budget and fails fast rather than hanging on a reconnect.
+def seconds(name: str, default: float) -> float:
+    """An override for a deadline, for hardware that needs a different one."""
+    try:
+        value = float(os.environ.get(name, ""))
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+# APPLE_TV_CONNECT_TIMEOUT raises this for a set that answers even more slowly
+# than the default allows, without rebuilding the image.
+CONNECT_TIMEOUT = seconds("APPLE_TV_CONNECT_TIMEOUT", 30.0)
+RECONNECT_TIMEOUT = min(seconds("APPLE_TV_RECONNECT_TIMEOUT", 10.0), CONNECT_TIMEOUT)
 METADATA_TIMEOUT = 5.0
 ARTWORK_TIMEOUT = 10.0
 SCAN_TIMEOUT = 5
@@ -123,6 +146,9 @@ class Device:
     # rescan, which is what keeps a self-healing retry quick enough to be worth
     # doing on the command path. Cleared whenever credentials may have changed.
     config: Any = None
+    # The aiohttp session behind this connection. We create it instead of
+    # letting pyatv create its own — see _open().
+    session: Any = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
@@ -159,6 +185,13 @@ class Bridge:
         self.storage_file = storage_file
         self.devices: dict[str, Device] = {}
         self.poller: asyncio.Task[Any] | None = None
+        self.background: set[asyncio.Task[Any]] = set()
+
+    def spawn(self, work: Any) -> None:
+        """Run something without making the caller wait for it."""
+        task = asyncio.ensure_future(work)
+        self.background.add(task)
+        task.add_done_callback(self.background.discard)
 
     async def start(self) -> None:
         Path(self.storage_file).parent.mkdir(parents=True, exist_ok=True)
@@ -180,7 +213,12 @@ class Bridge:
             if current:
                 await self.close_device(current)
             self.devices[device_id] = Device(device_id, str(spec.get("name") or device_id), host, identifier)
-        await asyncio.gather(*(self.connect(d) for d in self.devices.values()))
+        # Connect in the background. A set that takes half a minute to answer
+        # must not hold up the panel's configure round trip, and each device
+        # reports itself with a state message as soon as it is up.
+        for device in self.devices.values():
+            await self.publish(device)
+            self.spawn(self.connect(device))
 
     async def scan(self, device: Device) -> Any:
         found = await pyatv.scan(
@@ -194,14 +232,23 @@ class Bridge:
             raise RuntimeError(f"No Apple TV answered at {device.host}")
         return found[0]
 
-    async def connect(self, device: Device) -> None:
+    async def connect(self, device: Device, timeout: float = CONNECT_TIMEOUT) -> None:
+        """Open a connection, giving the device `timeout` seconds to answer.
+
+        The poller connects patiently; the command path passes the short
+        budget. If a connect is already running, a second caller leaves it
+        alone rather than queueing behind it — a button press should say so
+        immediately instead of waiting out somebody else's deadline.
+        """
+        if device.lock.locked():
+            return
         # One connect at a time per device: a command that hit a dead session
         # and the poller can both want one at the same moment.
         async with device.lock:
             if device.atv is not None or device.pairing is not None:
                 return
             try:
-                await asyncio.wait_for(self._open(device), CONNECT_TIMEOUT)
+                await asyncio.wait_for(self._open(device), timeout)
             except Exception as exc:  # network and protocol errors are state, not crashes
                 # The deadline can land after pyatv.connect() returned but
                 # before the listeners were attached, so there may be a real
@@ -212,6 +259,7 @@ class Bridge:
                         orphan.close()
                     except Exception:
                         pass
+                await self.close_session(device)
                 device.config = None
                 if is_credential_problem(exc):
                     self.credentials_rejected(device, None)
@@ -227,7 +275,16 @@ class Bridge:
         device.paired = device.remote_paired and device.media_paired
         if device.pairing_state not in ("starting", "pin"):
             device.pairing_target = None if device.paired else ("remote" if not device.remote_paired else "media")
-        atv = await pyatv.connect(config, self.loop, storage=self.storage)
+        # pyatv would make its own aiohttp session, and clean it up in a
+        # handler guarded by `except Exception`. Our deadline cancels the
+        # connect instead, and CancelledError is not an Exception, so that
+        # cleanup never runs and the session is orphaned ("Unclosed client
+        # session", once per attempt, forever on a set that never answers).
+        # Owning it is what makes it ours to close.
+        device.session = aiohttp.ClientSession()
+        atv = await pyatv.connect(
+            config, self.loop, storage=self.storage, session=device.session
+        )
         device.atv = atv
         device.config = config
         device.error = None
@@ -239,6 +296,14 @@ class Bridge:
         except Exception:
             pass
         atv.push_updater.start()
+
+    async def close_session(self, device: Device) -> None:
+        session, device.session = device.session, None
+        if session is not None:
+            try:
+                await session.close()
+            except Exception:
+                pass
 
     async def drop(self, device: Device, atv: Any, exc: BaseException) -> None:
         """Let go of a handle that cannot do anything any more.
@@ -263,6 +328,7 @@ class Bridge:
             atv.close()
         except Exception:
             pass
+        await self.close_session(device)
 
     def credentials_rejected(self, device: Device, target: str | None) -> None:
         """Mark a protocol as needing to be paired again.
@@ -283,6 +349,14 @@ class Bridge:
         if device.pairing_state not in ("starting", "pin"):
             device.pairing_target = "remote" if not device.remote_paired else "media"
 
+    def unavailable(self, device: Device) -> str:
+        """Why a command could not be sent, for someone holding the panel."""
+        if device.lock.locked():
+            # The poller is mid-connect on its longer budget. Saying so beats
+            # making the press wait out a deadline it did not set.
+            return f"{device.name} is still connecting. Try again in a moment."
+        return device.error or f"{device.name} is not connected."
+
     async def perform(
         self,
         device: Device,
@@ -298,10 +372,10 @@ class Bridge:
         genuinely broken device into a long wait.
         """
         if device.atv is None:
-            await self.connect(device)
+            await self.connect(device, RECONNECT_TIMEOUT)
         atv = device.atv
         if atv is None:
-            raise RuntimeError(device.error or "Apple TV is not connected")
+            raise RuntimeError(self.unavailable(device))
         try:
             return await asyncio.wait_for(action(atv), timeout)
         except Exception as exc:
@@ -310,7 +384,7 @@ class Bridge:
             trace(f"[{device.id}] retrying after: {describe(exc, device)}")
             credentials = is_credential_problem(exc)
             await self.drop(device, atv, exc)
-            await self.connect(device)
+            await self.connect(device, RECONNECT_TIMEOUT)
             retry = device.atv
             if retry is None:
                 if credentials:
@@ -337,6 +411,7 @@ class Bridge:
         if device.atv is not None:
             device.atv.close()
             device.atv = None
+        await self.close_session(device)
 
     async def publish(self, device: Device, playing: Any = None) -> None:
         atv = device.atv
@@ -495,7 +570,10 @@ class Bridge:
         await self.storage.save()
         # The cached config still carries the credentials from before pairing.
         device.config = None
-        await self.connect(device)
+        await self.publish(device)
+        # Pairing is done once the credentials are stored; connecting with them
+        # can take its own time without holding up the PIN's answer.
+        self.spawn(self.connect(device))
 
     async def pair_cancel(self, device: Device) -> None:
         if device.pairing is not None:
@@ -586,26 +664,69 @@ class Bridge:
             trace(f"[{device.id}] refresh failed: {describe(exc, device)}")
 
 
-async def probe(host: str, storage_file: str, identifier: str | None) -> int:
+# A probe is allowed to be far more patient than the running bridge: the whole
+# point is to find out whether a set ever answers, and how long it takes.
+PROBE_CONNECT_TIMEOUT = 45.0
+
+
+async def attempt(
+    loop: Any, storage: Any, config: Any, budget: float, only: Any = None
+) -> tuple[Any, Any, float, BaseException | None]:
+    """Connect once, optionally with only some protocols enabled.
+
+    Returns the connection, its session, how long it took, and what went wrong.
+    Disabling the others is how we find out which protocol is the one hanging:
+    pyatv.connect() skips a service whose `enabled` is False.
+    """
+    candidate = deepcopy(config)
+    if only is not None:
+        for proto in Protocol:
+            service = candidate.get_service(proto)
+            if service is not None and proto not in only:
+                service.enabled = False
+    session = aiohttp.ClientSession()
+    started = time.monotonic()
+    try:
+        atv = await asyncio.wait_for(
+            pyatv.connect(candidate, loop, storage=storage, session=session), budget
+        )
+        return atv, session, time.monotonic() - started, None
+    except BaseException as exc:  # noqa: BLE001 - a probe reports, it does not raise
+        await session.close()
+        return None, None, time.monotonic() - started, exc
+
+
+async def probe(host: str, storage_file: str, identifier: str | None, debug: bool) -> int:
     """Report what an Apple TV actually offers, and what it refuses.
 
-    Nothing here changes what is on screen: it scans, connects, and exercises
-    the read paths that use the same sessions the remote does. Companion is
-    what a tvOS update tends to break, and app_list() rides on it, so a
-    Companion session that has stopped answering shows up here as a named
-    failure rather than as a dead button in the panel.
+    Nothing here changes what is on screen and nothing appears on the TV: it
+    scans, connects, and exercises the read paths that use the same sessions
+    the remote does. Companion is what a tvOS update tends to break, and
+    app_list() rides on it, so a Companion session that has stopped answering
+    shows up here as a named failure rather than as a dead button in the panel.
 
         python3 apple-tv-bridge.py --probe 192.168.1.50 /config/apple-tv.json
+        python3 apple-tv-bridge.py --probe 192.168.1.50 /config/apple-tv.json --debug
     """
+    if debug:
+        logging.basicConfig(
+            level=logging.DEBUG,
+            stream=sys.stderr,
+            format="%(relativeCreated)6.0fms %(levelname)-7s %(name)s: %(message)s",
+        )
+
     loop = asyncio.get_running_loop()
     storage = FileStorage(storage_file, loop)
     Path(storage_file).parent.mkdir(parents=True, exist_ok=True)
     await storage.load()
 
     def line(status: str, message: str) -> None:
-        print(f"{status:<6} {message}")
+        # Flushed: run through `docker exec` this is a pipe, and a probe that
+        # buffers its output for half a minute looks exactly like one that hung.
+        print(f"{status:<6} {message}", flush=True)
 
-    print(f"Probing {host} (credentials from {storage_file})\n")
+    print(f"Probing {host} (credentials from {storage_file})", flush=True)
+    print("Nothing will appear on the Apple TV - this only reads.\n", flush=True)
 
     try:
         found = await pyatv.scan(
@@ -638,28 +759,69 @@ async def probe(host: str, storage_file: str, identifier: str | None) -> int:
     line("OK" if remote_ready else "FAIL", f"remote control (Companion) {'paired' if remote_ready else 'NOT paired'}")
     line("OK" if media_ready else "FAIL", f"media access (AirPlay/MRP) {'paired' if media_ready else 'NOT paired'}")
 
-    try:
-        atv = await asyncio.wait_for(pyatv.connect(config, loop, storage=storage), CONNECT_TIMEOUT)
-    except Exception as exc:
-        line("FAIL", f"connect: {describe(exc)}")
-        line("INFO", "A rejected pairing here means the stored credentials no longer work; pair again.")
+    line("INFO", f"connecting, up to {PROBE_CONNECT_TIMEOUT:.0f}s...")
+    atv, session, elapsed, error = await attempt(loop, storage, config, PROBE_CONNECT_TIMEOUT)
+    if error is not None:
+        line("FAIL", f"connect: {describe(error)} (gave up after {elapsed:.1f}s)")
+        # Narrow it down. Each protocol is tried on its own, so the output says
+        # which one is not answering rather than only that something is not.
+        print("", flush=True)
+        line("INFO", "trying each protocol on its own to find the one at fault:")
+        culprits = []
+        for name, only in (
+            ("Companion (the remote)", {Protocol.Companion}),
+            ("AirPlay (now playing)", {Protocol.AirPlay, Protocol.MRP}),
+        ):
+            if not any(config.get_service(p) for p in only):
+                continue
+            solo, solo_session, solo_elapsed, solo_error = await attempt(
+                loop, storage, config, PROBE_CONNECT_TIMEOUT, only
+            )
+            if solo_error is None:
+                line("OK", f"{name}: connected on its own in {solo_elapsed:.1f}s")
+                solo.close()
+                if solo_session is not None:
+                    await solo_session.close()
+            else:
+                culprits.append(name)
+                line("FAIL", f"{name}: {describe(solo_error)} after {solo_elapsed:.1f}s")
+        print("", flush=True)
+        if culprits:
+            print(f"Not answering: {', '.join(culprits)}.", flush=True)
+            print("If the pairing lines above say paired, the Apple TV is holding", flush=True)
+            print("credentials it no longer honours: remove this device under Settings >", flush=True)
+            print("General > AirPlay and HomeKit > ... and pair again from the panel.", flush=True)
+        else:
+            print("Each protocol connects alone but not together, which points at the", flush=True)
+            print("time the full connect takes rather than at any one of them. Raising", flush=True)
+            print("APPLE_TV_CONNECT_TIMEOUT above the slowest figure above should do it.", flush=True)
+        print("Re-run with --debug to see the individual commands and which one stalls.", flush=True)
         return 1
-    line("OK", "connected")
+
+    line("OK", f"connected in {elapsed:.1f}s")
+    if elapsed > CONNECT_TIMEOUT:
+        line(
+            "WARN",
+            f"that is longer than the bridge allows ({CONNECT_TIMEOUT:.0f}s); "
+            f"set APPLE_TV_CONNECT_TIMEOUT={int(elapsed) + 15} on the container.",
+        )
 
     failures = 0
     try:
         # Companion. This is the one a tvOS update usually takes out.
+        started = time.monotonic()
         try:
             apps = await asyncio.wait_for(atv.apps.app_list(), APP_TIMEOUT)
-            line("OK", f"Companion answered: {len(apps)} apps installed")
+            line("OK", f"Companion answered in {time.monotonic() - started:.1f}s: {len(apps)} apps installed")
         except Exception as exc:
             failures += 1
             line("FAIL", f"Companion (app list): {describe(exc)}")
 
         # MRP or AirPlay, which is what drives the now-playing card.
+        started = time.monotonic()
         try:
             playing = await asyncio.wait_for(atv.metadata.playing(), METADATA_TIMEOUT)
-            line("OK", f"media session answered: {playing.device_state.name}")
+            line("OK", f"media session answered in {time.monotonic() - started:.1f}s: {playing.device_state.name}")
         except Exception as exc:
             failures += 1
             line("FAIL", f"media session (now playing): {describe(exc)}")
@@ -670,26 +832,31 @@ async def probe(host: str, storage_file: str, identifier: str | None) -> int:
             line("WARN", f"power state unavailable: {describe(exc)}")
     finally:
         atv.close()
+        if session is not None:
+            await session.close()
 
-    print()
+    print("", flush=True)
     if failures:
-        print("Some sessions did not answer. If the pairing lines above say paired but a")
-        print("session still fails, the Apple TV is holding credentials it no longer honours:")
-        print("remove this device under Settings > General > AirPlay and HomeKit > ... and")
-        print("pair it again from the panel.")
+        print("Some sessions did not answer. If the pairing lines above say paired but a", flush=True)
+        print("session still fails, the Apple TV is holding credentials it no longer honours:", flush=True)
+        print("remove this device under Settings > General > AirPlay and HomeKit > ... and", flush=True)
+        print("pair it again from the panel.", flush=True)
     else:
-        print("Everything answered. The Apple TV is reachable and paired.")
+        print("Everything answered. The Apple TV is reachable and paired.", flush=True)
     return 1 if failures else 0
 
 
 async def main() -> None:
-    if len(sys.argv) > 2 and sys.argv[1] == "--probe":
+    args = [a for a in sys.argv[1:] if a != "--debug"]
+    debug = "--debug" in sys.argv
+    if len(args) > 1 and args[0] == "--probe":
         sys.exit(await probe(
-            sys.argv[2],
-            sys.argv[3] if len(sys.argv) > 3 else "/config/apple-tv.json",
-            sys.argv[4] if len(sys.argv) > 4 else None,
+            args[1],
+            args[2] if len(args) > 2 else "/config/apple-tv.json",
+            args[3] if len(args) > 3 else None,
+            debug,
         ))
-    storage_file = sys.argv[1] if len(sys.argv) > 1 else "/config/apple-tv.json"
+    storage_file = args[0] if args else "/config/apple-tv.json"
     bridge = Bridge(storage_file)
     await bridge.start()
     # Requests run concurrently. Handling them one at a time meant a command
@@ -710,7 +877,7 @@ async def main() -> None:
             running.add(task)
             task.add_done_callback(running.discard)
     finally:
-        for task in list(running):
+        for task in list(running) + list(bridge.background):
             task.cancel()
         if bridge.poller:
             bridge.poller.cancel()
