@@ -195,6 +195,15 @@ a Home Assistant webhook, an ordinary service call, or an Elgato Key Light. A
 bare `light:` item is not a button at all — it is the full light control, with
 live state.
 
+**Apple TVs need the container on host networking.** AirPlay's remote control
+channel, which carries now-playing metadata, is not a plain outbound
+connection: the RTSP session names this end by its own address and the Apple
+TV opens a connection back to it. On Docker's default bridge network that
+address is a `172.17.x.x` the LAN cannot route to, so the Apple TV never
+answers — and the timeout that follows looks exactly like a pairing problem.
+Replace the `ports:` block in `docker-compose.yml` with `network_mode: host`;
+the probe below checks this first and says so when it is wrong.
+
 Configured Apple TVs appear on their own page with pairing, power, directional
 navigation, Home/Back, playback, skipping, volume, live media metadata and
 allow-listed app shortcuts. Each shortcut names an installed app's bundle id;

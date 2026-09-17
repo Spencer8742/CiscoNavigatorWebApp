@@ -6,10 +6,12 @@ import base64
 import json
 import logging
 import os
+import socket
 import sys
 import time
 from copy import deepcopy
 from dataclasses import dataclass, field
+from ipaddress import IPv4Address
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
@@ -23,6 +25,11 @@ try:
     from pyatv.settings import MrpTunnel
 except ImportError:  # a pyatv without the setting: the fallback simply does not apply
     MrpTunnel = None  # type: ignore[assignment]
+
+try:
+    from pyatv.support import net as pyatv_net
+except ImportError:
+    pyatv_net = None  # type: ignore[assignment]
 
 # Every pyatv call gets a deadline. Without one a single command the device
 # decides not to answer never returns, and because requests used to be handled
@@ -153,6 +160,33 @@ def describe(exc: BaseException, device: "Device | None" = None) -> str:
 
 def is_credential_problem(exc: BaseException) -> bool:
     return isinstance(exc, CREDENTIAL_ERRORS)
+
+
+def off_subnet(host: str) -> str | None:
+    """Say so when nothing here sits on the Apple TV's network.
+
+    AirPlay's remote control channel is not a plain outbound connection. The
+    RTSP session names this end by its own address — pyatv sends
+    "SETUP rtsp://<our address>/<session>" — and the Apple TV has to be able to
+    reach it. From a container on Docker's default bridge that address is
+    something like 172.17.0.8, which nothing on the LAN can route to, so the
+    Apple TV never answers and the channel times out. No amount of patience
+    fixes it; the container has to be on the same network as the TV.
+    """
+    if pyatv_net is None:
+        return None
+    try:
+        address = IPv4Address(socket.gethostbyname(host))
+        if pyatv_net.get_local_address_reaching(address) is not None:
+            return None
+    except Exception:
+        return None
+    return (
+        f"No network interface here is on the same subnet as {host}, so the Apple TV "
+        "cannot open a connection back — which is what AirPlay's remote control "
+        "channel needs. A container on Docker's default bridge network always looks "
+        "like this. Run it with network_mode: host."
+    )
 
 
 def is_tunnel_failure(exc: BaseException) -> bool:
@@ -331,6 +365,9 @@ class Bridge:
                     if is_credential_problem(exc):
                         self.credentials_rejected(device, None)
                     device.error = describe(exc, device)
+                    routing = off_subnet(device.host)
+                    if routing and is_tunnel_failure(exc):
+                        device.error = f"{device.error} {routing}"
                     trace(f"[{device.id}] connect failed: {device.error}")
                     break
         await self.publish(device)
@@ -368,10 +405,11 @@ class Bridge:
         if device.tunnel_disabled:
             # Not an error exactly, but the panel should not silently show an
             # empty now-playing card as though nothing were playing.
+            routing = off_subnet(device.host)
             device.error = (
                 f"{device.name} would not start its remote control channel. The buttons "
-                "work; now playing is unavailable. Pair media access again to restore it."
-            )
+                "work; now playing is unavailable. "
+            ) + (routing or "Pair media access again to restore it.")
 
     async def apply_tunnel_setting(self, config: Any, device: Device) -> None:
         """Choose whether pyatv sets up the MRP-over-AirPlay tunnel.
@@ -856,6 +894,15 @@ async def probe(host: str, storage_file: str, identifier: str | None, debug: boo
     line("OK" if remote_ready else "FAIL", f"remote control (Companion) {'paired' if remote_ready else 'NOT paired'}")
     line("OK" if media_ready else "FAIL", f"media access (AirPlay/MRP) {'paired' if media_ready else 'NOT paired'}")
 
+    routing = off_subnet(host)
+    if routing:
+        line("FAIL", "this machine is not on the Apple TV's network")
+        for sentence in routing.split(". "):
+            if sentence.strip():
+                line("", f"  {sentence.strip().rstrip('.')}.")
+    else:
+        line("OK", "on the same network as the Apple TV")
+
     line("INFO", f"connecting, up to {PROBE_CONNECT_TIMEOUT:.0f}s...")
     atv, session, elapsed, error = await attempt(loop, storage, config, PROBE_CONNECT_TIMEOUT)
     if error is not None:
@@ -883,7 +930,16 @@ async def probe(host: str, storage_file: str, identifier: str | None, debug: boo
                 culprits.append(name)
                 line("FAIL", f"{name}: {describe(solo_error)} after {solo_elapsed:.1f}s")
         print("", flush=True)
-        if culprits:
+        if routing:
+            # This outranks every other explanation: until it is fixed, nothing
+            # below it can be trusted to mean what it usually means.
+            print("Fix the networking first. " + routing, flush=True)
+            print("", flush=True)
+            print("In docker-compose.yml, replace the `ports:` block with:", flush=True)
+            print("    network_mode: host", flush=True)
+            print("then recreate the container. The panel is then on the host's", flush=True)
+            print("own port 8099 rather than a published one.", flush=True)
+        elif culprits:
             print(f"Not answering: {', '.join(culprits)}.", flush=True)
             print("If the pairing lines above say paired, the Apple TV is holding", flush=True)
             print("credentials it no longer honours: remove this device under Settings >", flush=True)

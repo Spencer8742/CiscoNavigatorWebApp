@@ -23,6 +23,21 @@ services:
       # behind your existing VPN rather than forwarding this port.
       - '8099:8099'
 
+    # ── Apple TV needs host networking ──────────────────────────────────────
+    # AirPlay's remote control channel, which carries now-playing metadata, is
+    # not a plain outbound connection: the RTSP session names this end by its
+    # own address and the Apple TV opens a connection back to it. On the
+    # default bridge network that address is a 172.17.x.x the LAN cannot
+    # route to, so the Apple TV never answers and the channel times out —
+    # which is indistinguishable from a pairing problem unless you read the
+    # address in the error.
+    #
+    # If you have `appleTvs:` configured, delete the `ports:` block above and
+    # uncomment this. The panel is then served on the host's own port 8099.
+    # Nothing else in the stack needs it.
+    #
+    # network_mode: host
+
     volumes:
       # Writable, because the entrypoint seeds a default dashboard.yaml here on
       # first run if the directory is empty. After that the backend only ever
