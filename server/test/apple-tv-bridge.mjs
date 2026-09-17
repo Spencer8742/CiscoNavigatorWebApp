@@ -13,7 +13,8 @@ const FAKE_PYATV = fileURLToPath(new URL('./fake-pyatv', import.meta.url));
  * TV underneath that can be told to misbehave mid-session.
  */
 export class BridgeHarness {
-  constructor() {
+  constructor(env = {}) {
+    this.env = env;
     this.dir = mkdtempSync(join(tmpdir(), 'atv-bridge-'));
     this.controlFile = join(this.dir, 'control.json');
     this.logFile = join(this.dir, 'calls.log');
@@ -50,6 +51,7 @@ export class BridgeHarness {
         PYTHONUNBUFFERED: '1',
         FAKE_ATV_CONTROL: this.controlFile,
         FAKE_ATV_LOG: this.logFile,
+        ...this.env,
       },
     });
     this.child.stderr.setEncoding('utf8');
@@ -88,6 +90,16 @@ export class BridgeHarness {
     return null;
   }
 
+  /** Sessions opened but never closed — an orphaned connect leaks one each time. */
+  get leakedSessions() {
+    const open = new Set();
+    for (const call of this.calls) {
+      if (call.event === 'session-open') open.add(call.session);
+      if (call.event === 'session-close') open.delete(call.session);
+    }
+    return [...open];
+  }
+
   /** Wait until the fake Apple TV has been asked to do something matching. */
   async untilCall(predicate, timeoutMs = 10_000) {
     const deadline = Date.now() + timeoutMs;
@@ -96,6 +108,19 @@ export class BridgeHarness {
       if (call) return call;
       if (Date.now() > deadline) {
         throw new Error(`no matching call within ${timeoutMs}ms; saw ${JSON.stringify(this.calls)}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+
+  /** Wait until at least `count` calls match, or give up. */
+  async untilCalls(predicate, count, timeoutMs = 10_000) {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const matched = this.calls.filter(predicate);
+      if (matched.length >= count) return matched;
+      if (Date.now() > deadline) {
+        throw new Error(`only ${matched.length} of ${count} matching calls within ${timeoutMs}ms`);
       }
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
