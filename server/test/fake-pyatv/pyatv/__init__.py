@@ -79,6 +79,9 @@ class Service:
         self.protocol = protocol
         self.credentials = credentials
         self.pairing = pairing
+        # Real pyatv's BaseService has this, and connect() skips a service
+        # whose enabled is False — which is how a protocol is left out.
+        self.enabled = True
 
 
 class Config:
@@ -280,6 +283,13 @@ async def connect(config, loop, storage=None, protocol=None, session=None):
     # A device that only answers a client whose device id is a valid unicast
     # address, which is what the identity hunt is looking for.
     if control().get("needsUnicastId") and str(device_id or "").lower().startswith("ff:"):
+        raise exceptions.ProtocolError("Command _systemInfo failed") from asyncio.TimeoutError()
+    companion = config.get_service(Protocol.Companion)
+    enabled = companion is not None and companion.enabled
+    note("connect-protocols", companion=enabled)
+    # A device that has stopped answering Companion entirely, the way tvOS 27.2
+    # does, while everything else is healthy.
+    if control().get("companion") == "dead" and enabled:
         raise exceptions.ProtocolError("Command _systemInfo failed") from asyncio.TimeoutError()
     if control().get("tunnel") == "fail" and getattr(tunnel, "value", None) != "disable":
         # What pyatv raises when the MRP-over-AirPlay tunnel will not start.

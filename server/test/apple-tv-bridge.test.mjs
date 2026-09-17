@@ -300,3 +300,75 @@ describe('Apple TV client identity', () => {
     assert.equal(mac(first.out), mac(second.out), 'the derived id must not change per run');
   });
 });
+
+describe('Apple TV without Companion', () => {
+  it('keeps the buttons when Companion has stopped answering', async () => {
+    // tvOS 27.2 on an Apple TV 4K gen 3 stops answering _systemInfo, the first
+    // command of a Companion connect. pyatv fails the whole connection over
+    // it, so a set whose buttons MRP could still drive looks entirely dead.
+    const bridge = start({ companion: 'dead' });
+    await bridge.configure();
+
+    const state = await bridge.untilState((s) => s.reachable === true, 30_000);
+    assert.equal(state.reachable, true, 'the connection must come up without Companion');
+
+    const reply = await bridge.send({ t: 'command', device: 'living-room', op: 'select' });
+    assert.equal(reply.ok, true, 'the direction buttons must still work');
+  });
+
+  it('says what a reduced connection cannot do', async () => {
+    const bridge = start({ companion: 'dead' });
+    await bridge.configure();
+
+    const state = await bridge.untilState((s) => s.reachable === true, 30_000);
+    assert.match(state.error ?? '', /app shortcuts, swipe and the screensaver/i);
+  });
+
+  it('turns down the buttons only Companion can press, without looking dead', async () => {
+    const bridge = start({ companion: 'dead' });
+    await bridge.configure();
+    await bridge.untilState((s) => s.reachable === true, 30_000);
+
+    const screensaver = await bridge.send({ t: 'command', device: 'living-room', op: 'screensaver' });
+    assert.equal(screensaver.ok, false);
+    assert.match(screensaver.error, /other buttons still work/i);
+
+    const swipe = await bridge.send({
+      t: 'swipe', device: 'living-room', startX: 0, startY: 0, endX: 500, endY: 0, durationMs: 300,
+    });
+    assert.equal(swipe.ok, false);
+    assert.match(swipe.error, /use the direction buttons/i);
+  });
+
+  it('keeps Companion when it is healthy', async () => {
+    const bridge = start();
+    await bridge.configure();
+    await bridge.untilState((s) => s.reachable === true, 20_000);
+
+    const rounds = bridge.calls.filter((c) => c.event === 'connect-protocols');
+    assert.ok(rounds.length > 0, 'expected a connect');
+    assert.ok(rounds.every((r) => r.companion === true), 'Companion must not be dropped when it works');
+  });
+
+  it('honours APPLE_TV_COMPANION=force rather than dropping it', async () => {
+    const bridge = start({ companion: 'dead' }, { APPLE_TV_COMPANION: 'force' });
+    await bridge.configure();
+
+    const state = await bridge.untilState((s) => s.reachable === false && s.error, 30_000);
+    assert.equal(state.reachable, false, 'force means keep Companion even when it fails');
+  });
+});
+
+describe('Apple TV probe conclusions', () => {
+  it('does not tell you to re-pair when AirPlay is answering fine', async () => {
+    // Companion down and AirPlay up is a state the bridge handles, so the
+    // advice should describe the fallback, not send someone undoing a
+    // pairing that works.
+    const bridge = start({ companion: 'dead' });
+    const { out } = await bridge.probe();
+
+    assert.match(out, /OK\s+AirPlay \(now playing\): connected on its own/);
+    assert.match(out, /buttons go over\nAirPlay instead/);
+    assert.doesNotMatch(out, /pair again from the panel/);
+  });
+});
