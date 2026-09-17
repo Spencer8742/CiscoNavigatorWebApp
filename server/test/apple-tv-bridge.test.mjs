@@ -252,3 +252,51 @@ describe('Apple TV network routing', () => {
     assert.match(out, /network_mode: host/);
   });
 });
+
+describe('Apple TV client identity', () => {
+  it('finds the identity a picky device will answer', async () => {
+    // A Companion connect opens with _systemInfo, which says who we are. When
+    // a device stops answering it, the question is whether it dislikes what we
+    // claim to be — and the only way to know is to ask the device.
+    const bridge = start({ needsUnicastId: true });
+    const { code, out } = await bridge.identities();
+
+    assert.equal(code, 0, out);
+    assert.match(out, /FAIL\s+pyatv defaults \(baseline\)/);
+    assert.match(out, /OK\s+valid unicast device id/);
+    assert.match(out, /APPLE_TV_CLIENT_DEVICE_ID=02:/);
+  });
+
+  it('says the identity is not the problem when the defaults already work', async () => {
+    const bridge = start();
+    const { code, out } = await bridge.identities();
+
+    assert.equal(code, 0, out);
+    assert.match(out, /defaults answered, so the identity is not the problem/i);
+  });
+
+  it('honours an identity set on the container', async () => {
+    const bridge = start(
+      { needsUnicastId: true },
+      { APPLE_TV_CLIENT_DEVICE_ID: '02:ab:cd:ef:01:02', APPLE_TV_CLIENT_MAC: '02:ab:cd:ef:01:02' },
+    );
+    await bridge.configure();
+
+    const state = await bridge.untilState((s) => s.reachable === true, 20_000);
+    assert.equal(state.reachable, true, 'the override must reach pyatv');
+    const ids = bridge.calls.filter((c) => c.event === 'connect').map((c) => c.deviceId);
+    assert.ok(ids.includes('02:ab:cd:ef:01:02'), `got ${JSON.stringify(ids)}`);
+  });
+
+  it('is stable across restarts, so a paired identity keeps working', async () => {
+    const a = start({ needsUnicastId: true });
+    const first = await a.identities();
+    a.stop();
+    const b = start({ needsUnicastId: true });
+    const second = await b.identities();
+
+    const mac = (out) => out.match(/APPLE_TV_CLIENT_DEVICE_ID=(\S+)/)?.[1];
+    assert.ok(mac(first.out), 'expected a suggested id');
+    assert.equal(mac(first.out), mac(second.out), 'the derived id must not change per run');
+  });
+});

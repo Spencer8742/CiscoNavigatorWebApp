@@ -260,6 +260,26 @@ docker exec -it navigator-panel /opt/pyatv/bin/python \
 `airplay` (now playing), `raop` or `mrp`, or leave it off to be asked. Restart
 the container afterwards so the bridge picks the new credentials up.
 
+**When the buttons stop after a tvOS update.** A Companion connect opens with
+`_systemInfo`, which tells the Apple TV who is calling. pyatv's defaults claim
+an iPhone X on iOS 14.7.1 with a device id of `FF:70:79:61:74:76` — an address
+whose first octet has the multicast bit set, so not a valid unicast MAC at all.
+A newer tvOS declining to answer that is a plausible reason for every button to
+stop at once, and the way to find out is to ask the device:
+
+```sh
+docker exec navigator-panel /opt/pyatv/bin/python \
+  /app/dist/apple-tv-bridge.py --identities 192.168.1.50 /config/apple-tv.json
+```
+
+It tries each candidate over Companion alone, writes nothing, and reports which
+ones answered — including pyatv's defaults, so a device that is happy with them
+says so rather than sending you off changing settings. Set whichever worked with
+`APPLE_TV_CLIENT_DEVICE_ID`, `APPLE_TV_CLIENT_MODEL`, `APPLE_TV_CLIENT_NAME`,
+`APPLE_TV_CLIENT_MAC`, `APPLE_TV_CLIENT_OS_VERSION` or `APPLE_TV_CLIENT_OS_BUILD`.
+The suggested address is derived from the device, not random, so it survives a
+restart and stays the identity the Apple TV paired with.
+
 **When only now playing is broken.** AirPlay carries a "remote control
 channel" that tunnels MRP, and that is what now-playing metadata rides on.
 When it will not start, pyatv fails the whole connection — Companion with it —

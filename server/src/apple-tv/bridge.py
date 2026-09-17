@@ -11,6 +11,7 @@ import sys
 import time
 from copy import deepcopy
 from dataclasses import dataclass, field
+from hashlib import sha256
 from ipaddress import IPv4Address
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -66,6 +67,31 @@ RECONNECT_TIMEOUT = min(seconds("APPLE_TV_RECONNECT_TIMEOUT", 10.0), CONNECT_TIM
 # and carries now playing; when it will not start, pyatv fails the whole
 # connect, Companion included, and the remote goes with it.
 MRP_TUNNEL = os.environ.get("APPLE_TV_MRP_TUNNEL", "auto").strip().lower()
+
+# Who the bridge says it is when it introduces itself over Companion. pyatv's
+# defaults claim an iPhone X on iOS 14.7.1 and a device id of FF:70:79:61:74:76
+# — an address whose first octet has the multicast bit set, so not a valid
+# unicast MAC at all. Both are candidates for a newer tvOS declining to answer
+# _systemInfo, which is the first command a Companion connect sends. Override
+# whichever turns out to matter; --identities finds out which on real hardware.
+CLIENT_FIELDS = ("name", "model", "device_id", "mac", "os_name", "os_build", "os_version")
+CLIENT_IDENTITY = {
+    field: os.environ[key]
+    for field in CLIENT_FIELDS
+    if (key := f"APPLE_TV_CLIENT_{field.upper()}") in os.environ
+    and os.environ[key].strip()
+}
+
+
+def local_mac(seed: str, first_octet: int = 0x02) -> str:
+    """A stable, locally administered unicast MAC for this installation.
+
+    Derived from the seed rather than random so it survives a restart: an
+    Apple TV that has paired with one identity should keep recognising it.
+    """
+    digest = sha256(seed.encode("utf-8")).digest()
+    octets = [first_octet] + list(digest[:5])
+    return ":".join(f"{octet:02x}" for octet in octets)
 METADATA_TIMEOUT = 5.0
 ARTWORK_TIMEOUT = 10.0
 SCAN_TIMEOUT = 5
@@ -112,16 +138,23 @@ def cause_of(exc: BaseException) -> str | None:
     real one as __cause__. Dropping it leaves nothing to act on.
     """
     seen: set[int] = set()
+    # asyncio.wait_for raises TimeoutError *from* the CancelledError it used to
+    # stop the inner task, so descending blindly turns "it timed out" into
+    # "something cancelled it" — which reads like a bug on our side and sent
+    # this hunt off in the wrong direction once already. Keep the first link
+    # that names something, and never let cancellation be the answer.
+    first: BaseException | None = None
     current = exc.__cause__
     while current is not None and id(current) not in seen:
         seen.add(id(current))
-        message = str(current).strip()
-        if message:
-            return f"{type(current).__name__}: {message}"
-        if current.__cause__ is None:
-            return type(current).__name__
+        if not isinstance(current, asyncio.CancelledError):
+            if first is None:
+                first = current
+            message = str(current).strip()
+            if message:
+                return f"{type(current).__name__}: {message}"
         current = current.__cause__
-    return None
+    return type(first).__name__ if first is not None else None
 
 
 def with_cause(text: str, exc: BaseException) -> str:
@@ -412,13 +445,20 @@ class Bridge:
             ) + (routing or "Pair media access again to restore it.")
 
     async def apply_tunnel_setting(self, config: Any, device: Device) -> None:
-        """Choose whether pyatv sets up the MRP-over-AirPlay tunnel.
+        """Choose whether pyatv sets up the MRP-over-AirPlay tunnel, and who we are.
 
         get_settings() hands back the live object out of storage, so setting
-        this is what pyatv reads on the next connect. It is deliberately not
+        these is what pyatv reads on the next connect. They are deliberately not
         saved: a device that starts answering again should get its now playing
         back without anyone having to undo anything.
         """
+        if CLIENT_IDENTITY:
+            try:
+                info = (await self.storage.get_settings(config)).info
+                for field, value in CLIENT_IDENTITY.items():
+                    setattr(info, field, value)
+            except Exception as exc:
+                trace(f"[{device.id}] could not set the client identity: {describe(exc, device)}")
         if MrpTunnel is None:
             return
         # Only "auto" leaves the choice to us; asking for the tunnel outright,
@@ -1116,9 +1156,139 @@ async def pair_cli(
         await pairing.close()
 
 
+def candidate_identities(seed: str) -> list[tuple[str, dict[str, str]]]:
+    """Client identities to try, cheapest hypothesis first.
+
+    Each one changes what _systemInfo carries. pyatv's defaults are included as
+    the baseline: if they answer, the identity is not the problem and the
+    result says so instead of sending anyone off changing settings.
+    """
+    return [
+        ("pyatv defaults (baseline)", {}),
+        ("valid unicast device id", {"device_id": local_mac(seed), "mac": local_mac(seed)}),
+        (
+            "current iPhone, old ids",
+            {"model": "iPhone17,1", "os_version": "26.0", "os_build": "23A341"},
+        ),
+        (
+            "current iPhone, valid unicast ids",
+            {
+                "model": "iPhone17,1",
+                "os_version": "26.0",
+                "os_build": "23A341",
+                "device_id": local_mac(seed),
+                "mac": local_mac(seed),
+                "name": "Navigator Panel",
+            },
+        ),
+        (
+            "current iPad, valid unicast ids",
+            {
+                "model": "iPad14,3",
+                "os_version": "26.0",
+                "os_build": "23A341",
+                "device_id": local_mac(seed, 0x06),
+                "mac": local_mac(seed, 0x06),
+                "name": "Navigator Panel",
+            },
+        ),
+    ]
+
+
+async def identities(host: str, storage_file: str, identifier: str | None, debug: bool) -> int:
+    """Find out which client identity this Apple TV will answer.
+
+    A Companion connect opens with _systemInfo, which says who we are. When a
+    device stops answering it after a tvOS update — the buttons stop working and
+    nothing says why — the question is whether it dislikes what we claim to be.
+    This tries each candidate against the real device, Companion only, and
+    reports which ones got a reply. Nothing is written; set the winner with the
+    APPLE_TV_CLIENT_* variables.
+
+        docker exec navigator-panel /opt/pyatv/bin/python \\
+          /app/dist/apple-tv-bridge.py --identities 192.168.1.50 /config/apple-tv.json
+    """
+    if debug:
+        logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
+
+    loop = asyncio.get_running_loop()
+    storage = FileStorage(storage_file, loop)
+    Path(storage_file).parent.mkdir(parents=True, exist_ok=True)
+    await storage.load()
+
+    def say(message: str = "") -> None:
+        print(message, flush=True)
+
+    say(f"Trying client identities against {host}")
+    say("Companion only, nothing written, nothing shown on the TV.\n")
+
+    found = await pyatv.scan(
+        loop, timeout=SCAN_TIMEOUT, hosts=[host], identifier=identifier, storage=storage
+    )
+    if not found:
+        say(f"Nothing answered at {host}.")
+        return 1
+    config = found[0]
+    if config.get_service(Protocol.Companion) is None:
+        say("This Apple TV does not advertise Companion, so there is nothing to try.")
+        return 1
+
+    settings = await storage.get_settings(config)
+    original = {field: getattr(settings.info, field) for field in CLIENT_FIELDS}
+    winners: list[str] = []
+    try:
+        for label, overrides in candidate_identities(str(config.identifier or host)):
+            for field, value in original.items():
+                setattr(settings.info, field, value)
+            for field, value in overrides.items():
+                setattr(settings.info, field, value)
+            atv, session, elapsed, error = await attempt(
+                loop, storage, config, PROBE_CONNECT_TIMEOUT, {Protocol.Companion}
+            )
+            if error is None:
+                winners.append(label)
+                say(f"OK    {label}: answered in {elapsed:.1f}s")
+                atv.close()
+                if session is not None:
+                    await session.close()
+            else:
+                say(f"FAIL  {label}: {describe(error)} after {elapsed:.1f}s")
+            if overrides:
+                say(f"      {overrides}")
+    finally:
+        for field, value in original.items():
+            setattr(settings.info, field, value)
+
+    say()
+    if not winners:
+        say("None of them answered, so the identity is not what this Apple TV is")
+        say("objecting to. Check --probe first: if it reports a routing problem,")
+        say("fix that before reading anything here.")
+        return 1
+    if winners[0].startswith("pyatv defaults"):
+        say("The defaults answered, so the identity is not the problem here.")
+        return 0
+    say(f"Answered: {', '.join(winners)}.")
+    say("Set the matching APPLE_TV_CLIENT_* variables on the container, for example:")
+    for label, overrides in candidate_identities(str(config.identifier or host)):
+        if label == winners[0]:
+            for field, value in overrides.items():
+                say(f"  APPLE_TV_CLIENT_{field.upper()}={value}")
+            break
+    say("then restart it and run --probe again.")
+    return 0
+
+
 async def main() -> None:
     args = [a for a in sys.argv[1:] if a != "--debug"]
     debug = "--debug" in sys.argv
+    if len(args) > 1 and args[0] == "--identities":
+        sys.exit(await identities(
+            args[1],
+            args[2] if len(args) > 2 else "/config/apple-tv.json",
+            args[3] if len(args) > 3 else None,
+            debug,
+        ))
     if len(args) > 1 and args[0] == "--pair":
         sys.exit(await pair_cli(
             args[1],

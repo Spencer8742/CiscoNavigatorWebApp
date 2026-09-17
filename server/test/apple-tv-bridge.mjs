@@ -147,10 +147,19 @@ export class BridgeHarness {
     this.child?.kill('SIGKILL');
   }
 
-  /** Run the bridge's --probe mode against the fake and collect its report. */
   probe(host = '10.0.0.10') {
+    return this.run(['--probe', host, this.storageFile]);
+  }
+
+  /** Run the bridge's --identities mode against the fake. */
+  identities(host = '10.0.0.10') {
+    return this.run(['--identities', host, this.storageFile]);
+  }
+
+  /** Run a one-shot bridge mode and collect everything it printed. */
+  run(args) {
     return new Promise((resolve) => {
-      const child = spawn('python3', [BRIDGE, '--probe', host, this.storageFile], {
+      const child = spawn('python3', [BRIDGE, ...args], {
         env: {
           ...process.env,
           PYTHONPATH: FAKE_PYATV,
