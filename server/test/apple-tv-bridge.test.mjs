@@ -171,3 +171,52 @@ describe('Apple TV probe', () => {
     assert.match(out, /Nothing answered at 10\.0\.0\.99/);
   });
 });
+
+describe('Apple TV AirPlay remote control channel', () => {
+  it('keeps the buttons working when the tunnel will not start', async () => {
+    // pyatv fails the whole connect — Companion included — when AirPlay's
+    // MRP tunnel refuses to set up, so a set that could still take every
+    // button press looks completely dead instead.
+    const bridge = start({ tunnel: 'fail' });
+    await bridge.configure();
+
+    const state = await bridge.untilState((s) => s.reachable === true, 20_000);
+    assert.equal(state.reachable, true, 'the connection must come up without the tunnel');
+
+    const reply = await bridge.send({ t: 'command', device: 'living-room', op: 'select' });
+    assert.equal(reply.ok, true, 'buttons must work on the reduced connection');
+  });
+
+  it('says that now playing is missing rather than showing an empty card', async () => {
+    const bridge = start({ tunnel: 'fail' });
+    await bridge.configure();
+
+    const state = await bridge.untilState((s) => s.reachable === true, 20_000);
+    assert.match(state.error ?? '', /now playing is unavailable/i);
+  });
+
+  it('only gives up the tunnel when that is what failed', async () => {
+    const bridge = start({ connect: 'reset' });
+    await bridge.configure();
+
+    await bridge.untilState((s) => s.reachable === false && s.error, 20_000);
+    const tunnels = bridge.calls.filter((c) => c.event === 'connect').map((c) => c.tunnel);
+    assert.ok(
+      tunnels.every((t) => t !== 'disable'),
+      `an unrelated failure must not disable the tunnel; saw ${JSON.stringify(tunnels)}`,
+    );
+  });
+});
+
+describe('Apple TV error reporting', () => {
+  it('carries the reason behind a wrapped pyatv error', async () => {
+    // "Failed to set up remote control channel" is the same sentence whatever
+    // went wrong underneath; the useful half is the __cause__.
+    const bridge = start({ tunnel: 'fail' }, { APPLE_TV_MRP_TUNNEL: 'force' });
+    await bridge.configure();
+
+    const state = await bridge.untilState((s) => s.reachable === false && s.error, 20_000);
+    assert.match(state.error, /remote control channel/i);
+    assert.match(state.error, /HttpError/, `the cause must survive; got ${state.error}`);
+  });
+});

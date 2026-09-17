@@ -227,6 +227,12 @@ class Pairing:
         self.has_paired = False
         self._pin = None
 
+    @property
+    def device_provides_pin(self):
+        # True for the protocols that put a code on the TV, which is all of
+        # them here unless a scenario says otherwise.
+        return control().get("devicePin", True)
+
     async def begin(self):
         note("pair-begin", protocol=self.protocol.name)
 
@@ -266,7 +272,14 @@ async def scan(loop, timeout=5, hosts=None, identifier=None, storage=None):
 
 
 async def connect(config, loop, storage=None, protocol=None, session=None):
-    note("connect")
+    settings = await storage.get_settings(config) if storage is not None else None
+    tunnel = getattr(settings.protocols.airplay, "mrp_tunnel", None) if settings else None
+    note("connect", tunnel=getattr(tunnel, "value", None))
+    if control().get("tunnel") == "fail" and getattr(tunnel, "value", None) != "disable":
+        # What pyatv raises when the MRP-over-AirPlay tunnel will not start.
+        raise exceptions.ProtocolError(
+            "Failed to set up remote control channel"
+        ) from exceptions.HttpError()
     # Faithful to pyatv: when it is not handed a session it makes its own, and
     # it reclaims that one in a handler guarded by `except Exception`. A
     # caller's deadline cancels with CancelledError, which is not an Exception,
