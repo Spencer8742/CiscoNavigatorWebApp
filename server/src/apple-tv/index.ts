@@ -8,6 +8,18 @@ import type { AppleTvCommand, AppleTvState, AppleTvSwipe } from '@shared/protoco
 
 const log = logger('apple-tv');
 
+/**
+ * The bridge bounds every pyatv call itself and buys one reconnect and one
+ * retry when a session turns out to be dead, so the worst case for a device
+ * command is a little under half a minute. These ceilings sit above that
+ * budget on purpose: they are a backstop for a bridge that has stopped
+ * answering at all, not the thing that decides how long a button press waits.
+ * Set them below it and the panel reports "did not respond" for a command the
+ * bridge is about to answer properly, with a reason worth reading.
+ */
+const DEVICE_TIMEOUT = 32_000;
+const SETUP_TIMEOUT = 20_000;
+
 interface BridgeReply { t: 'response'; id: number; ok: boolean; error?: string }
 interface BridgeState { t: 'state'; state: AppleTvState }
 interface BridgeArtwork { t: 'artwork'; device: string; version: string | null; mimetype: string | null; data: string | null }
@@ -61,12 +73,12 @@ export class AppleTvBridge {
       return;
     }
     this.#ensureProcess();
-    void this.#request({ t: 'configure', devices }, 20_000);
+    void this.#request({ t: 'configure', devices }, SETUP_TIMEOUT);
   }
 
   command(device: string, op: AppleTvCommand): Promise<string | null> {
     if (!this.#devices.some((item) => item.id === device)) return Promise.resolve('Apple TV is not configured');
-    return this.#request({ t: 'command', device, op });
+    return this.#request({ t: 'command', device, op }, DEVICE_TIMEOUT);
   }
 
   swipe(device: string, gesture: AppleTvSwipe): Promise<string | null> {
@@ -78,7 +90,7 @@ export class AppleTvBridge {
     if (!Number.isInteger(gesture.durationMs) || gesture.durationMs < 100 || gesture.durationMs > 2000) {
       return Promise.resolve('Apple TV swipe duration is invalid');
     }
-    return this.#request(swipeBridgeRequest(device, gesture));
+    return this.#request(swipeBridgeRequest(device, gesture), DEVICE_TIMEOUT);
   }
 
   launchApp(device: string, bundleId: string): Promise<string | null> {
@@ -90,12 +102,12 @@ export class AppleTvBridge {
       device,
       app: shortcut.bundleId,
       name: shortcut.name,
-    });
+    }, DEVICE_TIMEOUT);
   }
 
   pair(device: string, op: 'begin' | 'pin' | 'cancel', pin?: string): Promise<string | null> {
     if (!this.#devices.some((item) => item.id === device)) return Promise.resolve('Apple TV is not configured');
-    return this.#request({ t: `pair-${op}`, device, ...(pin ? { pin } : {}) }, 20_000);
+    return this.#request({ t: `pair-${op}`, device, ...(pin ? { pin } : {}) }, SETUP_TIMEOUT);
   }
 
   serveArtwork(res: ServerResponse, device: string | null): void {
@@ -143,7 +155,7 @@ export class AppleTvBridge {
         log.warn(`Apple TV bridge exited (${code ?? 'signal'}); restarting`);
         this.#restart = setTimeout(() => {
           this.#ensureProcess();
-          void this.#request({ t: 'configure', devices: this.#devices }, 20_000);
+          void this.#request({ t: 'configure', devices: this.#devices }, SETUP_TIMEOUT);
         }, 3000);
       }
     });
@@ -197,7 +209,7 @@ export class AppleTvBridge {
       : null;
   }
 
-  #request(payload: Record<string, unknown>, timeout = 12_000): Promise<string | null> {
+  #request(payload: Record<string, unknown>, timeout = DEVICE_TIMEOUT): Promise<string | null> {
     this.#ensureProcess();
     const child = this.#process;
     if (!child) return Promise.resolve('Apple TV bridge is unavailable');
