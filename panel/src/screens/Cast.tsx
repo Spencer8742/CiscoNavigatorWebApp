@@ -274,6 +274,7 @@ function PhotoPane() {
   const ready = photosReady.value;
 
   useEffect(() => {
+    if (!immich.enabled) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -292,7 +293,7 @@ function PhotoPane() {
       clearTimeout(timer);
       releaseImages();
     };
-  }, [immich.pairPortraits, immich.intervalSeconds]);
+  }, [immich.enabled, immich.pairPortraits, immich.intervalSeconds]);
 
   if (!ready || slide.length === 0) return <ClockPane />;
 

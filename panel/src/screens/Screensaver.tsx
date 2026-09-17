@@ -172,6 +172,7 @@ function PhotoScreensaver() {
 
   // Kick the slideshow off and keep it advancing.
   useEffect(() => {
+    if (!immich.enabled) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -193,7 +194,7 @@ function PhotoScreensaver() {
       // than a slideshow nobody is watching.
       releaseImages();
     };
-  }, [immich.intervalSeconds, immich.pairPortraits]);
+  }, [immich.enabled, immich.intervalSeconds, immich.pairPortraits]);
 
   // Swap layers whenever a new slide is ready.
   useEffect(() => {

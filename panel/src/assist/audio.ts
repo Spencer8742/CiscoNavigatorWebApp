@@ -1,4 +1,5 @@
 import { hasNativeAudio, NativeRecorder, type VoiceRecorder } from './native.ts';
+import { deviceInfo } from '~/lib/device.ts';
 
 export const TARGET_SAMPLE_RATE = 16_000;
 
@@ -42,6 +43,7 @@ export class PcmRecorder {
     targetSampleRate = TARGET_SAMPLE_RATE,
     options: PcmRecorderOptions = {},
   ): Promise<VoiceRecorder> {
+    if (deviceInfo().isRoomNavigator) throw new Error('Voice capture is disabled on Room Navigator');
     if (hasNativeAudio()) return NativeRecorder.start(onChunk, options.signal, options.onError);
     if (options.signal?.aborted) throw new DOMException('Capture cancelled', 'AbortError');
     const processing = options.processing ?? true;
@@ -133,6 +135,7 @@ declare global {
 }
 
 export function canRecordVoice(): boolean {
+  if (deviceInfo().isRoomNavigator) return false;
   return Boolean(
     hasNativeAudio() || (typeof navigator.mediaDevices?.getUserMedia === 'function' &&
       (window.AudioContext || window.webkitAudioContext))
