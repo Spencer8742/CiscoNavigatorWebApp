@@ -274,7 +274,13 @@ async def scan(loop, timeout=5, hosts=None, identifier=None, storage=None):
 async def connect(config, loop, storage=None, protocol=None, session=None):
     settings = await storage.get_settings(config) if storage is not None else None
     tunnel = getattr(settings.protocols.airplay, "mrp_tunnel", None) if settings else None
-    note("connect", tunnel=getattr(tunnel, "value", None))
+    device_id = getattr(settings.info, "device_id", None) if settings else None
+    model = getattr(settings.info, "model", None) if settings else None
+    note("connect", tunnel=getattr(tunnel, "value", None), deviceId=device_id, model=model)
+    # A device that only answers a client whose device id is a valid unicast
+    # address, which is what the identity hunt is looking for.
+    if control().get("needsUnicastId") and str(device_id or "").lower().startswith("ff:"):
+        raise exceptions.ProtocolError("Command _systemInfo failed") from asyncio.TimeoutError()
     if control().get("tunnel") == "fail" and getattr(tunnel, "value", None) != "disable":
         # What pyatv raises when the MRP-over-AirPlay tunnel will not start.
         raise exceptions.ProtocolError(
