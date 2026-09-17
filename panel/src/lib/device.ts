@@ -16,6 +16,7 @@
 
 export interface DeviceInfo {
   isRoomOS: boolean;
+  isRoomNavigator: boolean;
   /** e.g. "Cisco Room Navigator", parsed from the UA. */
   model: string | null;
   /** Chromium major.minor.build.patch, if the UA declares one. */
@@ -44,6 +45,8 @@ export function deviceInfo(): DeviceInfo {
 
   cached = {
     isRoomOS,
+    isRoomNavigator: /\b(?:Cisco\s+(?:Webex\s+)?(?:Room\s+)?Navigator|Room\s+Navigator)\b/i.test(ua)
+      || (isRoomOS && /\bNavigator\b/i.test(ua)),
     model,
     chromeVersion,
     hasXapi: hasXapi(),
@@ -70,15 +73,9 @@ function hasXapi(): boolean {
 /**
  * JS heap, as the engine itself reports it.
  *
- * This is the one number that maps onto the failure mode Cisco actually
- * documents. Their web engine is "restricted, both in memory and CPU usage",
- * and a page that exceeds its allowance is TERMINATED rather than slowed
- * (docs/ROOMOS.md §2) -- but they publish no figure, and say it varies by
- * device and by current system load.
- *
- * `jsHeapSizeLimit` is that unpublished figure, reported by the engine on the
- * device in front of you. Reading it in Settings answers "how much room do we
- * actually have on THIS Navigator, right now" in a way no datasheet does.
+ * This is not the RoomOS process memory budget. Decoded images, compositor
+ * textures and other native allocations can cause memory pressure while the
+ * JS heap remains small. `jsHeapSizeLimit` describes V8's heap limit only.
  *
  * `performance.memory` is non-standard and Chrome-only, so every access is
  * guarded: it is absent in Firefox and Safari, and it may be quantised or

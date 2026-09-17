@@ -1074,9 +1074,7 @@
   }
 }
 
-/* The shell stays mounted underneath in the DOM only when the screensaver is
-   absent; when present it is removed entirely (see app.tsx). This guard is
-   belt-and-braces for the frame in between. */
+/* The shell stays mounted, but its active screen is unmounted while covered. */
 .shell[data-hidden] { visibility: hidden; }
 
 .saver-layer {

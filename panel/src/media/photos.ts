@@ -21,11 +21,9 @@ import type { PhotoRef } from '@shared/protocol.ts';
  *
  * ## Why the cache is small
  *
- * Six `preview`-sized images is roughly 36 MB of decoded bitmap. That is
- * already a meaningful share of an unpublished budget whose overrun kills the
- * app, and a slideshow only ever needs the current image plus the next two.
- * Eviction sets `src = ''` as well as dropping the reference — without that
- * the browser's own image cache can keep the decoded frame alive.
+ * Hold at most six decoded previews. Their memory cost depends on Immich's
+ * preview dimensions, not compressed file size. Pending decodes are cancelled
+ * on exit, and duplicate loads share one image and decode promise.
  */
 
 /**
@@ -58,12 +56,14 @@ export const photosReady = signal(false);
 /** Set when the backend has no photos to give — shown in the UI. */
 export const photosEmpty = signal(false);
 
-const cache = new Lru<string, HTMLImageElement>(CACHE_SIZE, (_id, img) => {
-  // Both halves matter: dropping the reference alone leaves the decoded
-  // bitmap alive in the browser's image cache.
+function dropImage(img: HTMLImageElement): void {
   img.src = '';
   img.removeAttribute('src');
-});
+}
+
+const cache = new Lru<string, HTMLImageElement>(CACHE_SIZE, (_id, img) => dropImage(img));
+const pendingLoads = new Map<string, { image: HTMLImageElement; promise: Promise<HTMLImageElement | null> }>();
+let generation = 0;
 
 let queue: PhotoRef[] = [];
 /** The in-flight batch, shared so concurrent callers await the same one. */
@@ -83,26 +83,40 @@ export function photoUrl(id: string, size: 'grid' | 'full'): string {
  * Returns null on failure rather than throwing: one unreadable photo must
  * skip, not stop the slideshow.
  */
-async function load(ref: PhotoRef): Promise<HTMLImageElement | null> {
+async function load(ref: PhotoRef, session: number): Promise<HTMLImageElement | null> {
+  if (session !== generation) return null;
   const hit = cache.get(ref.id);
   if (hit) {
     backfillSize(ref, hit);
     return hit;
   }
 
-  const img = new Image();
-  img.decoding = 'async';
-  img.src = photoUrl(ref.id, 'full');
-
-  try {
-    await img.decode();
-  } catch {
-    // Broken image, or the element was evicted mid-flight.
-    return null;
+  let pending = pendingLoads.get(ref.id);
+  if (!pending) {
+    const image = new Image();
+    image.decoding = 'async';
+    image.src = photoUrl(ref.id, 'full');
+    // Start after registration so even a synchronous decode failure is cleaned up.
+    const promise = Promise.resolve().then(async () => {
+      try {
+        if (session !== generation) return null;
+        await image.decode();
+        if (session !== generation) return null;
+        cache.set(ref.id, image);
+        return image;
+      } catch {
+        dropImage(image);
+        return null;
+      } finally {
+        if (pendingLoads.get(ref.id)?.image === image) pendingLoads.delete(ref.id);
+      }
+    });
+    pending = { image, promise };
+    pendingLoads.set(ref.id, pending);
   }
-
-  backfillSize(ref, img);
-  cache.set(ref.id, img);
+  const img = await pending.promise;
+  if (session !== generation) return null;
+  if (img) backfillSize(ref, img);
   return img;
 }
 
@@ -116,24 +130,26 @@ async function load(ref: PhotoRef): Promise<HTMLImageElement | null> {
  * on every cold start. Sharing the in-flight promise means the second caller
  * waits for the same batch and then has photos, which is what it asked for.
  */
-async function fill(): Promise<void> {
+async function fill(session: number): Promise<void> {
+  if (session !== generation) return;
   if (inFlight) return inFlight;
 
-  inFlight = (async () => {
-    try {
-      const photos = await requestPhotos(BATCH);
-      if (photos.length === 0) {
-        photosEmpty.value = queue.length === 0 && history.length === 0;
-        return;
-      }
-      photosEmpty.value = false;
-      queue.push(...photos);
-    } finally {
-      inFlight = null;
+  const request = requestPhotos(BATCH).then((photos) => {
+    if (session !== generation) return;
+    if (photos.length === 0) {
+      photosEmpty.value = queue.length === 0 && history.length === 0;
+      return;
     }
-  })();
-
-  return inFlight;
+    photosEmpty.value = false;
+    queue.push(...photos);
+  });
+  inFlight = request;
+  try {
+    await request;
+  } finally {
+    // An old session must not clear a newer session's request.
+    if (inFlight === request) inFlight = null;
+  }
 }
 
 /**
@@ -149,8 +165,8 @@ async function fill(): Promise<void> {
  * Preloading precisely keeps occupancy at previous + current + next, which is
  * what CACHE_SIZE is sized for.
  */
-function preloadAhead(): void {
-  for (const ref of peekNextSlide()) void load(ref);
+function preloadAhead(session: number): void {
+  for (const ref of peekNextSlide()) void load(ref, session);
 }
 
 /**
@@ -237,11 +253,12 @@ function peekNextSlide(): PhotoRef[] {
  * crossfade knowing there is a complete picture to fade to.
  */
 export async function advance(): Promise<void> {
-  if (queue.length < LOW_WATER) void fill();
+  const session = generation;
+  if (queue.length < LOW_WATER) void fill(session);
 
   if (queue.length === 0) {
-    await fill();
-    if (queue.length === 0) return;
+    await fill(session);
+    if (session !== generation || queue.length === 0) return;
   }
 
   // Skip anything that will not decode, but do not spin forever on a
@@ -250,7 +267,8 @@ export async function advance(): Promise<void> {
     const ref = queue.shift();
     if (!ref) break;
 
-    const img = await load(ref);
+    const img = await load(ref, session);
+    if (session !== generation) return;
     if (!img) continue;
 
     // A portrait fills about a third of a 16:9 panel. Pair it with another
@@ -260,7 +278,8 @@ export async function advance(): Promise<void> {
     // collage assembles itself on screen one photo at a time. If the partner
     // will not decode, fall back to showing this one alone — a single
     // contained portrait is a worse layout, not a broken one.
-    const slide = partner && (await load(partner)) ? [ref, partner] : [ref];
+    const slide = partner && (await load(partner, session)) ? [ref, partner] : [ref];
+    if (session !== generation) return;
 
     history.push(ref);
     if (history.length > CACHE_SIZE * 4) history.shift();
@@ -270,18 +289,19 @@ export async function advance(): Promise<void> {
     currentSlide.value = slide;
     nextPhoto.value = queue[0] ?? null;
     photosReady.value = true;
-    preloadAhead();
+    preloadAhead(session);
     return;
   }
 }
 
 /** Step back through photos already shown this session. */
 export async function previous(): Promise<void> {
+  const session = generation;
   if (index <= 0) return;
   const ref = history[index - 1];
   if (!ref) return;
-  const img = await load(ref);
-  if (!img) return;
+  const img = await load(ref, session);
+  if (!img || session !== generation) return;
   index -= 1;
   currentPhoto.value = ref;
   // History records the photos shown, not how they were laid out, so going
@@ -303,7 +323,14 @@ export async function fetchGrid(count: number): Promise<PhotoRef[]> {
  * artwork and the UI all want memory at the same time.
  */
 export function releaseImages(): void {
+  generation += 1;
+  inFlight = null;
+  for (const { image } of pendingLoads.values()) dropImage(image);
+  pendingLoads.clear();
   cache.clear();
+  currentPhoto.value = null;
+  currentSlide.value = [];
+  nextPhoto.value = null;
   photosReady.value = false;
 }
 
@@ -314,13 +341,9 @@ export function photoStats(): { cached: number; queued: number } {
 
 /** Reset when the photo config changes under us. */
 export function resetPlaylist(): void {
+  releaseImages();
   queue = [];
   history.length = 0;
   index = -1;
-  cache.clear();
-  currentPhoto.value = null;
-  currentSlide.value = [];
-  nextPhoto.value = null;
-  photosReady.value = false;
   photosEmpty.value = false;
 }

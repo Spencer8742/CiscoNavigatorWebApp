@@ -1,6 +1,7 @@
 import { Icon } from '~/components/Icon.tsx';
 import { Pressable } from '~/components/Pressable.tsx';
 import { ui } from '~/config/index.ts';
+import { deviceInfo } from '~/lib/device.ts';
 import {
   linkStatus,
   narrow,
@@ -72,13 +73,15 @@ export function Nav() {
         </Pressable>
       ))}
 
-      <Pressable
-        class="nav-assist p-sm"
-        onPress={openAssistAndListen}
-        ariaLabel="Assist"
-      >
-        <Icon name="mic" size="1.45rem" weight={1.9} />
-      </Pressable>
+      {!deviceInfo().isRoomNavigator ? (
+        <Pressable
+          class="nav-assist p-sm"
+          onPress={openAssistAndListen}
+          ariaLabel="Assist"
+        >
+          <Icon name="mic" size="1.45rem" weight={1.9} />
+        </Pressable>
+      ) : null}
 
       {/*
         Connection indicator. A dot, not a banner: the link is healthy

@@ -32,6 +32,7 @@ import {
   screensaverActive,
 } from '~/state/ui.ts';
 import { isCastDashboard, isCastMode, startCastReceiver } from '~/lib/cast.ts';
+import { deviceInfo } from '~/lib/device.ts';
 
 /**
  * The shell.
@@ -59,6 +60,7 @@ const CAST = isCastMode();
 /** `?cast=1&pane=dashboard` — the real dashboard, on a cast display. */
 const CAST_DASHBOARD = CAST && isCastDashboard();
 const NATIVE_WAKE = new URLSearchParams(window.location.search).get('nativeWake') === '1';
+const VOICE_ENABLED = !deviceInfo().isRoomNavigator;
 
 /*
  * Claim the Cast session as early as possible, for BOTH cast variants.
@@ -101,11 +103,9 @@ export function App() {
   return (
     <ErrorBoundary>
       {/*
-        The screensaver replaces the shell entirely rather than overlaying it.
-        Mounting it means the dashboard's timers and subscriptions unmount,
-        which matters on a device that runs for weeks — and unmounting it
-        releases every decoded photo (see media/photos.ts) so the slideshow
-        never holds tens of megabytes while the dashboard is in use.
+        Unmount the covered screen so its photo rotation, timers and
+        subscriptions stop. The shell and route survive, and global voice
+        and timer sheets remain available while the screensaver is showing.
 
         Waking is handled by the global activity listener in state/idle.ts, so
         a touch anywhere on the photo brings the panel back.
@@ -132,7 +132,7 @@ export function App() {
           </div>
         )}
         <main class="shell-main">
-          <Screen />
+          {showScreensaver ? null : <Screen />}
         </main>
       </div>
       {/* One sheet for the whole app, driven by the `openEntity` signal.
@@ -150,8 +150,8 @@ export function App() {
       <SourcesSheet />
       <DeviceSourceSheet />
       <DeviceAlertsSheet />
-      {!CAST && !NATIVE_WAKE ? <AssistWakeListener /> : null}
-      <AssistSheet />
+      {VOICE_ENABLED && !CAST && !NATIVE_WAKE ? <AssistWakeListener /> : null}
+      {VOICE_ENABLED ? <AssistSheet /> : null}
       <TimerSheet />
       <TimerAlerts />
       <Toast />

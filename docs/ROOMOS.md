@@ -99,10 +99,11 @@ and their advice, which is the honest conclusion:
 > Test as early as possible on the hardware you are developing for - the
 > performance is usually never as good as a developer expects.
 
-**So we read it off the device instead.** Settings → Device shows the engine's
-own `usedJSHeapSize` and `jsHeapSizeLimit`. That limit IS the unpublished
-figure, for that device, under that load. It is worth checking on a panel that
-has been up for days rather than one just reloaded.
+**Settings reports the JavaScript heap, not the device's memory budget.**
+`usedJSHeapSize` and `jsHeapSizeLimit` describe V8's heap only. Decoded images,
+compositor textures and other native allocations are not included. Compare
+heap, DOM nodes, listeners and process memory over time on the actual panel;
+a low heap reading does not rule out memory pressure.
 
 Secondary sources (Cisco Community, **[unverified]**) report Room Navigators
 shipping with 2 GB of RAM early on and 4 GB later, and one developer seeing
@@ -114,9 +115,9 @@ afford.
 
 **Consequences, all of which are load-bearing in this design:**
 
-1. **A memory leak is not a slow degradation — it is a crash.** The panel is
-   expected to run for weeks. Every cache in this app is explicitly bounded
-   and evicted (see `panel/src/lib/lru.ts`).
+1. **Memory pressure can cause pauses and slowdown before a crash.** The
+   panel is expected to run for weeks. Caches must be bounded and evicted,
+   and asynchronous work must not restore resources after teardown.
 2. Decoded images dominate memory. A 4000×3000 JPEG costs ~48 MB *decoded*
    regardless of its file size. We never load Immich originals. Ever.
 3. Cisco's own performance advice, followed literally in this codebase:

@@ -9,6 +9,7 @@ import {
   type PanelPrefs,
 } from '@shared/protocol.ts';
 import type { ConnectionProblem } from '~/net/diagnose.ts';
+import { deviceInfo } from '~/lib/device.ts';
 
 /**
  * UI-level state: which screen is showing, how healthy the link is, whether
@@ -127,6 +128,7 @@ export const assistWakeResult = signal<{ seq: number; result: AssistResult } | n
 export const assistWakePaused = signal(false);
 
 export function openAssistAndListen(): void {
+  if (deviceInfo().isRoomNavigator) return;
   timersOpen.value = false;
   assistWakePaused.value = true;
   assistOpen.value = true;
