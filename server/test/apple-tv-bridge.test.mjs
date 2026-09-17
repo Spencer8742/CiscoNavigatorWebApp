@@ -220,3 +220,35 @@ describe('Apple TV error reporting', () => {
     assert.match(state.error, /HttpError/, `the cause must survive; got ${state.error}`);
   });
 });
+
+describe('Apple TV network routing', () => {
+  it('names the routing problem instead of only the RTSP timeout', async () => {
+    // From a container on Docker's bridge network the Apple TV is handed an
+    // address it cannot route to, so it never answers the SETUP. The raw
+    // timeout sends people hunting pairing and tvOS versions for hours.
+    const bridge = start({ tunnel: 'fail', offSubnet: true }, { APPLE_TV_MRP_TUNNEL: 'force' });
+    await bridge.configure();
+
+    const state = await bridge.untilState((s) => s.reachable === false && s.error, 20_000);
+    assert.match(state.error, /same subnet/i, `got ${state.error}`);
+    assert.match(state.error, /network_mode: host/i);
+  });
+
+  it('says nothing about routing when the machine is on the right network', async () => {
+    const bridge = start({ tunnel: 'fail' }, { APPLE_TV_MRP_TUNNEL: 'force' });
+    await bridge.configure();
+
+    const state = await bridge.untilState((s) => s.reachable === false && s.error, 20_000);
+    assert.doesNotMatch(state.error, /subnet|network_mode/i, `got ${state.error}`);
+  });
+
+  it('leads the probe with it, since nothing else can be trusted until it is fixed', async () => {
+    const bridge = start({ offSubnet: true, connect: 'hang' });
+    const { code, out } = await bridge.probe();
+
+    assert.equal(code, 1);
+    assert.match(out, /FAIL\s+this machine is not on the Apple TV's network/);
+    assert.match(out, /Fix the networking first/);
+    assert.match(out, /network_mode: host/);
+  });
+});
