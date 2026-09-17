@@ -1,0 +1,155 @@
+import assert from 'node:assert/strict';
+import { describe, it, afterEach } from 'node:test';
+import { BridgeHarness } from './apple-tv-bridge.mjs';
+
+/**
+ * End-to-end tests for the Apple TV bridge, in the style of bridge.test.mjs:
+ * the real `bridge.py` as a subprocess, speaking its real NDJSON protocol,
+ * with a fake pyatv underneath (server/test/fake-pyatv).
+ *
+ * The suite exists for one failure in particular. A tvOS update invalidates
+ * the stored pairing and changes which Companion commands the device answers,
+ * and pyatv reports both by raising exceptions whose str() is empty
+ * (AuthenticationError, asyncio.TimeoutError, ConnectionResetError). Everything
+ * below is about what the panel is told when that happens, and whether the
+ * bridge can get itself back.
+ *
+ *   node --test server/test/apple-tv-bridge.test.mjs
+ */
+
+let harness;
+
+afterEach(() => {
+  harness?.stop();
+  harness = undefined;
+});
+
+function start(settings = {}) {
+  harness = new BridgeHarness();
+  harness.control(settings);
+  return harness.start();
+}
+
+describe('Apple TV bridge', () => {
+  it('presses a button on a healthy device', async () => {
+    const bridge = start();
+    await bridge.configure();
+
+    const reply = await bridge.send({ t: 'command', device: 'living-room', op: 'select' });
+
+    assert.equal(reply.ok, true);
+    assert.ok(bridge.calls.some((call) => call.event === 'command' && call.op === 'select'));
+  });
+
+  it('names the failure when the device rejects the stored pairing', async () => {
+    // What a tvOS upgrade looks like from here: the credentials are still on
+    // disk, the device still answers a scan, but it refuses to act on them.
+    // pyatv signals that with AuthenticationError(), whose str() is ''.
+    const bridge = start({ command: 'auth' });
+    await bridge.configure();
+
+    const reply = await bridge.send({ t: 'command', device: 'living-room', op: 'select' });
+
+    assert.equal(reply.ok, false);
+    assert.ok(reply.error, 'the bridge must not report a failure with an empty message');
+    assert.match(reply.error, /pair/i, `expected a re-pairing hint, got ${JSON.stringify(reply.error)}`);
+  });
+
+  it('asks the panel to pair again after the device rejects the stored pairing', async () => {
+    const bridge = start({ command: 'auth' });
+    await bridge.configure();
+    await bridge.send({ t: 'command', device: 'living-room', op: 'select' });
+
+    const state = await bridge.untilState((s) => s.paired === false);
+    assert.equal(state.paired, false, 'a device that refuses its credentials is not paired');
+  });
+
+  it('gives up on a command the device silently drops', async () => {
+    // tvOS 26/27 answer the session handshake and then drop some Companion
+    // commands on the floor. pyatv's own call never returns.
+    const bridge = start({ command: 'hang' });
+    await bridge.configure();
+
+    const reply = await bridge.send({ t: 'command', device: 'living-room', op: 'select' }, 30_000);
+
+    assert.equal(reply.ok, false);
+    assert.ok(reply.error, 'a dropped command must not report an empty message');
+    assert.match(reply.error, /not answer|timed out|respond/i);
+  });
+
+  it('keeps answering while an earlier command is still hanging', async () => {
+    // The regression that makes every button look broken: one command that
+    // never returns must not stall the ones behind it in the queue.
+    const bridge = start({ command: 'hang' });
+    await bridge.configure();
+
+    const stuck = bridge.send({ t: 'command', device: 'living-room', op: 'select' }, 30_000);
+    // Only let the device recover once the first press is genuinely stuck,
+    // otherwise this races and proves nothing.
+    await bridge.untilCall((call) => call.event === 'command' && call.op === 'select');
+    bridge.control({ command: 'ok' });
+
+    const second = await bridge.send({ t: 'command', device: 'living-room', op: 'menu' }, 8_000);
+    assert.equal(second.ok, true, 'a healthy command must not queue behind a hung one');
+
+    await stuck;
+  });
+
+  it('reconnects when the session died without pyatv noticing', async () => {
+    // A connection that is gone but never reported: pyatv's listener callback
+    // never fires, so the bridge still holds an AppleTV object that cannot do
+    // anything. Every press fails until the handle is dropped and remade.
+    const bridge = start();
+    await bridge.configure();
+    await bridge.send({ t: 'command', device: 'living-room', op: 'select' });
+
+    bridge.control({ command: 'reset' });
+    const failed = await bridge.send({ t: 'command', device: 'living-room', op: 'select' });
+    assert.equal(failed.ok, false);
+
+    bridge.control({ command: 'ok' });
+    const recovered = await bridge.send({ t: 'command', device: 'living-room', op: 'select' });
+    assert.equal(recovered.ok, true, 'the bridge must recover without being restarted');
+  });
+
+  it('reports a connect failure in words rather than an empty string', async () => {
+    const bridge = start({ connect: 'invalid-credentials' });
+    await bridge.configure();
+
+    const state = await bridge.untilState((s) => s.reachable === false && s.error);
+    assert.ok(state.error, 'an unreachable device must carry a message');
+    assert.notEqual(state.error.trim(), '');
+  });
+});
+
+describe('Apple TV probe', () => {
+  it('reports a healthy device as reachable and paired', async () => {
+    const bridge = start();
+    const { code, out } = await bridge.probe();
+
+    assert.equal(code, 0, out);
+    assert.match(out, /Companion: credentials stored/);
+    assert.match(out, /Everything answered/);
+  });
+
+  it('points at the pairing when credentials are stored but refused', async () => {
+    // The shape of a tvOS upgrade: the pairing looks intact on disk, and the
+    // device refuses it anyway. Saying only "not reachable" would send someone
+    // hunting the network instead of re-pairing.
+    const bridge = start({ appList: 'auth' });
+    const { code, out } = await bridge.probe();
+
+    assert.equal(code, 1);
+    assert.match(out, /remote control \(Companion\) paired/);
+    assert.match(out, /FAIL\s+Companion \(app list\)/);
+    assert.match(out, /Pair it again/);
+  });
+
+  it('says so plainly when nothing answers at the address', async () => {
+    const bridge = start({ scanEmpty: true });
+    const { code, out } = await bridge.probe('10.0.0.99');
+
+    assert.equal(code, 1);
+    assert.match(out, /Nothing answered at 10\.0\.0\.99/);
+  });
+});

@@ -202,6 +202,22 @@ the backend verifies both the configuration and the Apple TV's installed app
 list before launching it. Pairing credentials are stored in
 `/config/apple-tv.json` and never sent to the panel.
 
+A major tvOS update can leave those stored credentials in place while the
+Apple TV stops honouring them, so the device still answers a scan and still
+looks paired but refuses every command. When that happens the panel says the
+pairing was rejected and offers the Pair button again — remove the panel under
+**Settings › General › AirPlay and HomeKit › ...** on the Apple TV, then pair
+from the panel. To see what a set is actually doing, ask it directly:
+
+```sh
+docker exec navigator-panel /opt/pyatv/bin/python \
+  /app/dist/apple-tv-bridge.py --probe 192.168.1.50 /config/apple-tv.json
+```
+
+It scans, lists each protocol with whether credentials are stored, connects,
+and exercises the Companion and media sessions that the remote and the
+now-playing card use. Nothing it does changes what is on screen.
+
 Two properties are worth stating explicitly:
 
 - **The panel names a button, never a request.** It sends `deskpro.hangup`;
