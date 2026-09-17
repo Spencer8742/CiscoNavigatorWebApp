@@ -19,6 +19,11 @@ from pyatv import exceptions
 from pyatv.const import PairingRequirement, Protocol
 from pyatv.storage.file_storage import FileStorage
 
+try:
+    from pyatv.settings import MrpTunnel
+except ImportError:  # a pyatv without the setting: the fallback simply does not apply
+    MrpTunnel = None  # type: ignore[assignment]
+
 # Every pyatv call gets a deadline. Without one a single command the device
 # decides not to answer never returns, and because requests used to be handled
 # one at a time that hung the whole bridge: every later button press timed out
@@ -49,6 +54,11 @@ def seconds(name: str, default: float) -> float:
 # than the default allows, without rebuilding the image.
 CONNECT_TIMEOUT = seconds("APPLE_TV_CONNECT_TIMEOUT", 30.0)
 RECONNECT_TIMEOUT = min(seconds("APPLE_TV_RECONNECT_TIMEOUT", 10.0), CONNECT_TIMEOUT)
+
+# "auto" (pyatv decides), "disable" or "force". The MRP tunnel rides on AirPlay
+# and carries now playing; when it will not start, pyatv fails the whole
+# connect, Companion included, and the remote goes with it.
+MRP_TUNNEL = os.environ.get("APPLE_TV_MRP_TUNNEL", "auto").strip().lower()
 METADATA_TIMEOUT = 5.0
 ARTWORK_TIMEOUT = 10.0
 SCAN_TIMEOUT = 5
@@ -86,6 +96,32 @@ def text(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+def cause_of(exc: BaseException) -> str | None:
+    """The underlying reason, when an exception was raised `from` another.
+
+    pyatv wraps a lot of failures behind one sentence — "Failed to set up
+    remote control channel" reads the same whether the device refused the
+    credentials, hung up, or answered something unexpected — and keeps the
+    real one as __cause__. Dropping it leaves nothing to act on.
+    """
+    seen: set[int] = set()
+    current = exc.__cause__
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        message = str(current).strip()
+        if message:
+            return f"{type(current).__name__}: {message}"
+        if current.__cause__ is None:
+            return type(current).__name__
+        current = current.__cause__
+    return None
+
+
+def with_cause(text: str, exc: BaseException) -> str:
+    cause = cause_of(exc)
+    return f"{text} ({cause})" if cause else text
+
+
 def describe(exc: BaseException, device: "Device | None" = None) -> str:
     """Turn an exception into something worth showing a person.
 
@@ -108,13 +144,26 @@ def describe(exc: BaseException, device: "Device | None" = None) -> str:
     if message:
         # pyatv's own wording ("Command FetchAttentionState failed") is the
         # most useful thing to show, but it never says which set it came from.
-        return message if device is None or name in message else f"{name}: {message}"
+        return with_cause(
+            message if device is None or name in message else f"{name}: {message}", exc
+        )
     # Last resort: the class name still beats an empty string.
-    return f"{name} failed with {type(exc).__name__}."
+    return with_cause(f"{name} failed with {type(exc).__name__}.", exc)
 
 
 def is_credential_problem(exc: BaseException) -> bool:
     return isinstance(exc, CREDENTIAL_ERRORS)
+
+
+def is_tunnel_failure(exc: BaseException) -> bool:
+    """Whether AirPlay's remote control channel is what would not start.
+
+    pyatv raises exactly this sentence from _create_mrp_tunnel_data when the
+    MRP-over-AirPlay tunnel fails to set up. It is worth singling out because
+    the tunnel is optional: without it there is no now playing, but Companion
+    still drives every button, which is a great deal better than nothing.
+    """
+    return "remote control channel" in str(exc).lower()
 
 
 def is_dropped_connection(exc: BaseException) -> bool:
@@ -146,6 +195,9 @@ class Device:
     # rescan, which is what keeps a self-healing retry quick enough to be worth
     # doing on the command path. Cleared whenever credentials may have changed.
     config: Any = None
+    # Set once AirPlay's remote control channel has refused to start, so the
+    # next connect skips it instead of failing over it again.
+    tunnel_disabled: bool = False
     # The aiohttp session behind this connection. We create it instead of
     # letting pyatv create its own — see _open().
     session: Any = None
@@ -247,30 +299,47 @@ class Bridge:
         async with device.lock:
             if device.atv is not None or device.pairing is not None:
                 return
-            try:
-                await asyncio.wait_for(self._open(device), timeout)
-            except Exception as exc:  # network and protocol errors are state, not crashes
-                # The deadline can land after pyatv.connect() returned but
-                # before the listeners were attached, so there may be a real
-                # connection here to let go of rather than leak.
-                orphan, device.atv = device.atv, None
-                if orphan is not None:
-                    try:
-                        orphan.close()
-                    except Exception:
-                        pass
-                await self.close_session(device)
-                device.config = None
-                if is_credential_problem(exc):
-                    self.credentials_rejected(device, None)
-                device.error = describe(exc, device)
-                trace(f"[{device.id}] connect failed: {device.error}")
+            # Two attempts at most, and only for the one failure worth a second
+            # try: AirPlay's remote control channel refusing to start takes the
+            # whole connect down with it, Companion included, even though every
+            # button would work without it.
+            for attempt in (1, 2):
+                try:
+                    await asyncio.wait_for(self._open(device), timeout)
+                    break
+                except Exception as exc:  # network and protocol errors are state, not crashes
+                    # The deadline can land after pyatv.connect() returned but
+                    # before the listeners were attached, so there may be a real
+                    # connection here to let go of rather than leak.
+                    orphan, device.atv = device.atv, None
+                    if orphan is not None:
+                        try:
+                            orphan.close()
+                        except Exception:
+                            pass
+                    await self.close_session(device)
+                    device.config = None
+                    if (
+                        attempt == 1
+                        and MRP_TUNNEL == "auto"
+                        and not device.tunnel_disabled
+                        and is_tunnel_failure(exc)
+                    ):
+                        device.tunnel_disabled = True
+                        trace(f"[{device.id}] {describe(exc, device)}; retrying without it")
+                        continue
+                    if is_credential_problem(exc):
+                        self.credentials_rejected(device, None)
+                    device.error = describe(exc, device)
+                    trace(f"[{device.id}] connect failed: {device.error}")
+                    break
         await self.publish(device)
 
     async def _open(self, device: Device) -> None:
         config = device.config
         if config is None:
             config = await self.scan(device)
+        await self.apply_tunnel_setting(config, device)
         device.remote_paired, device.media_paired = self.pairing_status(config)
         device.paired = device.remote_paired and device.media_paired
         if device.pairing_state not in ("starting", "pin"):
@@ -296,6 +365,34 @@ class Bridge:
         except Exception:
             pass
         atv.push_updater.start()
+        if device.tunnel_disabled:
+            # Not an error exactly, but the panel should not silently show an
+            # empty now-playing card as though nothing were playing.
+            device.error = (
+                f"{device.name} would not start its remote control channel. The buttons "
+                "work; now playing is unavailable. Pair media access again to restore it."
+            )
+
+    async def apply_tunnel_setting(self, config: Any, device: Device) -> None:
+        """Choose whether pyatv sets up the MRP-over-AirPlay tunnel.
+
+        get_settings() hands back the live object out of storage, so setting
+        this is what pyatv reads on the next connect. It is deliberately not
+        saved: a device that starts answering again should get its now playing
+        back without anyone having to undo anything.
+        """
+        if MrpTunnel is None:
+            return
+        # Only "auto" leaves the choice to us; asking for the tunnel outright,
+        # or for none, is an instruction and the fallback does not override it.
+        mode = "disable" if device.tunnel_disabled else MRP_TUNNEL
+        if mode not in ("auto", "disable", "force"):
+            mode = "auto"
+        try:
+            settings = await self.storage.get_settings(config)
+            settings.protocols.airplay.mrp_tunnel = MrpTunnel(mode)
+        except Exception as exc:
+            trace(f"[{device.id}] could not set the MRP tunnel mode: {describe(exc, device)}")
 
     async def close_session(self, device: Device) -> None:
         session, device.session = device.session, None
@@ -846,9 +943,134 @@ async def probe(host: str, storage_file: str, identifier: str | None, debug: boo
     return 1 if failures else 0
 
 
+PAIRABLE = {
+    "companion": (Protocol.Companion, "the remote buttons"),
+    "airplay": (Protocol.AirPlay, "now playing and media access"),
+    "raop": (Protocol.RAOP, "audio streaming"),
+    "mrp": (Protocol.MRP, "now playing (older tvOS)"),
+}
+
+
+async def ask(prompt: str) -> str:
+    """Read a line without blocking the loop. Needs `docker exec -it`."""
+    return (await asyncio.to_thread(input, prompt)).strip()
+
+
+async def pair_cli(
+    host: str, storage_file: str, identifier: str | None, choice: str | None, debug: bool
+) -> int:
+    """Pair a protocol from a terminal, PIN and all.
+
+    The panel can do this too, but only for a protocol it believes is unpaired
+    — and credentials that the Apple TV has quietly stopped honouring still
+    look paired from here, so the panel offers no way to replace them. This
+    does: it clears the stored credentials for the protocol first, which is
+    what makes the device show a PIN again.
+
+        docker exec -it navigator-panel /opt/pyatv/bin/python \\
+          /app/dist/apple-tv-bridge.py --pair 192.168.1.50 /config/apple-tv.json airplay
+    """
+    if debug:
+        logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
+
+    loop = asyncio.get_running_loop()
+    storage = FileStorage(storage_file, loop)
+    Path(storage_file).parent.mkdir(parents=True, exist_ok=True)
+    await storage.load()
+
+    def say(message: str = "") -> None:
+        print(message, flush=True)
+
+    say(f"Pairing with {host} (credentials in {storage_file})\n")
+    found = await pyatv.scan(
+        loop, timeout=SCAN_TIMEOUT, hosts=[host], identifier=identifier, storage=storage
+    )
+    if not found:
+        say(f"Nothing answered at {host}.")
+        return 1
+    config = found[0]
+    say(f"Found {config.name} ({getattr(config, 'identifier', '?')})\n")
+
+    available = [
+        (key, protocol, purpose)
+        for key, (protocol, purpose) in PAIRABLE.items()
+        if config.get_service(protocol) is not None
+    ]
+    if choice is None:
+        say("Which one?")
+        for index, (key, protocol, purpose) in enumerate(available, 1):
+            service = config.get_service(protocol)
+            held = "credentials stored" if service.credentials else "not paired"
+            say(f"  {index}. {key:<10} {purpose} ({held})")
+        answer = await ask("\nNumber or name: ")
+        if answer.isdigit() and 1 <= int(answer) <= len(available):
+            choice = available[int(answer) - 1][0]
+        else:
+            choice = answer.lower()
+
+    if choice not in PAIRABLE:
+        say(f"'{choice}' is not one of: {', '.join(PAIRABLE)}")
+        return 1
+    protocol, purpose = PAIRABLE[choice]
+    service = config.get_service(protocol)
+    if service is None:
+        say(f"This Apple TV does not advertise {protocol.name}.")
+        return 1
+
+    # The credentials have to go before the device will show a PIN again: with
+    # them in place pyatv verifies instead of pairing, which is the state this
+    # whole exercise is trying to get out of.
+    if service.credentials:
+        say(f"{protocol.name} already has stored credentials for {purpose}.")
+        if (await ask("Replace them and pair again? [y/N] ")).lower() not in ("y", "yes"):
+            return 1
+        settings = await storage.get_settings(config)
+        setattr(getattr(settings.protocols, choice), "credentials", None)
+        service.credentials = None
+        await storage.save()
+        say("Cleared. The Apple TV will treat this as a new pairing.\n")
+
+    pairing = await pyatv.pair(
+        config, protocol, loop, storage=storage, name="Navigator Remote"
+    )
+    try:
+        await pairing.begin()
+        if pairing.device_provides_pin:
+            say("A four digit code should now be on the TV.")
+            say("If nothing appears, check you are looking at the right Apple TV,")
+            say("and that it is awake and not on a screensaver.")
+            pin = await ask("\nCode shown on the TV: ")
+            pairing.pin(pin)
+        else:
+            say('This protocol wants a PIN from us: enter 1234 on the Apple TV.')
+            pairing.pin(1234)
+            await ask("Press Enter once the Apple TV has accepted it: ")
+        await pairing.finish()
+        if not pairing.has_paired:
+            say("\nThe Apple TV did not accept that. Nothing was saved.")
+            return 1
+        await storage.save()
+        say(f"\nPaired. {protocol.name} credentials for {purpose} are stored.")
+        say("Run --probe to confirm, then restart the container so the bridge picks them up.")
+        return 0
+    except Exception as exc:
+        say(f"\nPairing failed: {describe(exc)}")
+        return 1
+    finally:
+        await pairing.close()
+
+
 async def main() -> None:
     args = [a for a in sys.argv[1:] if a != "--debug"]
     debug = "--debug" in sys.argv
+    if len(args) > 1 and args[0] == "--pair":
+        sys.exit(await pair_cli(
+            args[1],
+            args[2] if len(args) > 2 else "/config/apple-tv.json",
+            args[4] if len(args) > 4 else None,
+            args[3] if len(args) > 3 else None,
+            debug,
+        ))
     if len(args) > 1 and args[0] == "--probe":
         sys.exit(await probe(
             args[1],

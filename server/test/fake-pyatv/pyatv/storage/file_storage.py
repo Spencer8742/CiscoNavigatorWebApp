@@ -3,12 +3,20 @@
 import json
 from pathlib import Path
 
+from pyatv.settings import Settings
+
 
 class FileStorage:
     def __init__(self, filename, loop):
         self.filename = filename
         self.loop = loop
         self.saves = 0
+        # A reference held by the storage, exactly as pyatv does it, so a
+        # caller mutating what it gets back changes what the next connect sees.
+        self._settings = Settings()
+
+    async def get_settings(self, config):
+        return self._settings
 
     async def load(self):
         path = Path(self.filename)

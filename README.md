@@ -235,6 +235,31 @@ Button presses are not charged for that. They use a shorter budget and report
 "still connecting" rather than waiting out a reconnect the poller is already
 making in the background.
 
+**Pairing from a terminal.** The panel only offers to pair a protocol it
+believes is unpaired, and credentials the Apple TV has quietly stopped
+honouring still look paired from here — so a set can end up with no way back
+through the panel, and no PIN on screen when you try. This clears the stored
+credentials for one protocol and pairs it again, which is what makes the Apple
+TV show a code:
+
+```sh
+docker exec -it navigator-panel /opt/pyatv/bin/python \
+  /app/dist/apple-tv-bridge.py --pair 192.168.1.50 /config/apple-tv.json airplay
+```
+
+`-it` matters: it prompts for the code. Name `companion` (the remote buttons),
+`airplay` (now playing), `raop` or `mrp`, or leave it off to be asked. Restart
+the container afterwards so the bridge picks the new credentials up.
+
+**When only now playing is broken.** AirPlay carries a "remote control
+channel" that tunnels MRP, and that is what now-playing metadata rides on.
+When it will not start, pyatv fails the whole connection — Companion with it —
+so a set that would take every button press looks completely dead. The bridge
+notices that particular failure and reconnects without the tunnel: the buttons
+work, the now-playing card says why it is empty, and pairing media access
+again restores it. `APPLE_TV_MRP_TUNNEL=disable` skips the tunnel from the
+start; `force` insists on it and turns the fallback off.
+
 Two properties are worth stating explicitly:
 
 - **The panel names a button, never a request.** It sends `deskpro.hangup`;
