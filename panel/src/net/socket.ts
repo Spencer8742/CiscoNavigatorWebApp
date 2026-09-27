@@ -535,13 +535,15 @@ export function setPref(
   value: PanelPrefs['screensaverMode'],
 ): boolean;
 export function setPref(key: 'visiblePages', value: PanelPrefs['visiblePages']): boolean;
+export function setPref(key: 'lastPage', value: PanelPrefs['lastPage']): boolean;
 export function setPref(key: BooleanPref, value: boolean): boolean;
 export function setPref(
-  key: 'homeSide' | 'screensaverMode' | 'visiblePages' | BooleanPref,
+  key: 'homeSide' | 'screensaverMode' | 'visiblePages' | 'lastPage' | BooleanPref,
   value:
     | PanelPrefs['homeSide']
     | PanelPrefs['screensaverMode']
     | PanelPrefs['visiblePages']
+    | PanelPrefs['lastPage']
     | boolean,
 ): boolean {
   prefs.value = { ...prefs.value, [key]: value };
@@ -558,6 +560,9 @@ export function setPref(
   }
   if (key === 'visiblePages') {
     return send({ t: 'pref', id: nextId(), key, value: value as PanelPrefs['visiblePages'] });
+  }
+  if (key === 'lastPage') {
+    return send({ t: 'pref', id: nextId(), key, value: value as PanelPrefs['lastPage'] });
   }
   return send({ t: 'pref', id: nextId(), key, value: value as boolean });
 }

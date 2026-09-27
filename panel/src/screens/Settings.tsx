@@ -173,6 +173,15 @@ export function Settings() {
           hides the bar entirely and gives its space back to the screen.
         </p>
 
+        <div class="settings-page-grid" role="group" aria-label="Page memory">
+          <OverlayToggle pref="rememberPage" what="last page" label="Remember page" />
+        </div>
+        <p class="settings-note">
+          Come back to the page this panel was last left on after a restart, instead
+          of starting on Home. Each panel remembers its own. Settings is never
+          remembered.
+        </p>
+
         <div class="section-head">
           <h2 class="section-title">Finish this panel</h2>
         </div>
