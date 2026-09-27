@@ -8,7 +8,6 @@ import { pressControl } from '~/net/socket.ts';
 import {
   dismissedJoin,
   health,
-  kiosk,
   markActivity,
   openDeviceAlerts,
   openDeviceSource,
@@ -252,21 +251,12 @@ function Head({ item }: { item: ControlDevice }) {
           </div>
         ) : null}
 
-        {/* Full-screen lock, beside power because both are about the panel
-            as a whole rather than about the call. Always rendered — it is
-            the ONLY way back out once it is on, so it must never depend on
-            anything the device happens to be reporting. */}
-        <Pressable
-          class="devtile-lock"
-          onPress={() => {
-            kiosk.value = !kiosk.value;
-            markActivity();
-          }}
-          ariaLabel={kiosk.value ? 'Leave full screen' : 'Full screen, locked to this page'}
-          ariaPressed={kiosk.value}
-        >
-          <Icon name={kiosk.value ? 'collapse' : 'expand'} size="1.375rem" weight={1.9} />
-        </Pressable>
+        {/* The full-screen lock used to live here, beside power. It has moved
+            to the Controls screen head (screens/Controls.tsx): it is about
+            the panel rather than about this device, and while it was in the
+            tile only a page with a `device:` item had one — so a page of
+            lights or a room page could not be locked at all, and a panel
+            locked from one page had no way back from another. */}
 
         {powerTarget ? (
           <Pressable

@@ -139,6 +139,23 @@ export class BridgeHarness {
     }
   }
 
+  /** Wait until an artwork message `predicate` likes has been published. */
+  async untilArtwork(predicate, timeoutMs = 10_000) {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const artwork = this.artworks.find(predicate);
+      if (artwork) return artwork;
+      if (Date.now() > deadline) {
+        throw new Error(
+          `no matching artwork within ${timeoutMs}ms; saw ${JSON.stringify(
+            this.artworks.map((a) => a.version),
+          )}`,
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+
   configure(devices = [{ id: 'living-room', name: 'Living Room', host: '10.0.0.10', shortcuts: [] }]) {
     return this.send({ t: 'configure', devices });
   }
