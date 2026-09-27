@@ -1,0 +1,228 @@
+import { test, describe, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
+import { fileURLToPath, URL } from 'node:url';
+
+/**
+ * The Plex tab: browsing a Plex Media Server, and sending what was picked to
+ * a player — a configured Apple TV (opened into Plex first) or any other Plex
+ * player the server or plex.tv knows about.
+ *
+ * Three fakes stand in for the three parties: the server, plex.tv and a
+ * player listening on its Companion port. The Apple TV bridge is a stub that
+ * records what it was asked to do.
+ */
+
+const { PlexClient, MediaArt } = await import(fileURLToPath(new URL('../dist/testkit.js', import.meta.url)));
+
+const TOKEN = 'plex-secret-token';
+const MACHINE = 'server-machine-id';
+
+function listen(handler) {
+  return new Promise((resolve) => {
+    const server = createServer(handler);
+    server.listen(0, '127.0.0.1', () => resolve(server));
+  });
+}
+
+function json(res, body, status = 200) {
+  res.writeHead(status, { 'content-type': 'application/json' });
+  res.end(JSON.stringify(body));
+}
+
+let pms;
+let plexTv;
+let player;
+const seen = { queues: [], commands: [], relayed: [] };
+let pmsUrl;
+let playerPort;
+/** What plex.tv lists. Changed per test. */
+let resources = [];
+
+before(async () => {
+  player = await listen((req, res) => {
+    const url = new URL(req.url, 'http://x');
+    if (url.pathname === '/resources') {
+      res.writeHead(200, { 'content-type': 'text/xml' });
+      res.end('<MediaContainer><Player title="Living Room" machineIdentifier="atv-plex-id" product="Plex for Apple TV" /></MediaContainer>');
+      return;
+    }
+    if (url.pathname === '/player/playback/playMedia') {
+      seen.commands.push({ query: Object.fromEntries(url.searchParams), target: req.headers['x-plex-target-client-identifier'] });
+      res.writeHead(200);
+      res.end();
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  playerPort = player.address().port;
+
+  pms = await listen((req, res) => {
+    const url = new URL(req.url, 'http://x');
+    if (req.headers['x-plex-token'] !== TOKEN) return json(res, {}, 401);
+    switch (url.pathname) {
+      case '/':
+        return json(res, { MediaContainer: { machineIdentifier: MACHINE, friendlyName: 'Basement' } });
+      case '/library/sections':
+        return json(res, { MediaContainer: { Directory: [
+          { key: '1', title: 'Films', type: 'movie' },
+          { key: '2', title: 'TV', type: 'show' },
+          { key: '3', title: 'Holiday Photos', type: 'photo' },
+        ] } });
+      case '/library/onDeck':
+        return json(res, { MediaContainer: { Metadata: [
+          { ratingKey: '50', type: 'episode', title: 'Pilot', grandparentTitle: 'Some Show', parentIndex: 1, index: 1,
+            duration: 1_800_000, viewOffset: 600_000, grandparentThumb: '/library/metadata/40/thumb/1' },
+        ] } });
+      case '/library/recentlyAdded':
+        return json(res, { MediaContainer: { Metadata: [] } });
+      case '/library/sections/1/all':
+        assert.equal(url.searchParams.get('X-Plex-Container-Start'), '0');
+        return json(res, { MediaContainer: { totalSize: 61, Metadata: [
+          { ratingKey: '10', type: 'movie', title: 'A Film', year: 1999, duration: 5_400_000, thumb: '/library/metadata/10/thumb/9', viewCount: 1 },
+        ] } });
+      case '/library/metadata/10':
+        return json(res, { MediaContainer: { Metadata: [{ ratingKey: '10', type: 'movie', title: 'A Film', viewOffset: 120_000 }] } });
+      case '/library/metadata/50':
+        return json(res, { MediaContainer: { Metadata: [{ ratingKey: '50', type: 'episode', title: 'Pilot', viewOffset: 600_000 }] } });
+      case '/playQueues':
+        assert.equal(req.method, 'POST');
+        seen.queues.push(Object.fromEntries(url.searchParams));
+        return json(res, { MediaContainer: {
+          playQueueID: 77, playQueueSelectedItemID: 2,
+          Metadata: [{ ratingKey: '49', playQueueItemID: 1 }, { ratingKey: url.searchParams.get('uri').split('/').pop(), playQueueItemID: 2 }],
+        } });
+      case '/clients':
+        return json(res, { MediaContainer: { Server: [
+          { name: 'Bedroom Shield', address: '127.0.0.1', port: playerPort, machineIdentifier: 'shield-id', product: 'Plex for Android (TV)' },
+        ] } });
+      case '/player/playback/playMedia':
+        seen.relayed.push(Object.fromEntries(url.searchParams));
+        res.writeHead(200);
+        return res.end();
+      default:
+        return json(res, {}, 404);
+    }
+  });
+  pmsUrl = `http://127.0.0.1:${pms.address().port}`;
+
+  plexTv = await listen((req, res) => {
+    if (req.headers['x-plex-token'] !== TOKEN) return json(res, {}, 401);
+    json(res, resources);
+  });
+});
+
+after(() => {
+  pms.close();
+  plexTv.close();
+  player.close();
+});
+
+function client({ appleTvs = [], power = 'on', calls = [] } = {}) {
+  return new PlexClient({ url: pmsUrl, token: TOKEN, enabled: true }, {
+    art: new MediaArt(),
+    appleTvs: () => appleTvs,
+    appleTvStates: () => appleTvs.map((tv) => ({ id: tv.id, power })),
+    appleTvCommand: async (device, op) => { calls.push(['command', device, op]); return null; },
+    openApp: async (device, bundle) => { calls.push(['open', device, bundle]); return null; },
+    plexTv: `http://127.0.0.1:${plexTv.address().port}`,
+    playerPort,
+    readyMs: 3_000,
+  });
+}
+
+describe('browsing', () => {
+  test('the front page has Continue Watching and the video libraries, and no token', async () => {
+    const result = await client().handle({ kind: 'home' });
+    assert.equal(result.kind, 'home');
+    assert.equal(result.server, 'Basement');
+    assert.deepEqual(result.sections.map((s) => s.title), ['Continue Watching', 'Libraries']);
+    const deck = result.sections[0].items[0];
+    assert.equal(deck.kind, 'episode');
+    assert.equal(deck.subtitle, 'Some Show · S1 E1');
+    assert.equal(deck.resume, 600);
+    assert.match(deck.art, /^\/img\/art\?k=[0-9a-f]{16}$/);
+    // Photos cannot be played on a TV from here, so the library is not offered.
+    assert.deepEqual(result.sections[1].items.map((i) => i.title), ['Films', 'TV']);
+    assert.ok(!JSON.stringify(result).includes(TOKEN), 'the Plex token must never reach the panel');
+  });
+
+  test('a library pages, and says there is more', async () => {
+    const result = await client().handle({ kind: 'open', id: '1', library: true });
+    assert.equal(result.kind, 'list');
+    assert.equal(result.more, true);
+    assert.deepEqual(result.items[0], {
+      id: '10', kind: 'movie', title: 'A Film', subtitle: '1999 · 90 min', art: result.items[0].art,
+      browsable: false, playable: true, duration: 5400, resume: null, watched: true,
+    });
+  });
+
+  test('an id the panel made up is refused before anything is fetched', async () => {
+    await assert.rejects(client().handle({ kind: 'open', id: '../../clients' }), /Not a Plex item/);
+  });
+});
+
+describe('playing', () => {
+  test('targets list the Apple TVs first, and do not list one twice', async () => {
+    resources = [
+      { name: 'Living Room', product: 'Plex for Apple TV', clientIdentifier: 'atv-plex-id', provides: 'player,pubsub-player',
+        presence: true, connections: [{ address: '10.9.9.9', port: 32500, local: true }] },
+      { name: 'Phone', product: 'Plex for iOS', clientIdentifier: 'phone-id', provides: 'client,player', presence: false,
+        connections: [{ address: '10.9.9.8', port: 32500, local: true }] },
+    ];
+    const result = await client({ appleTvs: [{ id: 'living', name: 'Living Room', host: '10.9.9.9', shortcuts: [] }] })
+      .handle({ kind: 'targets' });
+    assert.deepEqual(result.targets.map((t) => t.id), ['atv:living', 'plex:shield-id']);
+  });
+
+  test('a Plex player gets a play queue and a playMedia that resumes', async () => {
+    seen.queues.length = 0;
+    seen.commands.length = 0;
+    await client().handle({ kind: 'play', id: '10', target: 'plex:shield-id', resume: true });
+    assert.equal(seen.queues[0].uri, `server://${MACHINE}/com.plexapp.plugins.library/library/metadata/10`);
+    assert.equal(seen.queues[0].type, 'video');
+    const command = seen.commands[0];
+    assert.equal(command.target, 'shield-id');
+    assert.equal(command.query.key, '/library/metadata/10');
+    assert.equal(command.query.offset, '120000');
+    assert.equal(command.query.machineIdentifier, MACHINE);
+    assert.equal(command.query.containerKey, '/playQueues/77?window=100&own=1');
+    assert.equal(command.query.token, TOKEN);
+    assert.equal(command.query.address, '127.0.0.1');
+  });
+
+  test('start over sends offset 0', async () => {
+    seen.commands.length = 0;
+    await client().handle({ kind: 'play', id: '10', target: 'plex:shield-id', resume: false });
+    assert.equal(seen.commands[0].query.offset, '0');
+  });
+
+  test('an Apple TV is woken, opened into Plex, found on its own address, then told to play', async () => {
+    seen.commands.length = 0;
+    const calls = [];
+    const tv = { id: 'living', name: 'Living Room', host: '127.0.0.1', shortcuts: [] };
+    const result = await client({ appleTvs: [tv], power: 'off', calls })
+      .handle({ kind: 'play', id: '50', target: 'atv:living', resume: true });
+    assert.deepEqual(result, { kind: 'played', target: 'atv:living' });
+    assert.deepEqual(calls, [['command', 'living', 'power_on'], ['open', 'living', 'com.plexapp.plex']]);
+    assert.equal(seen.commands[0].target, 'atv-plex-id');
+    assert.equal(seen.commands[0].query.key, '/library/metadata/50');
+  });
+
+  test('an Apple TV whose Plex never answers says what to check', async () => {
+    const tv = { id: 'den', name: 'Den', host: '10.255.255.1', shortcuts: [] };
+    resources = [];
+    await assert.rejects(
+      client({ appleTvs: [tv] }).handle({ kind: 'play', id: '10', target: 'atv:den', resume: true }),
+      /did not show up as a Plex player/,
+    );
+  });
+
+  test('a player that is not listed is refused', async () => {
+    await assert.rejects(
+      client().handle({ kind: 'play', id: '10', target: 'plex:nobody', resume: true }),
+      /no longer available/,
+    );
+  });
+});

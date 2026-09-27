@@ -188,7 +188,9 @@ each row:
 | Variable | PUID | `PUID` | `99` |
 | Variable | PGID | `PGID` | `100` |
 
-`IMMICH_URL` and `IMMICH_API_KEY` are optional, as is `COMPANION_URL` — set
+`IMMICH_URL` and `IMMICH_API_KEY` are optional, as are `PLEX_URL` and
+`PLEX_TOKEN` (see [Plex](#plex--browse-on-the-panel-play-on-an-apple-tv)),
+and `COMPANION_URL` — set
 that one to your Bitfocus Companion (`http://192.168.1.x:8000`) if you want
 the `companion:` buttons on the Controls screen. `SONOS_HOST` is optional too;
 see [Sonos](#sonos) below. Key lights are configured in `dashboard.yaml`, not
@@ -374,6 +376,33 @@ Sonos does not expose provider credentials or arbitrary provider catalogs to
 third-party local controllers. Search covers Sonos Favourites and an indexed
 local music library. Streaming providers remain available through content
 saved in Sonos.
+
+## Plex — browse on the panel, play on an Apple TV
+
+Set `PLEX_URL` and `PLEX_TOKEN` and the Apple TV screen gets a **Remote /
+Plex** switch in its header. The Plex view shows Continue Watching, Recently
+Added and your movie, TV and music libraries; tap something, then pick where
+it should play. A film with a saved position offers *Resume* or *Start over*.
+
+- `PLEX_URL` must be an address the **players** can reach, such as
+  `http://192.168.1.20:32400`. Playback works the way casting between Plex
+  apps does: the backend creates a play queue on your server and tells the
+  player to fetch it, with the token. A Docker service name or `localhost`
+  will browse fine and then fail to play.
+- **Apple TVs** in `controls.appleTvs` are always listed. Choosing one wakes
+  it, opens Plex on it (this uses the same Companion connection as the app
+  shortcuts, so the Apple TV must be paired), waits for the app to announce
+  itself as a player, and then starts playback. Allow a few seconds.
+- In Plex on the Apple TV, leave on the setting that lets other Plex apps
+  cast to and control it, and sign in to the same Plex account the token
+  belongs to. If Plex opens but nothing plays, that setting is the first
+  thing to check — the panel says so too.
+- **Other Plex players** that are running on the LAN (a Shield, a smart TV
+  app, Plex HTPC) are listed below the Apple TVs, as found by your server
+  and by plex.tv.
+
+The token never reaches the panel; artwork is proxied like the music
+browser's covers.
 
 ---
 

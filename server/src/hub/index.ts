@@ -13,6 +13,8 @@ import type {
   AssistResult,
   BrowseRequest,
   BrowseResult,
+  PlexRequest,
+  PlexResult,
   KeyLightState,
   TvState,
   Player,
@@ -62,6 +64,8 @@ export interface HubDeps {
   onPhotos?: (count: number) => Promise<ServerMessage | null>;
   /** Answer a music browse request, or throw with a user-visible reason. */
   onBrowse?: (req: BrowseRequest) => Promise<BrowseResult>;
+  /** Answer a Plex request, or throw with a user-visible reason. */
+  onPlex?: (req: PlexRequest) => Promise<PlexResult>;
   /** Current speakers and queues, sent in `hello`. */
   getPlayers: () => { players: Player[]; queues: PlayerQueue[] };
   /**
@@ -444,6 +448,21 @@ export class Hub {
           // a spinner and has no other way to learn the request died.
           const message = err instanceof Error ? err.message : 'Could not load';
           this.#send(panel, { t: 'error', ref: msg.id, code: 'browse_failed', message });
+        }
+        break;
+      }
+
+      case 'plex': {
+        if (!this.#deps.onPlex) {
+          this.#send(panel, { t: 'error', ref: msg.id, code: 'plex_failed', message: 'Plex is not available' });
+          return;
+        }
+        try {
+          const result = await this.#deps.onPlex(msg.req);
+          this.#send(panel, { t: 'plex', ref: msg.id, result });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'Plex request failed';
+          this.#send(panel, { t: 'error', ref: msg.id, code: 'plex_failed', message });
         }
         break;
       }

@@ -41,6 +41,7 @@ Room Navigator ──── one origin, HTTPS ────▶ navigator-panel (N
   ~17 KB gz                                   ├──▶ Home Assistant  (WebSocket)
   no credentials                              ├──▶ Sonos           (SOAP + events)
                                               ├──▶ Immich          (REST)
+                                              ├──▶ Plex            (REST + Companion)
                                               ├──▶ Bitfocus Companion
                                               └──▶ Elgato Key Lights
 ```

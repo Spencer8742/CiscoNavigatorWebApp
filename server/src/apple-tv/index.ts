@@ -105,6 +105,19 @@ export class AppleTvBridge {
     }, DEVICE_TIMEOUT);
   }
 
+  /**
+   * Open an app the BACKEND chose, not the panel.
+   *
+   * `launchApp` above only opens what dashboard.yaml lists as a shortcut,
+   * because its bundle id arrives from a panel. This one is for features that
+   * need a particular app — Plex, to play something in it — and is never
+   * reachable with an id a panel supplied.
+   */
+  openApp(device: string, bundleId: string): Promise<string | null> {
+    if (!this.#devices.some((item) => item.id === device)) return Promise.resolve('Apple TV is not configured');
+    return this.#request({ t: 'launch-app', device, app: bundleId, name: bundleId }, DEVICE_TIMEOUT);
+  }
+
   pair(device: string, op: 'begin' | 'pin' | 'cancel', pin?: string): Promise<string | null> {
     if (!this.#devices.some((item) => item.id === device)) return Promise.resolve('Apple TV is not configured');
     return this.#request({ t: `pair-${op}`, device, ...(pin ? { pin } : {}) }, SETUP_TIMEOUT);

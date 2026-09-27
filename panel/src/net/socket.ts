@@ -19,6 +19,8 @@ import {
   type MusicCommand,
   type PanelPrefs,
   type PlayerLayout,
+  type PlexRequest,
+  type PlexResult,
   type PhotoRef,
   type ServerMessage,
 } from '@shared/protocol.ts';
@@ -77,6 +79,7 @@ const browseWaiters = new Map<number, Waiter<BrowseResult>>();
  */
 const linkWaiters = new Map<number, Waiter<ServiceLink>>();
 const assistWaiters = new Map<number, Waiter<AssistResult>>();
+const plexWaiters = new Map<number, Waiter<PlexResult>>();
 
 export function connect(): void {
   closed = false;
@@ -270,6 +273,16 @@ function handle(msg: ServerMessage): void {
       break;
     }
 
+    case 'plex': {
+      const waiter = plexWaiters.get(msg.ref);
+      if (waiter) {
+        plexWaiters.delete(msg.ref);
+        clearTimeout(waiter.timer);
+        waiter.resolve(msg.result);
+      }
+      break;
+    }
+
     case 'link': {
       const waiter = linkWaiters.get(msg.ref);
       if (waiter) {
@@ -310,6 +323,13 @@ function handle(msg: ServerMessage): void {
         msg.ref === undefined
           ? undefined
           : (browseWaiters.get(msg.ref) ?? linkWaiters.get(msg.ref));
+      const plexWaiter = msg.ref === undefined ? undefined : plexWaiters.get(msg.ref);
+      if (plexWaiter && msg.ref !== undefined) {
+        plexWaiters.delete(msg.ref);
+        clearTimeout(plexWaiter.timer);
+        plexWaiter.reject(new Error(msg.message));
+        break;
+      }
       const assistWaiter = msg.ref === undefined ? undefined : assistWaiters.get(msg.ref);
       if (assistWaiter && msg.ref !== undefined) {
         assistWaiters.delete(msg.ref);
@@ -360,7 +380,7 @@ function startHeartbeat(): void {
 }
 
 function failBrowseWaiters(): void {
-  for (const map of [browseWaiters, linkWaiters, assistWaiters]) {
+  for (const map of [browseWaiters, linkWaiters, assistWaiters, plexWaiters] as Map<number, Waiter<unknown>>[]) {
     for (const [id, waiter] of map) {
       map.delete(id);
       clearTimeout(waiter.timer);
@@ -620,6 +640,26 @@ export function browse(req: BrowseRequest): Promise<BrowseResult> {
       if (browseWaiters.delete(id)) reject(new Error('Sonos did not respond'));
     }, 30_000);
     browseWaiters.set(id, { resolve, reject, timer });
+  });
+}
+
+/**
+ * Browse Plex, or send something from it to a player.
+ *
+ * A `play` aimed at an Apple TV opens Plex on it and waits for the app to
+ * come up, so this allows longer than a browse before giving up.
+ */
+export function plex(req: PlexRequest): Promise<PlexResult> {
+  return new Promise((resolve, reject) => {
+    const id = nextId();
+    if (!send({ t: 'plex', id, req })) {
+      reject(new Error('Not connected'));
+      return;
+    }
+    const timer = setTimeout(() => {
+      if (plexWaiters.delete(id)) reject(new Error('Plex did not respond'));
+    }, req.kind === 'play' ? 75_000 : 30_000);
+    plexWaiters.set(id, { resolve, reject, timer });
   });
 }
 

@@ -3220,3 +3220,129 @@
 .shell[data-kiosk] .devtile[data-compact] .devtile-list {
   max-height: none;
 }
+
+/* ── Apple TV: Remote / Plex ──────────────────────────────────────────────
+   Two views of one screen, chosen with a segmented control in the header so
+   the Apple TV switcher below keeps its place in both. */
+
+.apple-tv-views {
+  margin-left: auto;
+  align-self: center;
+  flex: 0 0 auto;
+}
+.apple-tv-views .seg-item { min-width: 6rem; }
+
+.plex {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.plex-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-height: var(--touch);
+  margin-bottom: var(--s-2);
+}
+
+.plex-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.plex-play-all {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: var(--touch-min);
+  padding: 0 var(--s-4);
+  border-radius: var(--r-full);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-dim);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.plex-body { flex: 1 1 auto; }
+
+.plex-libraries {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+  column-gap: var(--s-3);
+}
+
+/* A shelf scrolls sideways so Continue Watching never pushes the libraries
+   off the bottom of the screen. */
+.plex-shelf {
+  display: flex;
+  gap: var(--s-3);
+  overflow-x: auto;
+  padding-bottom: var(--s-3);
+  scrollbar-width: none;
+}
+.plex-shelf::-webkit-scrollbar { display: none; }
+
+.plex-card {
+  position: relative;
+  flex: 0 0 9.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+  padding: var(--s-2);
+  border-radius: var(--r-lg);
+  background: var(--surface-1);
+  border: 1px solid var(--border-subtle);
+  text-align: left;
+  color: var(--text);
+}
+.plex-card .browse-cover {
+  width: 100%;
+  height: 8.5rem;
+  margin-bottom: var(--s-1);
+}
+.plex-card-title { font-size: 0.95rem; font-weight: 580; }
+.plex-card-sub { font-size: 0.8rem; color: var(--text-faint); }
+
+/* Progress drawn with a transform, the only property this device animates
+   and redraws cheaply (docs/ROOMOS.md §2). */
+.plex-progress {
+  display: block;
+  height: 3px;
+  margin-top: -0.35rem;
+  border-radius: var(--r-full);
+  background: var(--surface-3);
+  overflow: hidden;
+}
+.plex-progress > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transform-origin: left center;
+}
+
+.plex-watched { flex: 0 0 auto; color: var(--text-faint); }
+
+.plex-resume { margin-bottom: var(--s-4); }
+.plex-resume .seg-item { flex: 1 1 0; }
+
+.plex-target {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.plex-target small {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-faint);
+}
+.play-option .plex-spinner { width: 1.3rem; height: 1.3rem; flex: 0 0 auto; }
+
+@media (max-width: 700px) {
+  .apple-tv-views .seg-item { min-width: 0; }
+}
