@@ -260,6 +260,19 @@ docker exec -it navigator-panel /opt/pyatv/bin/python \
 `airplay` (now playing), `raop` or `mrp`, or leave it off to be asked. Restart
 the container afterwards so the bridge picks the new credentials up.
 
+**When Companion stops answering entirely.** Companion drives the buttons on a
+healthy Apple TV, but it is not the only thing that can: MRP carries every
+direction, playback and volume command, and power with it. Only the screensaver
+button, app shortcuts and swipe are Companion's alone. pyatv fails a whole
+connect if any one protocol fails, so a set whose buttons MRP could still drive
+looks completely dead — the bridge drops Companion instead and keeps the rest.
+The panel says what is unavailable, and the Companion-only buttons refuse with
+a reason rather than looking broken. `APPLE_TV_COMPANION=force` keeps Companion
+even when it is what is stopping the connection; `disable` never uses it.
+
+This needs AirPlay to be working, which on a container means host networking —
+see above. Without it there is nothing to fall back to.
+
 **When the buttons stop after a tvOS update.** A Companion connect opens with
 `_systemInfo`, which tells the Apple TV who is calling. pyatv's defaults claim
 an iPhone X on iOS 14.7.1 with a device id of `FF:70:79:61:74:76` — an address

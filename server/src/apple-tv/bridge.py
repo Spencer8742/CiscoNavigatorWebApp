@@ -68,6 +68,20 @@ RECONNECT_TIMEOUT = min(seconds("APPLE_TV_RECONNECT_TIMEOUT", 10.0), CONNECT_TIM
 # connect, Companion included, and the remote goes with it.
 MRP_TUNNEL = os.environ.get("APPLE_TV_MRP_TUNNEL", "auto").strip().lower()
 
+# Companion drives the buttons on a healthy Apple TV, but it is not the only
+# thing that can: MRP carries every direction, playback and volume command too,
+# and power with it. Only the screensaver, app shortcuts and swipe are
+# Companion's alone. So when Companion will not connect, the remote does not
+# have to go with it — pyatv fails the whole connect over one bad protocol, and
+# dropping that protocol is what keeps the rest.
+# "auto" lets the bridge drop it, "disable" never uses it, "force" keeps it
+# even when it is what is stopping the connection.
+COMPANION = os.environ.get("APPLE_TV_COMPANION", "auto").strip().lower()
+
+# What Companion alone can do, so a button it owns fails saying that rather
+# than looking like a dead remote.
+COMPANION_ONLY = {"screensaver"}
+
 # Who the bridge says it is when it introduces itself over Companion. pyatv's
 # defaults claim an iPhone X on iOS 14.7.1 and a device id of FF:70:79:61:74:76
 # — an address whose first octet has the multicast bit set, so not a valid
@@ -265,6 +279,8 @@ class Device:
     # Set once AirPlay's remote control channel has refused to start, so the
     # next connect skips it instead of failing over it again.
     tunnel_disabled: bool = False
+    # Set once Companion has refused to connect. MRP then drives the buttons.
+    companion_disabled: bool = False
     # The aiohttp session behind this connection. We create it instead of
     # letting pyatv create its own — see _open().
     session: Any = None
@@ -351,13 +367,17 @@ class Bridge:
             raise RuntimeError(f"No Apple TV answered at {device.host}")
         return found[0]
 
-    async def connect(self, device: Device, timeout: float = CONNECT_TIMEOUT) -> None:
+    async def connect(
+        self, device: Device, timeout: float = CONNECT_TIMEOUT, degrade: bool = True
+    ) -> None:
         """Open a connection, giving the device `timeout` seconds to answer.
 
-        The poller connects patiently; the command path passes the short
-        budget. If a connect is already running, a second caller leaves it
-        alone rather than queueing behind it — a button press should say so
-        immediately instead of waiting out somebody else's deadline.
+        The poller connects patiently and is the one allowed to work down the
+        ladder of protocols; a button press passes the short budget and no
+        degrading, so it never sits through three rounds. If a connect is
+        already running, a second caller leaves it alone rather than queueing
+        behind it — a press should say so immediately instead of waiting out
+        somebody else's deadline.
         """
         if device.lock.locked():
             return
@@ -366,11 +386,10 @@ class Bridge:
         async with device.lock:
             if device.atv is not None or device.pairing is not None:
                 return
-            # Two attempts at most, and only for the one failure worth a second
-            # try: AirPlay's remote control channel refusing to start takes the
-            # whole connect down with it, Companion included, even though every
-            # button would work without it.
-            for attempt in (1, 2):
+            # pyatv fails a connect if any one protocol fails, so a single sick
+            # protocol takes the working ones with it. Each round drops the one
+            # that just failed and tries again with what is left.
+            for attempt in (1, 2, 3):
                 try:
                     await asyncio.wait_for(self._open(device), timeout)
                     break
@@ -385,9 +404,12 @@ class Bridge:
                         except Exception:
                             pass
                     await self.close_session(device)
-                    device.config = None
+                    # The scan result stays until we give up: the next rung of
+                    # the ladder only turns a protocol off, so rescanning would
+                    # cost five seconds to learn nothing — and can_drop_companion
+                    # needs the services it lists to decide at all.
                     if (
-                        attempt == 1
+                        degrade
                         and MRP_TUNNEL == "auto"
                         and not device.tunnel_disabled
                         and is_tunnel_failure(exc)
@@ -395,6 +417,19 @@ class Bridge:
                         device.tunnel_disabled = True
                         trace(f"[{device.id}] {describe(exc, device)}; retrying without it")
                         continue
+                    if (
+                        degrade
+                        and COMPANION == "auto"
+                        and not device.companion_disabled
+                        and self.can_drop_companion(device)
+                    ):
+                        # Whatever went wrong, Companion is the protocol most
+                        # likely to be behind it and the one the remote can do
+                        # without. MRP still carries the buttons.
+                        device.companion_disabled = True
+                        trace(f"[{device.id}] {describe(exc, device)}; retrying without Companion")
+                        continue
+                    device.config = None
                     if is_credential_problem(exc):
                         self.credentials_rejected(device, None)
                     device.error = describe(exc, device)
@@ -409,6 +444,7 @@ class Bridge:
         config = device.config
         if config is None:
             config = await self.scan(device)
+        device.config = config
         await self.apply_tunnel_setting(config, device)
         device.remote_paired, device.media_paired = self.pairing_status(config)
         device.paired = device.remote_paired and device.media_paired
@@ -435,14 +471,32 @@ class Bridge:
         except Exception:
             pass
         atv.push_updater.start()
-        if device.tunnel_disabled:
-            # Not an error exactly, but the panel should not silently show an
-            # empty now-playing card as though nothing were playing.
+        # Not errors exactly, but the panel should not silently show a dead
+        # shortcut or an empty now-playing card as though nothing were playing.
+        if device.companion_disabled:
+            device.error = (
+                f"{device.name} would not answer Companion, so the buttons are going "
+                "over AirPlay instead. App shortcuts, swipe and the screensaver button "
+                "are unavailable until it answers again."
+            )
+        elif device.tunnel_disabled:
             routing = off_subnet(device.host)
             device.error = (
                 f"{device.name} would not start its remote control channel. The buttons "
                 "work; now playing is unavailable. "
             ) + (routing or "Pair media access again to restore it.")
+
+    def can_drop_companion(self, device: Device) -> bool:
+        """Whether anything would be left to drive the buttons without it."""
+        config = device.config
+        if config is None:
+            return False
+        if config.get_service(Protocol.Companion) is None:
+            return False
+        return any(
+            config.get_service(protocol) is not None
+            for protocol in (Protocol.MRP, Protocol.AirPlay)
+        )
 
     async def apply_tunnel_setting(self, config: Any, device: Device) -> None:
         """Choose whether pyatv sets up the MRP-over-AirPlay tunnel, and who we are.
@@ -459,6 +513,11 @@ class Bridge:
                     setattr(info, field, value)
             except Exception as exc:
                 trace(f"[{device.id}] could not set the client identity: {describe(exc, device)}")
+        companion = config.get_service(Protocol.Companion)
+        if companion is not None:
+            # pyatv skips a service whose `enabled` is False, which is how a
+            # protocol gets left out of a connect.
+            companion.enabled = not (device.companion_disabled or COMPANION == "disable")
         if MrpTunnel is None:
             return
         # Only "auto" leaves the choice to us; asking for the tunnel outright,
@@ -547,7 +606,7 @@ class Bridge:
         genuinely broken device into a long wait.
         """
         if device.atv is None:
-            await self.connect(device, RECONNECT_TIMEOUT)
+            await self.connect(device, RECONNECT_TIMEOUT, degrade=False)
         atv = device.atv
         if atv is None:
             raise RuntimeError(self.unavailable(device))
@@ -559,7 +618,7 @@ class Bridge:
             trace(f"[{device.id}] retrying after: {describe(exc, device)}")
             credentials = is_credential_problem(exc)
             await self.drop(device, atv, exc)
-            await self.connect(device, RECONNECT_TIMEOUT)
+            await self.connect(device, RECONNECT_TIMEOUT, degrade=False)
             retry = device.atv
             if retry is None:
                 if credentials:
@@ -666,6 +725,11 @@ class Bridge:
             }
             if op not in allowed:
                 raise RuntimeError("Unsupported Apple TV command")
+            if op in COMPANION_ONLY and device.companion_disabled:
+                raise RuntimeError(
+                    f"{device.name} is not answering Companion, which is the only thing "
+                    f"that can do that. The other buttons still work."
+                )
             await self.perform(device, "remote", lambda atv: getattr(atv.remote_control, op)())
         await self.publish(device)
 
@@ -676,6 +740,11 @@ class Bridge:
             raise RuntimeError("Swipe coordinates are invalid")
         if not isinstance(duration, int) or not 100 <= duration <= 2000:
             raise RuntimeError("Swipe duration is invalid")
+        if device.companion_disabled:
+            raise RuntimeError(
+                f"{device.name} is not answering Companion, so swipe is unavailable. "
+                "Use the direction buttons."
+            )
         # A swipe is allowed to outlast its own duration on the wire.
         await self.perform(
             device,
@@ -685,6 +754,12 @@ class Bridge:
         )
 
     async def launch_app(self, device: Device, bundle_id: str, name: str) -> None:
+        if device.companion_disabled:
+            raise RuntimeError(
+                f"{device.name} is not answering Companion, so apps cannot be launched. "
+                "The remote buttons still work."
+            )
+
         async def run(atv: Any) -> None:
             apps = await atv.apps.app_list()
             if not any(app.identifier == bundle_id for app in apps):
@@ -979,6 +1054,17 @@ async def probe(host: str, storage_file: str, identifier: str | None, debug: boo
             print("    network_mode: host", flush=True)
             print("then recreate the container. The panel is then on the host's", flush=True)
             print("own port 8099 rather than a published one.", flush=True)
+        elif culprits == ["Companion (the remote)"]:
+            # The one degraded state worth describing rather than diagnosing:
+            # AirPlay answered, so the bridge has something to fall back to and
+            # the remote is not lost. Telling someone to re-pair here would send
+            # them undoing a pairing that works.
+            print("Companion is not answering, but AirPlay is.", flush=True)
+            print("The bridge connects without Companion, and the buttons go over", flush=True)
+            print("AirPlay instead: directions, select, menu, home, playback, volume", flush=True)
+            print("and power all work. App shortcuts, swipe and the screensaver button", flush=True)
+            print("are Companion's alone and stay unavailable until it answers again.", flush=True)
+            print("Nothing here needs re-pairing.", flush=True)
         elif culprits:
             print(f"Not answering: {', '.join(culprits)}.", flush=True)
             print("If the pairing lines above say paired, the Apple TV is holding", flush=True)
