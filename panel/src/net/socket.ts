@@ -367,6 +367,22 @@ function failBrowseWaiters(): void {
       waiter.reject(new Error('Connection lost'));
     }
   }
+
+  /*
+   * Photo requests resolve empty rather than rejecting — an unanswered batch
+   * is "nothing to show yet", not an error worth surfacing on a wall.
+   *
+   * They have to be released here even though they carry their own 10 s
+   * timeout. `fill()` in media/photos.ts holds the in-flight promise so
+   * concurrent callers share one batch, which means a request stranded by a
+   * dropped socket also strands the next refill for those ten seconds — and
+   * the slideshow, which by then has usually reconnected and could have had
+   * photos. Their own timer still fires later and finds nothing to do.
+   */
+  for (const [id, resolve] of photoWaiters) {
+    photoWaiters.delete(id);
+    resolve([]);
+  }
 }
 
 function clearTimers(): void {

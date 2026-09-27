@@ -141,6 +141,48 @@ animated `width`, `height`, `top`, `left`, `filter`, `box-shadow`, or
 `background-position`. Sliders move a child with `transform: translate3d()`,
 they do not animate `width`.
 
+**Second rule, learned the hard way: nothing animates `infinite` on a screen
+the panel rests on.**
+
+"Hardware accelerated" answers *what each frame costs*, not *how many frames
+there are*. A composited `transform` animation still produces one frame per
+vsync for as long as it runs, and the renderer cannot reach idle while it
+does. Cisco deprioritises the web engine behind the video pipeline, so a
+renderer that never idles is a renderer that is slow to answer a touch.
+
+This was not theoretical. Logs pulled from a Room Navigator on ce26.7.1.12
+(`FOC2927J5B3`, 21 h uptime) showed:
+
+| Evidence | Reading |
+|---|---|
+| `QtWebEngineProcess` CPU | **745 min over 21 h 24 m — ~58% of a core, flat** |
+| Resident memory | 157 MB, steady |
+| `webmem-watcher` | never fired, on this or any of the five previous boots |
+| PoE draw / CPU temp | flat across the day apart from the backlight dimming at 21:00 |
+
+Steady CPU with steady memory rules out a leak and points at something
+running all the time. It was two `infinite alternate` drift animations on the
+screensaver — the screen a wall panel shows for almost its entire life. They
+moved a clock 1.5 rem over 90 seconds, about a quarter of a pixel per frame:
+invisible as motion, and permanent as load.
+
+The fix is to **step the value on a state change instead of animating it**.
+The screensaver already had a natural cadence — it cycles the overlay corner
+on every photo — so the drift became another discrete offset on the same
+event, with a transition that runs once and stops. Same burn-in protection,
+compositor quiet in between. Where there is no such event (the clock-only
+screensaver, with Immich off), the position comes from the once-a-minute
+clock signal rather than from a new timer.
+
+Guarded by `panel/test/idle-cost.test.mjs`, which fails on any `infinite`
+animation outside a short allow-list of spinners that stop on their own.
+
+A related trap, same shape: a running `AudioContext` keeps an audio render
+quantum ticking and holds Chromium's out-of-process audio service open for
+as long as it is running. In a tab that lasts minutes it does not matter.
+Here the page lives for weeks, so a context resumed once and never suspended
+is another thing running forever — see `panel/src/components/TimerAlerts.tsx`.
+
 ### `backdrop-filter`
 
 Supported by the engine, but it forces an offscreen pass per layer on a GPU

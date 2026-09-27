@@ -948,8 +948,18 @@
   align-items: center;
   gap: clamp(2.5rem, 6vw, 6rem);
   width: min(100%, 78rem);
-  animation: saver-np-drift 120s ease-in-out infinite alternate;
+  /* Stepped per track, not animated continuously — see the note on
+     `.saver-info` for why an infinite composited animation is still a cost
+     this device cannot afford to pay around the clock. */
+  transition: transform calc(1200ms * var(--motion)) var(--ease);
+  transform: translate3d(0, 0, 0);
 }
+
+.saver-np-layout[data-drift='0'] { transform: translate3d(-0.4rem, -0.25rem, 0); }
+.saver-np-layout[data-drift='1'] { transform: translate3d(0.8rem, 0.5rem, 0); }
+.saver-np-layout[data-drift='2'] { transform: translate3d(0.2rem, -0.1rem, 0); }
+.saver-np-layout[data-drift='3'] { transform: translate3d(-0.1rem, 0.35rem, 0); }
+.saver-np-layout[data-drift='4'] { transform: translate3d(0.55rem, 0.05rem, 0); }
 
 .saver-np-art {
   display: flex;
@@ -1060,11 +1070,6 @@
   background: rgba(255, 255, 255, 0.92);
 }
 
-@keyframes saver-np-drift {
-  from { transform: translate3d(-0.4rem, -0.25rem, 0); }
-  to { transform: translate3d(0.8rem, 0.5rem, 0); }
-}
-
 @media (max-width: 48rem) {
   .saver-now-playing { padding: var(--s-6); }
 
@@ -1111,9 +1116,26 @@
 }
 
 /* ── Overlay placement and burn-in drift ──────────────────────────────────
-   Four corners, cycled on every photo change, plus a slow continuous drift.
+   Four corners, cycled on every photo change, plus a small offset within the
+   corner so the clock does not land in only four sets of pixels over months.
    An IPS panel is far more forgiving than OLED, but a clock in the same
-   pixels for months is still worth avoiding. Both are transforms. */
+   pixels for months is still worth avoiding. Both are transforms.
+
+   The offset STEPS on each photo change; it is not a continuous animation.
+   That distinction is the whole point. An `infinite alternate` keyframe here
+   reads as free — it animates `transform`, so it is composited — but
+   "composited" only means the work is cheap per frame, not that there are no
+   frames. It produces one every vsync for as long as the screensaver is up,
+   which on a wall panel is essentially always, and the renderer never
+   reaches idle. Measured on a Room Navigator (ce26.7.1.12), the web engine
+   process sat at ~58% of a core indefinitely with the drift running.
+   Stepping per photo gives the same burn-in protection with the compositor
+   quiet between slides.
+
+   Five offsets against four corners so the two cycles do not stay in step:
+   twenty distinct positions before the pattern repeats. Magnitudes stay
+   inside the padding box, so the text never rides off the screen edge in a
+   corner it is anchored to. */
 
 .saver-info {
   position: absolute;
@@ -1122,7 +1144,10 @@
   /* A soft dark gradient behind the text rather than a box: readable over a
      bright sky without putting a slab on top of the photo. */
   text-shadow: 0 1px 12px rgba(0, 0, 0, 0.55);
-  animation: saver-drift 90s ease-in-out infinite alternate;
+  /* Honours --motion, so `ui.motion: 0` really does stop all movement — the
+     infinite animation this replaced ignored it. */
+  transition: transform calc(1200ms * var(--motion)) var(--ease);
+  transform: translate3d(0, 0, 0);
 }
 
 .saver-info[data-corner='0'] { top: 0; left: 0; }
@@ -1130,10 +1155,11 @@
 .saver-info[data-corner='2'] { bottom: 0; right: 0; text-align: right; }
 .saver-info[data-corner='3'] { bottom: 0; left: 0; }
 
-@keyframes saver-drift {
-  from { transform: translate3d(0, 0, 0); }
-  to { transform: translate3d(1.5rem, 1rem, 0); }
-}
+.saver-info[data-drift='0'] { transform: translate3d(0, 0, 0); }
+.saver-info[data-drift='1'] { transform: translate3d(1.5rem, 0.5rem, 0); }
+.saver-info[data-drift='2'] { transform: translate3d(0.5rem, 1rem, 0); }
+.saver-info[data-drift='3'] { transform: translate3d(1.25rem, 0.875rem, 0); }
+.saver-info[data-drift='4'] { transform: translate3d(0.75rem, 0.25rem, 0); }
 
 .saver-time {
   display: flex;

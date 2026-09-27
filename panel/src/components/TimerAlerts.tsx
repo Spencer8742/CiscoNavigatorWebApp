@@ -39,13 +39,43 @@ export function TimerAlerts() {
     };
     pulse();
     const interval = setInterval(pulse, 2000);
-    return () => { cancelled = true; clearInterval(interval); };
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      /*
+       * Park the audio graph when the alert stops.
+       *
+       * A running AudioContext is not idle: Chromium keeps an audio render
+       * quantum ticking and holds its out-of-process AudioService open for
+       * as long as the context is running. In a browser tab that lasts
+       * minutes. Here the page lives for weeks, so one timer that went off
+       * on Monday leaves the audio pipeline running until the panel
+       * reboots — and RoomOS has the web engine's speaker output disabled
+       * anyway, so nothing is gained by holding it.
+       */
+      void context?.suspend().catch(() => {});
+    };
   }, [ids, quiet]);
 
   useEffect(() => {
+    /*
+     * Capture the autoplay gesture, then park the context again.
+     *
+     * Resuming inside a real gesture is what marks the context as allowed to
+     * make sound; the engine remembers that, so a later `resume()` from an
+     * alert needs no second gesture. Suspending straight afterwards keeps
+     * that permission without leaving an audio thread running from the first
+     * touch until the panel reboots.
+     */
     const unlock = (): void => {
       if (window.CiscoNavigatorAndroid?.playTimerAlert) return;
-      try { context ??= new AudioContext(); void context.resume().catch(() => {}); } catch { /* Optional audio. */ }
+      try {
+        context ??= new AudioContext();
+        void context
+          .resume()
+          .then(() => context?.suspend())
+          .catch(() => {});
+      } catch { /* Optional audio. */ }
     };
     window.addEventListener('pointerdown', unlock, { once: true });
     return () => window.removeEventListener('pointerdown', unlock);
