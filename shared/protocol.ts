@@ -930,6 +930,7 @@ export type ClientMessage =
    * schedule, and `null` only to clear it.
    */
   | { t: 'pref'; id: number; key: 'lastPage'; value: PanelPage | null }
+  | { t: 'pref'; id: number; key: 'lastRoom' | 'lastControlPage'; value: string | null }
   /**
    * Rearrange the player list.
    *
@@ -1049,9 +1050,39 @@ export interface PanelPrefs {
    * (`showSettings: false`) that page is not even reachable.
    */
   lastPage: PanelPage | null;
+  /**
+   * The room this panel was drilled into, or null for the room list.
+   *
+   * Only ever set while `lastPage` is `rooms`: `navigate()` clears the
+   * drill-down on the way out of Rooms, deliberately, so that *choosing* to
+   * leave and come back lands on the list rather than in a room somebody has
+   * forgotten they opened. A reload is not that choice — nobody decided
+   * anything — which is why this is restored and that rule still stands.
+   */
+  lastRoom: string | null;
+  /**
+   * The macro page the Controls screen was showing.
+   *
+   * Independent of `lastPage`, because `controlPage` already survives
+   * leaving the Controls screen within a session — see state/ui.ts, where
+   * that is called out as the difference between an appliance and a web
+   * page. This is the same idea carried across a reload.
+   */
+  lastControlPage: string | null;
   /** How the player list is arranged. See `PlayerLayout`. */
   players: PlayerLayout;
 }
+
+/**
+ * Cap on a remembered id from dashboard.yaml — a room, a control page.
+ *
+ * These are not enums: the user names them, so the backend cannot check one
+ * against a list without knowing the config. What it can do is refuse
+ * anything that is obviously not an id, which is all that is needed of a
+ * value a client can write to disk. Whether the id still means anything is
+ * decided by the panel at restore, where the config actually lives.
+ */
+export const REMEMBERED_ID_MAX = 64;
 
 /**
  * Which speakers sit under which heading, and in what order.
@@ -1114,6 +1145,8 @@ export const DEFAULT_PREFS: PanelPrefs = {
   showSettings: true,
   rememberPage: true,
   lastPage: null,
+  lastRoom: null,
+  lastControlPage: null,
   players: { sections: {}, hidden: [] },
 };
 

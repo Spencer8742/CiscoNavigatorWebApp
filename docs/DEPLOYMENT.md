@@ -512,13 +512,26 @@ arrangement. Ids may contain letters, digits, `-` and `_`, up to 32
 characters; anything else is ignored and the panel falls back to the shared
 settings.
 
-The same file also holds **the page each panel was last on**, so a redeploy
-or an overnight reboot brings a panel back to Lights rather than to Home.
+The same file also holds **where each panel was last left**, so a redeploy or
+an overnight reboot brings a panel back to Lights rather than to Home. Three
+things are kept: the page, the room that was drilled into on Rooms, and which
+macro page Controls was showing.
+
 That is per panel too, which is the main reason to give each one an id: with
 no id they share the shared block, and the last panel to be touched decides
 where all of them come back to. Turn it off per panel under
-Settings → Remember page. Settings itself is never remembered — a panel that
-reboots into its own configuration screen looks broken.
+Settings → Remember page.
+
+Two things are deliberately never restored. **Settings**, because a panel that
+reboots into its own configuration screen looks broken — and on a finished
+panel it is not reachable anyway. And **any open sheet** — a device detail, the
+timer or Assist panels: those are modal, and a panel that boots with a dialog
+over the screen has not restored anything, it has come up broken, with nobody
+on a wall to dismiss it.
+
+A room or macro page that no longer exists is not restored either. Rename a
+room in `dashboard.yaml` and the panel lands on the room list rather than on
+an empty screen; the stored id is left alone, in case the rename was a typo.
 
 A **trailing slash is the mistake to watch for**: `?panel=office3/` is not
 `office3`, it is the invalid id `office3/`, and the panel quietly falls back to

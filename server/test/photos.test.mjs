@@ -685,7 +685,9 @@ describe('panel preferences', () => {
     assert.equal(office.prefs.rememberPage, true, 'and remembers by default');
 
     office.send({ t: 'pref', id: 1, key: 'lastPage', value: 'controls' });
-    kitchen.send({ t: 'pref', id: 1, key: 'lastPage', value: 'media' });
+    office.send({ t: 'pref', id: 2, key: 'lastControlPage', value: 'lights' });
+    kitchen.send({ t: 'pref', id: 1, key: 'lastPage', value: 'rooms' });
+    kitchen.send({ t: 'pref', id: 2, key: 'lastRoom', value: 'pantry' });
     await sleep(300);
 
     office.close();
@@ -701,7 +703,10 @@ describe('panel preferences', () => {
     await kitchenAgain.connect();
 
     assert.equal(officeAgain.prefs.lastPage, 'controls', 'the office panel came back to Controls');
-    assert.equal(kitchenAgain.prefs.lastPage, 'media', 'and the kitchen panel to Media');
+    assert.equal(officeAgain.prefs.lastControlPage, 'lights', 'on the macro page it was using');
+    assert.equal(kitchenAgain.prefs.lastPage, 'rooms', 'and the kitchen panel to Rooms');
+    assert.equal(kitchenAgain.prefs.lastRoom, 'pantry', 'inside the room it was in');
+    assert.equal(officeAgain.prefs.lastRoom, null, 'without inheriting the other panel’s room');
 
     officeAgain.close();
     kitchenAgain.close();
@@ -1061,6 +1066,16 @@ media:
       ['lastPage', '../../etc/passwd'],
       ['lastPage', 42],
       ['lastPage', ['controls']],
+      // Room and macro-page ids come from the user's YAML, so these are not
+      // checked against a list — only against being plausibly an id at all,
+      // since a client writes them to disk.
+      ['lastRoom', 42],
+      ['lastRoom', ''],
+      ['lastRoom', '   '],
+      ['lastRoom', 'x'.repeat(65)],
+      ['lastRoom', ['kitchen']],
+      ['lastControlPage', { id: 'lights' }],
+      ['lastControlPage', 'y'.repeat(65)],
       ['__proto__', 'polluted'],
       ['haToken', 'stolen'],
     ]) {
@@ -1083,7 +1098,9 @@ media:
         'homeSide',
         'homeTime',
         'homeWeather',
+        'lastControlPage',
         'lastPage',
+        'lastRoom',
         'nowPlayingScreensaverDate',
         'nowPlayingScreensaverTime',
         'photoScreensaverDate',
@@ -1098,6 +1115,8 @@ media:
       'no extra keys were introduced by a hostile payload',
     );
     assert.equal(t.panel.prefs.lastPage, null, 'no bad page name was applied');
+    assert.equal(t.panel.prefs.lastRoom, null, 'nor a room id that is not one');
+    assert.equal(t.panel.prefs.lastControlPage, null, 'nor a macro page id that is not one');
     assert.equal(t.panel.prefs.rememberPage, true, 'and the string "true" was refused');
     await t.stop();
   });

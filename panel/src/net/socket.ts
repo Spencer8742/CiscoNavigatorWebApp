@@ -529,6 +529,21 @@ export function reloadAllPanels(): boolean {
  */
 type BooleanPref = (typeof BOOLEAN_PREFS)[number];
 
+/**
+ * The two places-within-a-page the panel remembers. Named from `PanelPrefs`
+ * rather than spelled out, so a third one is a type error here rather than a
+ * silently unsendable key.
+ */
+type RememberedId = {
+  [K in keyof PanelPrefs]: K extends `last${string}`
+    ? PanelPrefs[K] extends string | null
+      ? K extends 'lastPage'
+        ? never
+        : K
+      : never
+    : never;
+}[keyof PanelPrefs];
+
 export function setPref(key: 'homeSide', value: PanelPrefs['homeSide']): boolean;
 export function setPref(
   key: 'screensaverMode',
@@ -536,14 +551,17 @@ export function setPref(
 ): boolean;
 export function setPref(key: 'visiblePages', value: PanelPrefs['visiblePages']): boolean;
 export function setPref(key: 'lastPage', value: PanelPrefs['lastPage']): boolean;
+export function setPref(key: RememberedId, value: string | null): boolean;
 export function setPref(key: BooleanPref, value: boolean): boolean;
 export function setPref(
-  key: 'homeSide' | 'screensaverMode' | 'visiblePages' | 'lastPage' | BooleanPref,
+  key: 'homeSide' | 'screensaverMode' | 'visiblePages' | 'lastPage' | RememberedId | BooleanPref,
   value:
     | PanelPrefs['homeSide']
     | PanelPrefs['screensaverMode']
     | PanelPrefs['visiblePages']
     | PanelPrefs['lastPage']
+    | string
+    | null
     | boolean,
 ): boolean {
   prefs.value = { ...prefs.value, [key]: value };
@@ -563,6 +581,9 @@ export function setPref(
   }
   if (key === 'lastPage') {
     return send({ t: 'pref', id: nextId(), key, value: value as PanelPrefs['lastPage'] });
+  }
+  if (key === 'lastRoom' || key === 'lastControlPage') {
+    return send({ t: 'pref', id: nextId(), key, value: value as string | null });
   }
   return send({ t: 'pref', id: nextId(), key, value: value as boolean });
 }
