@@ -276,6 +276,13 @@ class Device:
     # rescan, which is what keeps a self-healing retry quick enough to be worth
     # doing on the command path. Cleared whenever credentials may have changed.
     config: Any = None
+    # The last state dict published for this device, so a poll that changes
+    # nothing publishes nothing. See publish().
+    last_state: dict[str, Any] | None = None
+    # What was playing the last time the device actually answered. A metadata
+    # read that times out is not the device saying "nothing is playing", and
+    # must not be published as if it were — see publish().
+    last_media: dict[str, Any] | None = None
     # Set once AirPlay's remote control channel has refused to start, so the
     # next connect skips it instead of failing over it again.
     tunnel_disabled: bool = False
@@ -649,9 +656,14 @@ class Bridge:
 
     async def publish(self, device: Device, playing: Any = None) -> None:
         atv = device.atv
+        # Whether this round actually got an answer out of the device, as
+        # opposed to asking and being ignored. The difference decides whether
+        # "nothing is playing" is something we know or something we guessed.
+        answered = playing is not None
         if atv is not None and playing is None:
             try:
                 playing = await asyncio.wait_for(atv.metadata.playing(), METADATA_TIMEOUT)
+                answered = True
             except Exception:
                 playing = None
         power = "unknown"
@@ -672,7 +684,13 @@ class Bridge:
                 artwork_id = atv.metadata.artwork_id or playing.hash
             except Exception:
                 artwork_id = playing.hash
-        if artwork_id != device.artwork_id:
+        # Same rule as the media fields below, and for the same reason: a read
+        # that timed out has not told us the art went away. Without this guard
+        # a timeout computes `artwork_id = None`, which differs from the id we
+        # are holding, so an artwork clear goes out -- the cover blanks to the
+        # placeholder and comes back three seconds later. It is the same
+        # flicker as the title, over a much larger piece of the card.
+        if (answered or atv is None) and artwork_id != device.artwork_id:
             device.artwork_id = artwork_id
             artwork = None
             if artwork_id and atv is not None:
@@ -689,6 +707,46 @@ class Bridge:
                 "mimetype": artwork.mimetype if artwork else None,
                 "data": base64.b64encode(artwork.bytes).decode("ascii") if artwork else None,
             })
+        # What is playing, or the last thing we know was.
+        #
+        # A metadata read that times out tells us nothing about the Apple TV.
+        # Publishing it as `playing: None` turns every media field null, and
+        # the panel dutifully redraws: the title becomes "Nothing playing",
+        # the artist line becomes the placeholder sentence, and the progress
+        # bar -- which only renders when a duration is known -- disappears and
+        # takes its margin with it. The next poll three seconds later brings
+        # all of it back. On hardware where Companion is intermittent (which
+        # is why the connect ladder exists at all) that is a card that jumps
+        # every few seconds while a film is playing perfectly well.
+        #
+        # So a failed read holds the last answer. Only a device that actually
+        # answered, or one that is gone, is allowed to clear it.
+        if answered:
+            device.last_media = {
+                "playback": str(playing.device_state.name).lower() if playing else "idle",
+                "mediaType": str(playing.media_type.name).lower() if playing else "unknown",
+                "title": text(playing.title) if playing else None,
+                "artist": text(playing.artist) if playing else None,
+                "album": text(playing.album) if playing else None,
+                "elapsed": playing.position if playing else None,
+                "duration": playing.total_time if playing else None,
+            }
+        elif atv is None:
+            # Disconnected is knowing. Holding a stale title against a device
+            # the panel is already showing as unavailable would be its own
+            # kind of lie.
+            device.last_media = None
+
+        media = device.last_media or {
+            "playback": "idle",
+            "mediaType": "unknown",
+            "title": None,
+            "artist": None,
+            "album": None,
+            "elapsed": None,
+            "duration": None,
+        }
+
         state = {
             "id": device.id,
             "name": device.name,
@@ -697,19 +755,37 @@ class Bridge:
             "pairing": device.pairing_state,
             "pairingTarget": device.pairing_target,
             "power": power if power in ("on", "off") else "unknown",
-            "playback": str(playing.device_state.name).lower() if playing else "idle",
-            "mediaType": str(playing.media_type.name).lower() if playing else "unknown",
-            "title": text(playing.title) if playing else None,
-            "artist": text(playing.artist) if playing else None,
-            "album": text(playing.album) if playing else None,
+            **media,
             "app": app,
             "artwork": None,
-            "elapsed": playing.position if playing else None,
-            "duration": playing.total_time if playing else None,
             "elapsedAt": int(time.time() * 1000),
             "error": text(device.error),
         }
-        # Node converts this monotonic stamp to wall time before publishing.
+
+        # Say nothing when there is nothing to say.
+        #
+        # This used to emit on every poll, and `elapsedAt` is a fresh
+        # timestamp every time, so the state was never equal to the last one.
+        # Each emit travels bridge -> Node -> every connected panel, and each
+        # panel replaces the whole `appleTvs` array -- so an Apple TV sitting
+        # switched off in an empty room re-rendered the Apple TV screen on
+        # every panel every three seconds, for ever.
+        #
+        # The timestamp is excluded from the comparison for exactly that
+        # reason: it measures when we looked, not anything about the device.
+        # While something is playing the position advances and states differ
+        # honestly, so the panel still gets what it needs to re-anchor the
+        # progress bar.
+        compared = {k: v for k, v in state.items() if k != "elapsedAt"}
+        if device.last_state == compared:
+            return
+        device.last_state = compared
+
+        # `elapsedAt` is already wall-clock milliseconds and Node passes it
+        # through untouched — the panel extrapolates the position from it.
+        # (The comment that used to sit here said Node converted a monotonic
+        # stamp. It does not, and there is no monotonic stamp; noted because
+        # it is the line you would read before trusting the value.)
         emit({"t": "state", "state": state})
 
     async def command(self, device: Device, op: str) -> None:

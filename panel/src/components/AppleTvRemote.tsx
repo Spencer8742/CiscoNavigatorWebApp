@@ -79,7 +79,18 @@ export function AppleTvRemote({ tv }: { tv: AppleTvState }) {
         <Pairing tv={tv} pin={pin} setPin={setPin} />
       ) : null}
 
-      <div class="apple-tv-content" data-remote={remoteOpen ? 'open' : 'closed'}>
+      {/* The idle reset hangs off the whole content area, not off the remote
+          inside it. It used to be on `.apple-tv-remote`, which left the
+          transport keys out — they are in `.apple-tv-media`, a sibling — so
+          somebody stepping through tracks with Previous and Next was not
+          "still using it" as far as the timer was concerned, and the remote
+          folded away under their hand thirty seconds in. Every control in
+          here is use. */}
+      <div
+        class="apple-tv-content"
+        data-remote={remoteOpen ? 'open' : 'closed'}
+        onPointerDown={keepOpen}
+      >
         <div class="apple-tv-media">
           <div class="apple-tv-art" data-empty={tv.artwork ? undefined : ''}>
             {tv.artwork ? (
@@ -112,10 +123,7 @@ export function AppleTvRemote({ tv }: { tv: AppleTvState }) {
         </div>
 
         {remoteOpen ? (
-        /* One handler on the container rather than one per control: a swipe,
-           a key and an app shortcut are all "still using it", and hanging the
-           reset off the container cannot miss a control added later. */
-        <div class="apple-tv-remote" aria-label={`${tv.name} remote`} onPointerDown={keepOpen}>
+        <div class="apple-tv-remote" aria-label={`${tv.name} remote`}>
           <SwipePad tv={tv} send={send} />
           <div class="apple-tv-keys">
             <Pressable onPress={() => send('menu')} ariaLabel="Back">Back</Pressable>

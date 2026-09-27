@@ -50,6 +50,10 @@ export function Controls() {
       <div class="screen screen-enter">
         <div class="screen-head">
           <h1 class="screen-title">Controls</h1>
+          {/* Here too. A panel locked while the config had pages, and then
+              edited down to none, would otherwise have no control on screen
+              that could unlock it. */}
+          <FullScreenLock />
         </div>
         <div class="screen-body scroll">
           <Empty icon="grid" title="No control pages configured">
@@ -71,6 +75,7 @@ export function Controls() {
       <div class="screen-head">
         <h1 class="screen-title">Controls</h1>
         <span class="screen-sub truncate">{active.name}</span>
+        <FullScreenLock />
       </div>
 
       {/* A page strip, not a nav level: the Controls screen is one
@@ -86,6 +91,39 @@ export function Controls() {
         <Page page={active} />
       </div>
     </div>
+  );
+}
+
+/**
+ * Lock the panel to the page it is on.
+ *
+ * In the screen head rather than in a device tile, which is where it used to
+ * be. There it only existed on a page that happened to declare a `device:`
+ * item, so a page of lights or a room page could not be locked at all — and
+ * a panel locked from the one page that had the button had no way back from
+ * any other.
+ *
+ * **Always rendered, in both states.** Locking hides the nav and the page
+ * strip, so this is the only control left that can undo it. A version of
+ * this that could itself be conditional would be a panel on a wall with no
+ * way out of the mode it is in. That is also why it sits in the head and not
+ * in the scrolling body: it must not be possible to scroll the way out off
+ * the screen.
+ */
+function FullScreenLock() {
+  const locked = kiosk.value;
+  return (
+    <Pressable
+      class="screen-lock"
+      onPress={() => {
+        kiosk.value = !locked;
+        markActivity();
+      }}
+      ariaLabel={locked ? 'Leave full screen' : 'Full screen, locked to this page'}
+      ariaPressed={locked}
+    >
+      <Icon name={locked ? 'collapse' : 'expand'} size="1.375rem" weight={1.9} />
+    </Pressable>
   );
 }
 

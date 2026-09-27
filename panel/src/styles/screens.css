@@ -2574,7 +2574,12 @@
 /* The full-screen lock. Same size and shape as power so the two read as a
    pair, but neutral until engaged — power is the accent-coloured one because
    it is the button people reach for; this is set-and-forget. */
-.devtile-lock {
+.screen-lock {
+  /* Pushed to the end of the head, and centred against a row whose other
+     children are baseline-aligned text. */
+  margin-inline-start: auto;
+  align-self: center;
+  flex: 0 0 auto;
   width: 3.25rem;
   height: 3.25rem;
   border-radius: var(--r-full);
@@ -2589,7 +2594,7 @@
 /* Engaged. It has to be obvious which state it is in: this is the only way
    back to the rest of the app, and a guest who finds a Navigator with no nav
    bar needs to be able to see what to press. */
-.devtile-lock[aria-pressed='true'] {
+.screen-lock[aria-pressed='true'] {
   background: var(--accent-soft);
   border-color: var(--accent-dim);
   color: var(--accent);
@@ -2949,7 +2954,7 @@
    left to the global rule so every control still squashes by the same
    amount. */
 .devtile-key[data-pressed] .devtile-key-face,
-.devtile-lock[data-pressed],
+.screen-lock[data-pressed],
 .devtile-power[data-pressed] {
   background: var(--surface-4);
   border-color: rgba(255, 255, 255, 0.28);

@@ -372,3 +372,90 @@ describe('Apple TV probe conclusions', () => {
     assert.doesNotMatch(out, /pair again from the panel/);
   });
 });
+
+/**
+ * What the panel is told between one thing happening and the next.
+ *
+ * The bridge polls every three seconds. What it publishes on each of those
+ * rounds decides whether the Apple TV card sits still or twitches, because a
+ * published state replaces the whole `appleTvs` array on every connected
+ * panel and the card redraws from it.
+ */
+describe('Apple TV state churn', () => {
+  it('holds the last known media when a metadata read times out', async () => {
+    // On hardware where Companion is intermittent — which is why the connect
+    // ladder exists — `metadata.playing()` times out now and then. That says
+    // nothing about the Apple TV, but publishing it as no-media blanks the
+    // title, the artist and the duration, which takes the progress bar and
+    // its margin out of the layout. Three seconds later it all comes back.
+    const bridge = start({ state: { title: 'Dune', artist: 'Denis Villeneuve', duration: 9000 } });
+    await bridge.configure();
+    await bridge.untilState((s) => s.title === 'Dune');
+
+    const before = bridge.states.length;
+    bridge.control({ playing: 'timeout' });
+
+    // Two poll rounds' worth, so a blanking publish would have happened.
+    await new Promise((resolve) => setTimeout(resolve, 7000));
+
+    const blanked = bridge.states
+      .slice(before)
+      .filter((s) => s.id === 'living-room' && s.reachable && s.title === null);
+    assert.deepEqual(
+      blanked,
+      [],
+      'a failed read must not be published as "nothing playing"',
+    );
+    assert.equal(bridge.state().title, 'Dune', 'the last answer stands until a new one arrives');
+  });
+
+  it('holds the artwork when a metadata read times out', async () => {
+    // The same hole as above, in the biggest thing on the card. The artwork
+    // id is derived from `playing`, so a timed-out read computes it as None,
+    // which differs from the id being held and publishes an artwork clear:
+    // the cover drops to the placeholder and comes back on the next poll.
+    const bridge = start({ state: { title: 'Dune' }, artworkId: 'art-dune' });
+    await bridge.configure();
+    await bridge.untilState((s) => s.title === 'Dune');
+    await bridge.untilArtwork((a) => a.version === 'art-dune');
+
+    const before = bridge.artworks.length;
+    bridge.control({ playing: 'timeout' });
+    await new Promise((resolve) => setTimeout(resolve, 7000));
+
+    const cleared = bridge.artworks.slice(before).filter((a) => a.version === null);
+    assert.deepEqual(cleared, [], 'a failed read must not blank the cover art');
+  });
+
+  it('publishes nothing while nothing changes', async () => {
+    const bridge = start({ state: { title: 'Dune', duration: 9000, position: 42 } });
+    await bridge.configure();
+    await bridge.untilState((s) => s.reachable === true);
+
+    // Let the connect settle, then watch two poll rounds go by untouched.
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    const settled = bridge.states.length;
+    await new Promise((resolve) => setTimeout(resolve, 7000));
+
+    assert.equal(
+      bridge.states.length,
+      settled,
+      'a poll that learns nothing new must not wake every panel',
+    );
+  });
+
+  it('still publishes when the position moves', async () => {
+    const bridge = start({ state: { title: 'Dune', duration: 9000, position: 10 } });
+    await bridge.configure();
+    await bridge.untilState((s) => s.reachable === true);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    const settled = bridge.states.length;
+    bridge.control({ state: { title: 'Dune', duration: 9000, position: 90 } });
+
+    // The panel extrapolates between updates, so it does need the new anchor.
+    const moved = await bridge.untilState((s) => s.elapsed === 90, 10_000);
+    assert.equal(moved.elapsed, 90);
+    assert.ok(bridge.states.length > settled, 'a real change is still published');
+  });
+});
