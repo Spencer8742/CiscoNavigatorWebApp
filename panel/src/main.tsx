@@ -6,6 +6,7 @@ import { initAuth } from '~/net/auth.ts';
 import { connect } from '~/net/socket.ts';
 import { resyncClock, startClock } from '~/state/clock.ts';
 import { startIdleMonitor } from '~/state/idle.ts';
+import { startPageMemory } from '~/state/lastPage.ts';
 import { startTimers } from '~/state/timers.ts';
 import { assistWakePaused, openAssistAndListen } from '~/state/ui.ts';
 
@@ -34,6 +35,10 @@ if (root) {
 
 startClock();
 startIdleMonitor();
+// Before connect(), so the effect is watching when the first `hello` lands
+// and the panel restores its page in the same tick rather than after a
+// visible frame on Home.
+startPageMemory();
 connect();
 
 function startAssistFromNativeWake(): void {

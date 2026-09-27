@@ -923,6 +923,13 @@ export type ClientMessage =
   | { t: 'pref'; id: number; key: 'homeWeather'; value: boolean }
   | { t: 'pref'; id: number; key: 'photoScreensaverWeather'; value: boolean }
   | { t: 'pref'; id: number; key: 'showSettings'; value: boolean }
+  | { t: 'pref'; id: number; key: 'rememberPage'; value: boolean }
+  /**
+   * Not a setting anybody taps — the panel noting where it is, so it can
+   * come back here after a reload. Sent on navigation rather than on a
+   * schedule, and `null` only to clear it.
+   */
+  | { t: 'pref'; id: number; key: 'lastPage'; value: PanelPage | null }
   /**
    * Rearrange the player list.
    *
@@ -1014,6 +1021,34 @@ export interface PanelPrefs {
    * nothing — worse than a missing one, because it looks like it works.
    */
   photoScreensaverWeather: boolean;
+  /**
+   * Come back to the page this panel was left on.
+   *
+   * On by default, because it is what the panel already does everywhere
+   * else: idling to the screensaver and waking returns you to the screen you
+   * chose (see state/idle.ts, which gave up returning Home on a timer for
+   * exactly this reason). Only a reload broke the illusion — a container
+   * redeploy or a RoomOS reboot put a panel somebody had left on Lights back
+   * on Home.
+   *
+   * Off is for a panel that should always present the same face: a meeting
+   * room entrance, or anywhere the first screen is the point.
+   */
+  rememberPage: boolean;
+  /**
+   * The page this panel was last on, or null if it has not been anywhere.
+   *
+   * Written by the panel as it navigates, read back once when it reconnects
+   * from a cold start. Unlike every other preference here this is not
+   * something anybody chose in a settings screen — it is the panel taking a
+   * note for itself, which is why `rememberPage` exists to switch the whole
+   * behaviour off rather than this being edited directly.
+   *
+   * Never `settings`: see `Route` in state/ui.ts. A panel that reboots into
+   * its own configuration screen looks broken, and on a finished panel
+   * (`showSettings: false`) that page is not even reachable.
+   */
+  lastPage: PanelPage | null;
   /** How the player list is arranged. See `PlayerLayout`. */
   players: PlayerLayout;
 }
@@ -1077,6 +1112,8 @@ export const DEFAULT_PREFS: PanelPrefs = {
   homeWeather: true,
   photoScreensaverWeather: true,
   showSettings: true,
+  rememberPage: true,
+  lastPage: null,
   players: { sections: {}, hidden: [] },
 };
 
@@ -1106,6 +1143,7 @@ export const BOOLEAN_PREFS = [
   'homeWeather',
   'photoScreensaverWeather',
   'showSettings',
+  'rememberPage',
 ] as const;
 
 /** Application-level heartbeat interval. A Wi-Fi roam can leave a socket

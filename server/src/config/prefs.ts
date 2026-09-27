@@ -90,12 +90,20 @@ export class PrefsStore {
     for (const fn of this.#listeners) fn();
   }
 
-  /** Write one preference into a scope and persist. */
-  #apply(panelId: string | null, patch: Partial<PanelPrefs>): void {
+  /**
+   * Write one preference into a scope and persist.
+   *
+   * `announce` is false for a value a panel is recording about itself rather
+   * than choosing. `lastPage` changes on every tap of the nav; telling every
+   * connected panel about it would be a broadcast per navigation carrying
+   * something none of them can use — they each apply their own stored page
+   * once, at connect, and never again.
+   */
+  #apply(panelId: string | null, patch: Partial<PanelPrefs>, announce = true): void {
     const scope = panelId ?? SHARED;
     this.#scopes.set(scope, { ...(this.#scopes.get(scope) ?? {}), ...patch });
     this.#save();
-    this.#announce();
+    if (announce) this.#announce();
   }
 
   #load(): void {
@@ -186,6 +194,24 @@ export class PrefsStore {
 
       this.#apply(panelId, { visiblePages });
       log.info(`Preference visiblePages = ${visiblePages.join(', ') || '(none)'} (${who})`);
+      return null;
+    }
+
+    /*
+     * Where the panel was left. A note it keeps for itself, so it is quiet
+     * in two ways the other keys are not: no broadcast, and no info line —
+     * at one write per navigation an info log would bury everything else
+     * anybody came to the log to read.
+     */
+    if (key === 'lastPage') {
+      const lastPage = value === null ? null : pageOf(value);
+      if (lastPage === undefined) {
+        return `"${String(value)}" is not a page (expected ${PANEL_PAGES.join(', ')} or null)`;
+      }
+      if (current.lastPage === lastPage) return null;
+
+      this.#apply(panelId, { lastPage }, false);
+      log.debug(`Preference lastPage = ${lastPage ?? 'none'} (${who})`);
       return null;
     }
 
@@ -288,6 +314,13 @@ function readScope(
     }
   }
 
+  // `null` and "absent" mean the same thing here — the panel has not been
+  // anywhere worth returning to — so neither is written into the scope.
+  if (stored['lastPage'] !== null && stored['lastPage'] !== undefined) {
+    const lastPage = pageOf(stored['lastPage']);
+    if (lastPage) scope.lastPage = lastPage;
+  }
+
   let visiblePages = sanitizeVisiblePages(stored['visiblePages']);
   if (visiblePages && version < PREFS_SCHEMA) {
     // Apple TV became a first-class page in schema 2. Existing panels
@@ -308,6 +341,18 @@ function readScope(
   if (layout) scope.players = layout;
 
   return { scope, changed };
+}
+
+/**
+ * A page name, or undefined if it is not one.
+ *
+ * Undefined rather than null, because null is a legal `lastPage` meaning
+ * "nowhere yet" and the caller has to be able to tell it from a rejection.
+ */
+function pageOf(raw: unknown): PanelPage | undefined {
+  return typeof raw === 'string' && PANEL_PAGES.includes(raw as PanelPage)
+    ? (raw as PanelPage)
+    : undefined;
 }
 
 function sanitizeVisiblePages(raw: unknown): PanelPage[] | null {

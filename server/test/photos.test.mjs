@@ -662,6 +662,74 @@ describe('panel preferences', () => {
   });
 
   /*
+   * Where the panel was left.
+   *
+   * Unlike everything else here this is not a choice somebody made in a
+   * settings screen — it is the panel writing down where it is, so a reload
+   * can put it back. That difference shows up in two places worth pinning:
+   * it must survive a restart like any other preference, and it must NOT be
+   * broadcast, because it changes on every tap of the nav and no other panel
+   * can use it.
+   */
+
+  test('the last page is remembered per panel, and outlives the backend', async () => {
+    rmSync(PREFS_FILE, { force: true });
+    const first = await isolated();
+
+    const office = new PhotoPanel(first.panel.port, 'office');
+    const kitchen = new PhotoPanel(first.panel.port, 'kitchen');
+    await office.connect();
+    await kitchen.connect();
+
+    assert.equal(office.prefs.lastPage, null, 'a panel starts having been nowhere');
+    assert.equal(office.prefs.rememberPage, true, 'and remembers by default');
+
+    office.send({ t: 'pref', id: 1, key: 'lastPage', value: 'controls' });
+    kitchen.send({ t: 'pref', id: 1, key: 'lastPage', value: 'media' });
+    await sleep(300);
+
+    office.close();
+    kitchen.close();
+    await first.stop();
+
+    // The reload this whole feature is for: the container comes back and the
+    // panel reconnects into the page it was on.
+    const second = await isolated();
+    const officeAgain = new PhotoPanel(second.panel.port, 'office');
+    const kitchenAgain = new PhotoPanel(second.panel.port, 'kitchen');
+    await officeAgain.connect();
+    await kitchenAgain.connect();
+
+    assert.equal(officeAgain.prefs.lastPage, 'controls', 'the office panel came back to Controls');
+    assert.equal(kitchenAgain.prefs.lastPage, 'media', 'and the kitchen panel to Media');
+
+    officeAgain.close();
+    kitchenAgain.close();
+    await second.stop();
+  });
+
+  test('recording a page does not disturb the other panels', async () => {
+    rmSync(PREFS_FILE, { force: true });
+    const t = await isolated();
+
+    const office = new PhotoPanel(t.panel.port, 'office');
+    await office.connect();
+
+    // A shared preference change is the control: it proves the observer is
+    // listening and that a broadcast would have reached it.
+    const before = t.panel.prefs;
+    office.send({ t: 'pref', id: 1, key: 'lastPage', value: 'photos' });
+    await sleep(300);
+    assert.equal(t.panel.prefs, before, 'no prefs broadcast went out for a page note');
+
+    office.send({ t: 'pref', id: 2, key: 'homeSide', value: 'photos' });
+    await waitFor(() => t.panel.prefs !== before, 'a real preference to still broadcast');
+
+    office.close();
+    await t.stop();
+  });
+
+  /*
    * Per-panel settings. Every panel is provisioned with the same URL and the
    * same token, so before this the office panel and the kitchen panel were
    * one setting that both of them edited — changing the Home screen on one
@@ -985,6 +1053,14 @@ media:
       ['homeDate', 'false'],
       ['homeWeather', 1],
       ['photoScreensaverWeather', {}],
+      ['rememberPage', 'true'],
+      // lastPage names a page, and only one the panel could navigate to.
+      // `settings` is a Route but not a PanelPage, so it is refused here for
+      // the same reason the panel never records it.
+      ['lastPage', 'settings'],
+      ['lastPage', '../../etc/passwd'],
+      ['lastPage', 42],
+      ['lastPage', ['controls']],
       ['__proto__', 'polluted'],
       ['haToken', 'stolen'],
     ]) {
@@ -1007,18 +1083,22 @@ media:
         'homeSide',
         'homeTime',
         'homeWeather',
+        'lastPage',
         'nowPlayingScreensaverDate',
         'nowPlayingScreensaverTime',
         'photoScreensaverDate',
         'photoScreensaverTime',
         'photoScreensaverWeather',
         'players',
+        'rememberPage',
         'screensaverMode',
         'showSettings',
         'visiblePages',
       ],
       'no extra keys were introduced by a hostile payload',
     );
+    assert.equal(t.panel.prefs.lastPage, null, 'no bad page name was applied');
+    assert.equal(t.panel.prefs.rememberPage, true, 'and the string "true" was refused');
     await t.stop();
   });
 });

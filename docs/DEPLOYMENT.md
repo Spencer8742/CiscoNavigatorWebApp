@@ -512,6 +512,14 @@ arrangement. Ids may contain letters, digits, `-` and `_`, up to 32
 characters; anything else is ignored and the panel falls back to the shared
 settings.
 
+The same file also holds **the page each panel was last on**, so a redeploy
+or an overnight reboot brings a panel back to Lights rather than to Home.
+That is per panel too, which is the main reason to give each one an id: with
+no id they share the shared block, and the last panel to be touched decides
+where all of them come back to. Turn it off per panel under
+Settings → Remember page. Settings itself is never remembered — a panel that
+reboots into its own configuration screen looks broken.
+
 A **trailing slash is the mistake to watch for**: `?panel=office3/` is not
 `office3`, it is the invalid id `office3/`, and the panel quietly falls back to
 the shared settings — which looks exactly like a panel that was never given an
