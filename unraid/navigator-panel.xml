@@ -200,6 +200,28 @@
     Mask="false"/>
 
   <Config
+    Name="Plex URL"
+    Target="PLEX_URL"
+    Default=""
+    Mode=""
+    Description="Your Plex Media Server's LAN address, for example http://192.168.1.20:32400. Adds a Plex tab to the Apple TV screen to browse Plex and choose where to play. Use an address the Apple TVs can reach - they fetch the media from it themselves."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false"/>
+
+  <Config
+    Name="Plex Token"
+    Target="PLEX_TOKEN"
+    Default=""
+    Mode=""
+    Description="Your X-Plex-Token. In Plex Web open any item, Get Info, View XML - the token is at the end of that URL."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="true"/>
+
+  <Config
     Name="PUID"
     Target="PUID"
     Default="99"

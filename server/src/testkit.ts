@@ -57,3 +57,11 @@ export { sonosUri } from '~/sonos/spotify.ts';
 export { UriRegistry } from '~/sonos/uris.ts';
 export { parsePanelCommand, parseTimerDuration, panelCommandResult } from '~/assist/commands.ts';
 export { WeatherForecasts, normalizeForecast } from '~/ha/weather.ts';
+
+/*
+ * Plex, for the same reason as the Cast pieces: playing something is one
+ * short conversation between three parties (the server, plex.tv and a
+ * player), and every interesting case is a property of that conversation.
+ */
+export { PlexClient } from '~/plex/client.ts';
+export { MediaArt } from '~/http/media-art.ts';

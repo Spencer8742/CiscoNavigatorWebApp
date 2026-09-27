@@ -32,6 +32,7 @@ import { Controls } from '~/controls/index.ts';
 import { AppleTvBridge } from '~/apple-tv/index.ts';
 import { PrefsStore } from '~/config/prefs.ts';
 import { ImmichClient } from '~/immich/client.ts';
+import { PlexClient } from '~/plex/client.ts';
 import { ImmichImages } from '~/immich/images.ts';
 import { Playlist } from '~/immich/playlist.ts';
 import { MUSIC_VERBS } from '@shared/protocol.ts';
@@ -221,6 +222,7 @@ async function main(): Promise<void> {
     ha: env.ha.enabled ? haClient.state : 'disconnected',
     immich: env.immich.enabled ? (immichReachable ? 'connected' : 'disconnected') : 'disconnected',
     immichError: env.immich.enabled ? (immich.lastError?.message ?? null) : null,
+    plex: env.plex.enabled,
     sonos: env.sonos.enabled ? sonosClient.state : 'disabled',
     // A household we can reach but whose events never arrive is a specific,
     // actionable problem, and it outranks a stale connection error.
@@ -406,6 +408,14 @@ async function main(): Promise<void> {
     (states) => hub?.broadcastAppleTvs(states),
   );
 
+  const plex = new PlexClient(env.plex, {
+    art: mediaArt,
+    appleTvs: () => config.current.controls.appleTvs,
+    appleTvStates: () => appleTv.snapshot,
+    appleTvCommand: (device, op) => appleTv.command(device, op),
+    openApp: (device, bundleId) => appleTv.openApp(device, bundleId),
+  });
+
   hub = new Hub(server, {
     auth,
     config,
@@ -501,6 +511,7 @@ async function main(): Promise<void> {
     },
 
     onBrowse: (req) => sonosBrowser.browse(req),
+    onPlex: (req) => plex.handle(req),
 
     getSources: () => musicSourceList(),
     onLink: (sid, op) => linkService(sid, op),
@@ -900,6 +911,7 @@ async function main(): Promise<void> {
     log.info(`Panel authentication: ${auth.enabled ? 'enabled' : 'DISABLED'}`);
     log.info(`Home Assistant: ${env.ha.enabled ? env.ha.url : 'not configured'}`);
     log.info(`Immich: ${env.immich.enabled ? env.immich.url : 'not configured'}`);
+    log.info(`Plex: ${env.plex.enabled ? env.plex.url : 'not configured'}`);
     log.info(
       `Sonos: ${env.sonos.host || (env.sonos.discovery ? 'discovering' : 'not configured')}`,
     );

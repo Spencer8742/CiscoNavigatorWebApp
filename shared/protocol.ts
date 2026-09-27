@@ -98,6 +98,12 @@ export interface BackendHealth {
    * to go and read the container logs.
    */
   immichError: string | null;
+  /**
+   * PLEX_URL and PLEX_TOKEN are set, so the Apple TV screen has a Plex tab.
+   * Configured rather than reachable: a Plex server that is down should say
+   * so inside that tab, not make the tab disappear.
+   */
+  plex: boolean;
   /** ISO timestamp of the backend's last successful HA message. */
   haLastMessage: string | null;
   /** Backend uptime in seconds — useful for spotting container restarts. */
@@ -720,6 +726,81 @@ export interface KeyLightState {
 export const KEY_LIGHT_MIN_KELVIN = 2900;
 export const KEY_LIGHT_MAX_KELVIN = 7000;
 
+/* ── Plex ──────────────────────────────────────────────────────────────── */
+
+/** What a Plex row is. Plex's own `type`, narrowed to what the panel draws. */
+export type PlexKind =
+  | 'library' | 'movie' | 'show' | 'season' | 'episode'
+  | 'artist' | 'album' | 'track' | 'clip' | 'folder';
+
+/**
+ * One row of the Plex browser.
+ *
+ * `id` is Plex's ratingKey for an item, or a library section key for a
+ * library. It comes from a previous answer, so the panel never composes one,
+ * and the backend only ever uses it as a path segment on its own Plex server.
+ */
+export interface PlexItem {
+  id: string;
+  kind: PlexKind;
+  title: string;
+  /** Second line: the show and episode number, the year, the artist. */
+  subtitle: string | null;
+  /** Authenticated artwork path on this origin (`/img/art?k=…`), never Plex's. */
+  art: string | null;
+  /** Has children to open — a library, a show, a season, an album. */
+  browsable: boolean;
+  /** Can be sent to a player. */
+  playable: boolean;
+  /** Length in seconds, for a single playable item. */
+  duration: number | null;
+  /** Where it was left off, in seconds. Present when there is somewhere to resume. */
+  resume: number | null;
+  /** Watched at least once. Only set for a single playable video. */
+  watched?: boolean;
+}
+
+/** Somewhere a Plex item can be sent. */
+export interface PlexTarget {
+  /** `atv:<config id>` for a configured Apple TV, `plex:<machine id>` otherwise. */
+  id: string;
+  name: string;
+  /** What it is, for the second line: "Apple TV", "Plex for Android (TV)"… */
+  product: string;
+  /** A configured Apple TV — Plex is opened on it before anything is sent. */
+  appleTv: string | null;
+}
+
+/** Page size for Plex listings. Same reasoning as `BROWSE_PAGE`. */
+export const PLEX_PAGE = 60;
+
+export type PlexRequest =
+  /** Continue Watching, Recently Added and the libraries, as one front page. */
+  | { kind: 'home' }
+  /** A library's contents, or an item's children (seasons, episodes, tracks). */
+  | { kind: 'open'; id: string; library?: boolean; offset?: number }
+  /** Everywhere this could be played right now. */
+  | { kind: 'targets' }
+  /**
+   * Play an item somewhere.
+   *
+   * `target` is a `PlexTarget.id` from a `targets` answer. `resume` false
+   * starts from the beginning even when Plex has a place saved.
+   */
+  | { kind: 'play'; id: string; target: string; resume: boolean };
+
+export type PlexResult =
+  | {
+      kind: 'home';
+      /** Server name, for the header. */
+      server: string;
+      sections: { title: string; items: PlexItem[] }[];
+    }
+  | { kind: 'list'; items: PlexItem[]; offset: number; more: boolean }
+  | { kind: 'targets'; targets: PlexTarget[] }
+  /** Where it ended up playing, for the confirmation. */
+  | { kind: 'played'; target: string };
+
 export type ServerMessage =
   /** Always first. Complete snapshot; the panel can render immediately. */
   | {
@@ -780,6 +861,8 @@ export type ServerMessage =
   | { t: 'photos'; photos: PhotoRef[] }
   /** Answer to a `browse` request. `ref` matches the request's id. */
   | { t: 'browse'; ref: number; result: BrowseResult }
+  /** Answer to a `plex` request. `ref` matches the request's id. */
+  | { t: 'plex'; ref: number; result: PlexResult }
   /** Answer to an Assist request. `ref` matches the request's id. */
   | { t: 'assist'; ref: number; result: AssistResult }
   /**
@@ -843,6 +926,15 @@ export type ClientMessage =
    * until the answer arrives, so this one waits, with a spinner.
    */
   | { t: 'browse'; id: number; req: BrowseRequest }
+  /**
+   * Browse Plex, or send something from it to a player.
+   *
+   * Request/reply like `browse`, including `play`: starting playback on an
+   * Apple TV means opening Plex on it and waiting for the app to announce
+   * itself, which takes seconds, and the panel should say "starting" until it
+   * has either worked or said why not.
+   */
+  | { t: 'plex'; id: number; req: PlexRequest }
   /**
    * Connect or disconnect a music service.
    *

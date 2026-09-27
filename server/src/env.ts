@@ -86,6 +86,21 @@ export interface Env {
   };
 
   /**
+   * A Plex Media Server, for the Apple TV screen's Plex tab.
+   *
+   * The token never reaches the panel. It is also handed to whichever player
+   * is told to play something, because that is how Plex works: the player
+   * fetches the media from the server itself, with the token it was given.
+   * So the URL has to be one the PLAYERS can reach — a LAN address, not a
+   * Docker service name.
+   */
+  plex: {
+    url: string;
+    token: string;
+    enabled: boolean;
+  };
+
+  /**
    * Bitfocus Companion, for the macro pages on the Controls screen.
    *
    * Base URL only — there is no token, because Companion's HTTP API has no
@@ -146,6 +161,8 @@ export function loadEnv(): Env {
   const immichUrl = normalizeUrl(str('IMMICH_URL'));
   const immichKey = str('IMMICH_API_KEY');
   const companionUrl = normalizeUrl(str('COMPANION_URL'));
+  const plexUrl = normalizeUrl(str('PLEX_URL'));
+  const plexToken = str('PLEX_TOKEN').trim();
   // A bare address, not a URL: the port and paths are fixed by Sonos.
   const sonosHost = str('SONOS_HOST').trim();
   const sonosDiscovery = bool('SONOS_DISCOVERY');
@@ -191,6 +208,12 @@ export function loadEnv(): Env {
       apiKey: immichKey,
       insecureTls: bool('IMMICH_INSECURE_TLS'),
       enabled: Boolean(immichUrl && immichKey),
+    },
+
+    plex: {
+      url: plexUrl,
+      token: plexToken,
+      enabled: Boolean(plexUrl && plexToken),
     },
 
     companion: {
