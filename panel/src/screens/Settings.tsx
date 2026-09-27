@@ -174,12 +174,13 @@ export function Settings() {
         </p>
 
         <div class="settings-page-grid" role="group" aria-label="Page memory">
-          <OverlayToggle pref="rememberPage" what="last page" label="Remember page" />
+          <OverlayToggle pref="rememberPage" what="last place" label="Remember page" />
         </div>
         <p class="settings-note">
-          Come back to the page this panel was last left on after a restart, instead
-          of starting on Home. Each panel remembers its own. Settings is never
-          remembered.
+          Come back to where this panel was last left after a restart, instead of
+          starting on Home — including which room was open and which page of
+          Controls. Each panel remembers its own. Settings and any open panel are
+          never remembered.
         </p>
 
         <div class="section-head">

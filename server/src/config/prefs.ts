@@ -7,6 +7,7 @@ import {
   LAYOUT_LIMITS,
   PANEL_PAGES,
   PREF_VALUES,
+  REMEMBERED_ID_MAX,
   panelIdOf,
   type PanelPrefs,
   type PanelPage,
@@ -215,6 +216,31 @@ export class PrefsStore {
       return null;
     }
 
+    /*
+     * The sub-page within that page: which room was open, which macro page
+     * Controls was showing. Quiet for the same reason `lastPage` is.
+     *
+     * These name things out of dashboard.yaml rather than an enum, so there
+     * is no list here to check them against — the store does not read the
+     * user's config, and threading it in so a rename could be rejected would
+     * be the wrong trade anyway. The same call was already made for the
+     * player layout: carrying a stale key the panel ignores beats dropping
+     * somebody's arrangement because a heading was renamed. So this refuses
+     * what is not plausibly an id, and the panel decides at restore whether
+     * the id still means anything.
+     */
+    if (key === 'lastRoom' || key === 'lastControlPage') {
+      const id = rememberedIdOf(value);
+      if (id === undefined) {
+        return `"${String(value)}" is not a valid ${key} (expected an id or null)`;
+      }
+      if (current[key] === id) return null;
+
+      this.#apply(panelId, { [key]: id } as Partial<PanelPrefs>, false);
+      log.debug(`Preference ${key} = ${id ?? 'none'} (${who})`);
+      return null;
+    }
+
     if ((BOOLEAN_PREFS as readonly string[]).includes(key)) {
       if (typeof value !== 'boolean') {
         return `"${value}" is not valid for ${key} (expected true or false)`;
@@ -321,6 +347,12 @@ function readScope(
     if (lastPage) scope.lastPage = lastPage;
   }
 
+  for (const key of ['lastRoom', 'lastControlPage'] as const) {
+    if (stored[key] === null || stored[key] === undefined) continue;
+    const id = rememberedIdOf(stored[key]);
+    if (id) scope[key] = id;
+  }
+
   let visiblePages = sanitizeVisiblePages(stored['visiblePages']);
   if (visiblePages && version < PREFS_SCHEMA) {
     // Apple TV became a first-class page in schema 2. Existing panels
@@ -353,6 +385,22 @@ function pageOf(raw: unknown): PanelPage | undefined {
   return typeof raw === 'string' && PANEL_PAGES.includes(raw as PanelPage)
     ? (raw as PanelPage)
     : undefined;
+}
+
+/**
+ * A remembered id from the config, `null` for "nowhere", or undefined if it
+ * is neither.
+ *
+ * Three states, so the caller can tell a deliberate clear from a rejection.
+ * Bounded because this is written to disk by a client; not pattern-checked,
+ * because the ids come out of the user's YAML and are theirs to name.
+ */
+function rememberedIdOf(raw: unknown): string | null | undefined {
+  if (raw === null) return null;
+  if (typeof raw !== 'string') return undefined;
+  const id = raw.trim();
+  if (!id || id.length > REMEMBERED_ID_MAX) return undefined;
+  return id;
 }
 
 function sanitizeVisiblePages(raw: unknown): PanelPage[] | null {
