@@ -93,6 +93,18 @@ function PlayingScreensaver({ player }: { player: SpeakerInfo }) {
 
   useEffect(() => setArtFailed(false), [art]);
 
+  /*
+   * Burn-in offset, stepped from the clock rather than animated.
+   *
+   * Music can hold this screen for hours, so it still needs to move — but
+   * `now` already ticks once a minute for the time display, so taking the
+   * position from it costs nothing. See screens.css for why the continuous
+   * animation this replaced was not the free ride it looked like.
+   */
+  const drift = idleConfig.value.burnInProtection
+    ? Math.floor(d.getTime() / 600_000) % 5
+    : 0;
+
   return (
     <div class="saver saver-now-playing">
       {artUrl && !artFailed ? (
@@ -100,7 +112,7 @@ function PlayingScreensaver({ player }: { player: SpeakerInfo }) {
       ) : null}
       <div class="saver-np-shade" />
 
-      <div class="saver-np-layout">
+      <div class="saver-np-layout" data-drift={drift}>
         <div class="saver-np-art" data-empty={!artUrl || artFailed ? '' : undefined}>
           {artUrl && !artFailed ? (
             <img
@@ -169,6 +181,15 @@ function PhotoScreensaver() {
   const layers = useRef<(PhotoRef[] | null)[]>([null, null]);
   /** Corner index for the overlay, changed per photo to spread wear. */
   const [corner, setCorner] = useState(0);
+  /**
+   * Offset within the corner, also stepped per photo.
+   *
+   * Five against four corners so the cycles do not stay in step — twenty
+   * positions before the pattern repeats. This replaces a continuous drift
+   * animation; see the note in screens.css for why a permanently running
+   * composited animation is not free on this device.
+   */
+  const [drift, setDrift] = useState(0);
 
   // Kick the slideshow off and keep it advancing.
   useEffect(() => {
@@ -203,8 +224,22 @@ function PhotoScreensaver() {
     if (layers.current[front]?.[0]?.id === slide[0]?.id) return;
     layers.current[back] = slide;
     setFront(back);
-    if (cfg.burnInProtection) setCorner((c) => (c + 1) % 4);
+    if (cfg.burnInProtection) {
+      setCorner((c) => (c + 1) % 4);
+      setDrift((d) => (d + 1) % 5);
+    }
   }, [slide]);
+
+  /*
+   * Without photos there is no slide change to step the overlay on, so the
+   * position comes from the clock instead. `now` already ticks once a
+   * minute for the time display, so this adds no timer and no extra render:
+   * the overlay simply lands somewhere new every ten minutes.
+   *
+   * It has to come from somewhere. The drift this replaced was continuous,
+   * so it covered the no-photo cases for free; stepping per photo does not.
+   */
+  const wander = cfg.burnInProtection ? Math.floor(d.getTime() / 600_000) : 0;
 
   if (immich.enabled && photosEmpty.value) {
     return (
@@ -213,7 +248,7 @@ function PhotoScreensaver() {
           <Icon name="photos" size="2.5rem" weight={1.4} />
           <div>No photos available from Immich</div>
         </div>
-        <SaverClock d={d} t={t} cfg={cfg} corner={0} />
+        <SaverClock d={d} t={t} cfg={cfg} corner={0} drift={wander % 5} />
       </div>
     );
   }
@@ -223,7 +258,7 @@ function PhotoScreensaver() {
   if (!immich.enabled) {
     return (
       <div class="saver saver-clock-only">
-        <SaverClock d={d} t={t} cfg={cfg} corner={corner} big />
+        <SaverClock d={d} t={t} cfg={cfg} corner={wander % 4} drift={wander % 5} big />
       </div>
     );
   }
@@ -267,7 +302,7 @@ function PhotoScreensaver() {
       })}
 
       <div class="saver-overlays" data-corner={corner}>
-        <SaverClock d={d} t={t} cfg={cfg} corner={corner} big />
+        <SaverClock d={d} t={t} cfg={cfg} corner={corner} drift={drift} big />
 
         {cfg.overlays.photoInfo && photo ? <PhotoCaption photos={slide} t={t} /> : null}
       </div>
@@ -280,19 +315,25 @@ function SaverClock({
   t,
   cfg,
   corner,
+  drift,
   big,
 }: {
   d: Date;
   t: TimeOpts;
   cfg: typeof idleConfig.value;
   corner: number;
+  drift: number;
   big?: boolean;
 }) {
   const wx = weather.value;
   const playing = nowPlaying.value;
 
   return (
-    <div class={big ? 'saver-info saver-info-big' : 'saver-info'} data-corner={corner}>
+    <div
+      class={big ? 'saver-info saver-info-big' : 'saver-info'}
+      data-corner={corner}
+      data-drift={drift}
+    >
       {prefs.value.photoScreensaverTime ? (
         <div class="saver-time tnum">
           {formatTime(d, t)}

@@ -454,7 +454,26 @@ describe('playlist', () => {
 });
 
 describe('image proxy', () => {
-  test('serves an image and caches it immutably', async () => {
+  test('grid tiles are cached immutably — they are re-read', async () => {
+    const panel = new PhotoPanel();
+    await panel.connect();
+    const [photo] = await panel.request(1);
+    panel.close();
+
+    const res = await fetch(`http://127.0.0.1:${PANEL_PORT}/img/${photo.id}?s=grid&t=${TOKEN}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'image/jpeg');
+    assert.match(res.headers.get('cache-control') ?? '', /immutable/);
+    assert.match(res.headers.get('cache-control') ?? '', /max-age=31536000/);
+  });
+
+  /*
+   * The slideshow is not a cache workload. A panel on the default 15 s
+   * interval pulls thousands of previews a day and shows each one once, so
+   * a year of `immutable` just evicts the things that are re-read. Ten
+   * minutes still covers stepping back through the history buffer.
+   */
+  test('slideshow previews are NOT cached for a year', async () => {
     const panel = new PhotoPanel();
     await panel.connect();
     const [photo] = await panel.request(1);
@@ -463,8 +482,18 @@ describe('image proxy', () => {
     const res = await fetch(`http://127.0.0.1:${PANEL_PORT}/img/${photo.id}?s=full&t=${TOKEN}`);
     assert.equal(res.status, 200);
     assert.equal(res.headers.get('content-type'), 'image/jpeg');
-    assert.match(res.headers.get('cache-control') ?? '', /immutable/);
-    assert.match(res.headers.get('cache-control') ?? '', /max-age=31536000/);
+
+    const cacheControl = res.headers.get('cache-control') ?? '';
+    assert.doesNotMatch(cacheControl, /immutable/);
+    assert.doesNotMatch(cacheControl, /max-age=31536000/);
+
+    // Long enough to cover `previous()` walking back through the 24-entry
+    // history, short enough that a day of slides does not accumulate.
+    const maxAge = Number(/max-age=(\d+)/.exec(cacheControl)?.[1]);
+    assert.ok(
+      maxAge >= 300 && maxAge <= 3600,
+      `expected a short but useful max-age, got "${cacheControl}"`,
+    );
   });
 
   test('NEVER requests an original from Immich', async () => {

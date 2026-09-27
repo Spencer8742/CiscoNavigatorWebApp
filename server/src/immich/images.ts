@@ -30,11 +30,29 @@ const log = logger('immich-img');
  * ## Caching
  *
  * Immich asset ids are UUIDs and a given asset's rendered thumbnail does not
- * change, so these are served `immutable` for a year. That matters more than
- * usual here: RoomOS wipes the panel's HTTP cache daily, so the panel will
- * re-fetch each morning — but a browser that has an image will never
- * revalidate it during the day, which is exactly the behaviour a slideshow
- * cycling a few hundred photos wants.
+ * change, so a long `immutable` lifetime is always *correct*. Whether it is
+ * *useful* depends entirely on whether the image is asked for twice, and the
+ * two sizes differ on exactly that point.
+ *
+ * `grid` tiles are small and genuinely re-read: the Photos screen repaints
+ * the same tiles on every visit. They keep the year.
+ *
+ * `full` is the slideshow, and it is not a cache — it is a firehose. The
+ * panel shows a new slide every `immich.intervalSeconds` (15 s by default),
+ * so it pulls on the order of 5,700 previews a day at roughly 0.5–1 MB each.
+ * Every one is displayed once. Telling the engine to keep all of them for a
+ * year does not make any of them faster; it fills a bounded cache with
+ * single-use megabytes and evicts the things that *are* re-read — the app
+ * bundle, the grid tiles, album art.
+ *
+ * Ten minutes instead. That still covers the only case where a full-size
+ * preview is legitimately asked for twice: `previous()` in
+ * panel/src/media/photos.ts steps back through a 24-entry history, which at
+ * the default interval is about six minutes of slideshow.
+ *
+ * (The earlier comment here reasoned about "a slideshow cycling a few
+ * hundred photos". Panel logs from a Room Navigator put the real figure two
+ * orders of magnitude higher, which is what changed the answer.)
  */
 
 /** The only sizes the panel can ask for, and what they mean upstream. */
@@ -46,6 +64,15 @@ const SIZE_MAP = {
 } as const;
 
 type PanelSize = keyof typeof SIZE_MAP;
+
+/**
+ * How long each size is worth keeping. See "Caching" above — this is about
+ * how often the image is asked for again, not about whether it can change.
+ */
+const CACHE_CONTROL: Record<PanelSize, string> = {
+  grid: 'public, max-age=31536000, immutable',
+  full: 'public, max-age=600',
+};
 
 const ALLOWED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/avif']);
 const MAX_BYTES = 24 * 1024 * 1024;
@@ -114,8 +141,7 @@ export class ImmichImages {
 
       res.writeHead(200, {
         'content-type': type,
-        // Safe unconditionally: the id is a UUID and the rendering is fixed.
-        'cache-control': 'public, max-age=31536000, immutable',
+        'cache-control': CACHE_CONTROL[panelSize],
         'x-content-type-options': 'nosniff',
       });
 
