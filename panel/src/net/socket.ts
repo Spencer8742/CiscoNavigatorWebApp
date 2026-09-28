@@ -498,6 +498,15 @@ export function setKeyLight(light: string, op: KeyLightOp, value?: number): bool
   return send({ t: 'keylight', id: nextId(), light, op, value });
 }
 
+/** Set the level of, or mute, the device behind a `volume:` item. */
+export function setRoomosVolume(
+  item: string,
+  op: 'level' | 'mute' | 'unmute',
+  value?: number,
+): boolean {
+  return send({ t: 'roomos-volume', id: nextId(), item, op, value });
+}
+
 export function appleTvCommand(appleTv: string, op: import('@shared/protocol.ts').AppleTvCommand): boolean {
   return send({ t: 'apple-tv', id: nextId(), appleTv, op });
 }

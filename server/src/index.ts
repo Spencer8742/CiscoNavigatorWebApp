@@ -539,6 +539,7 @@ async function main(): Promise<void> {
     onControl: (button) => controls.press(button),
     onKeyLight: (light, op, value) => controls.keyLight(light, op, value),
     onSource: (item, value) => controls.selectSource(item, value),
+    onRoomosVolume: (item, op, value) => controls.roomosVolume(item, op, value),
 
     onPhotos: async (count) => {
       const photos = await playlist.take(count);

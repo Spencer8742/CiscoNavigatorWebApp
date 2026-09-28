@@ -5,8 +5,8 @@ import { Pressable } from '~/components/Pressable.tsx';
 import { Slider } from '~/components/Slider.tsx';
 import { controlPage, kiosk, markActivity, openSources } from '~/state/ui.ts';
 import { entity } from '~/state/entities.ts';
-import { keyLightFor, liveLabelOf, pressed } from '~/state/controls.ts';
-import { pressControl, setKeyLight } from '~/net/socket.ts';
+import { keyLightFor, liveLabelOf, pressed, roomosStateOf } from '~/state/controls.ts';
+import { pressControl, setKeyLight, setRoomosVolume } from '~/net/socket.ts';
 import { KEY_LIGHT_MAX_KELVIN, KEY_LIGHT_MIN_KELVIN } from '@shared/protocol.ts';
 import { DeviceTile } from '~/components/DeviceTile.tsx';
 import type {
@@ -15,6 +15,7 @@ import type {
   ControlLight,
   ControlPage,
   ControlSources,
+  ControlVolume,
 } from '@shared/config.ts';
 import type { KeyLightState } from '@shared/protocol.ts';
 
@@ -176,6 +177,7 @@ function Page({ page }: { page: ControlPage }) {
     i.type === 'button' || i.type === 'sources',
   );
   const lights = page.items.filter(isLight);
+  const volumes = page.items.filter((i): i is ControlVolume => i.type === 'volume');
   const devices = page.items.filter((i): i is ControlDevice => i.type === 'device');
 
   return (
@@ -184,7 +186,11 @@ function Page({ page }: { page: ControlPage }) {
           page's subject when there is one — a Desk Pro with its meetings and
           its live mute state is not a peer of a key that fires and forgets. */}
       {devices.map((item) => (
-        <DeviceTile key={item.id} item={item} compact={keys.length > 0 || lights.length > 0} />
+        <DeviceTile
+          key={item.id}
+          item={item}
+          compact={keys.length > 0 || lights.length > 0 || volumes.length > 0}
+        />
       ))}
 
       {keys.length > 0 ? (
@@ -212,6 +218,10 @@ function Page({ page }: { page: ControlPage }) {
           )}
         </div>
       ) : null}
+
+      {volumes.map((item) => (
+        <VolumeCard key={item.id} item={item} />
+      ))}
 
       {lights.map((item) => (
         <KeyLightCard key={item.id} item={item} />
@@ -396,6 +406,66 @@ function SourcesButton({ item }: { item: ControlSources }) {
           value belongs in the sheet, which has room for it. */}
       <span class="macro-btn-name truncate">{item.name}</span>
     </Pressable>
+  );
+}
+
+/**
+ * A RoomOS device's volume: a mute key and a level slider, both read back
+ * from the device.
+ *
+ * Laid out like a key light card on purpose — it is the same kind of thing,
+ * a control with live state — with the device's own mute where the light's
+ * power key is. The level is sent on release only: every step of a drag is
+ * an xCommand to a codec, and a stream of them would arrive out of order and
+ * leave the volume wherever the losing one said.
+ */
+function VolumeCard({ item }: { item: ControlVolume }) {
+  const state = roomosStateOf(item.device);
+  const reachable = Boolean(state?.reachable) && state?.volume !== null;
+  const level = state?.volume ?? 0;
+  const muted = state?.muted === true;
+
+  return (
+    <div class="card keylight is-volume" data-off={muted || !reachable ? '' : undefined}>
+      <div class="keylight-head">
+        <Pressable
+          class="keylight-power"
+          onPress={() => {
+            setRoomosVolume(item.id, muted ? 'unmute' : 'mute');
+            markActivity();
+          }}
+          ariaLabel={`${item.name}: ${muted ? 'unmute' : 'mute'}`}
+          ariaPressed={muted}
+          disabled={!reachable}
+        >
+          <Icon name={muted ? 'mute' : 'volume'} size="1.5rem" weight={1.9} />
+        </Pressable>
+
+        <div class="keylight-titles">
+          <div class="keylight-name truncate">{item.name}</div>
+          <div class="keylight-state">
+            {!reachable ? 'Unreachable' : muted ? `Muted · ${level}` : `${level}`}
+          </div>
+        </div>
+      </div>
+
+      <Slider
+        value={level}
+        min={0}
+        max={100}
+        size="lg"
+        disabled={!reachable}
+        readout={String(level)}
+        ariaLabel={`${item.name} volume`}
+        icon={<Icon name="volume" size="1.125rem" />}
+        onChange={(value, final) => {
+          if (final) {
+            setRoomosVolume(item.id, 'level', value);
+            markActivity();
+          }
+        }}
+      />
+    </div>
   );
 }
 

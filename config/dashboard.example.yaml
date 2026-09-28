@@ -442,6 +442,8 @@ cast:
 #   wait:       a pause between two steps, in seconds.
 #   light:      not a button — the FULL key light control, with power,
 #               brightness and colour temperature.
+#   volume:     not a button — a volume slider and mute key for a device in
+#               `roomos:`, with live state.
 #
 # The panel never sends a URL, a command or a webhook id. It
 # sends the button's id and the backend looks it up here, for the same reason
@@ -585,12 +587,13 @@ controls:
   #
   #   - { name: Wake,  roomos: desk_pro, command: Standby Deactivate }
   #   - { name: Sleep, roomos: desk_pro, command: Standby Halfwake }
-  #   - name: RKM Vol +
-  #     icon: volumeUp
-  #     roomos: room_kit_mini
-  #     command: Audio Volume Increase
-  #     params: { Steps: 5 }
-  #   - { name: RKM Mute, icon: mute, roomos: room_kit_mini, command: Audio Volume ToggleMute }
+  #   - { name: DND,   roomos: desk_pro, command: Conference DoNotDisturb Activate }
+  #
+  # And `volume:` is not a key but a CONTROL — a mute key and a level slider,
+  # both read back from the device, so it shows where the volume is and
+  # follows the device's own buttons. It sits below the keys, like a light:
+  #
+  #   - { volume: room_kit_mini, name: Room Kit Mini }
   #
   # `next` presents the input AFTER the one the device says is on screen,
   # skipping one with nothing plugged in, and draws the current input under

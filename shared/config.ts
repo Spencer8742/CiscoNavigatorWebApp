@@ -660,7 +660,29 @@ export interface DeviceEntities {
   stopSharing?: string;
 }
 
-export type ControlItem = ControlButton | ControlLight | ControlSources | ControlDevice;
+/**
+ * A volume slider and mute key for a device in `controls.roomos`, read back
+ * from the device itself.
+ *
+ * Three keys — up, down, mute — say nothing about where the volume IS, and
+ * take six presses to cross the room's usual range. The device reports its
+ * level and mute state over the same xAPI connection, so this is drawn as a
+ * control with live state, like a key light, rather than a row of keys.
+ */
+export interface ControlVolume {
+  type: 'volume';
+  id: string;
+  /** A device id from `controls.roomos`. */
+  device: string;
+  name: string;
+}
+
+export type ControlItem =
+  | ControlButton
+  | ControlLight
+  | ControlSources
+  | ControlDevice
+  | ControlVolume;
 
 export interface ControlPage {
   id: string;

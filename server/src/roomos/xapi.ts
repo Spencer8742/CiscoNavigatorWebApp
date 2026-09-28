@@ -20,6 +20,9 @@ const SETTLE_MS = 120;
 /** The two subtrees whose changes decide what the key shows. */
 const PRESENTATION = ['Status', 'Conference', 'Presentation'];
 const VIDEO_INPUT = ['Status', 'Video', 'Input'];
+/** Volume and mute, for a volume control's live state. */
+const AUDIO_VOLUME = ['Status', 'Audio', 'Volume'];
+const AUDIO_MUTE = ['Status', 'Audio', 'VolumeMute'];
 
 export interface RoomosOptions {
   id: string;
@@ -51,7 +54,7 @@ type Pending = (reply: Rpc) => void;
  *
  * Here the device tells us. `xFeedback/Subscribe` on the presentation status
  * delivers an event for every change, whoever made it, and each one is
- * answered by re-reading the two subtrees that matter rather than by merging
+ * answered by re-reading what matters (presentation, inputs, volume) rather than by merging
  * the event into a local copy. RoomOS signals a removed instance with a
  * `ghost` entry, and a merge that mishandles one is a key stuck on an input
  * that stopped presenting ten minutes ago; a re-read cannot get that wrong.
@@ -78,6 +81,8 @@ export class RoomosClient {
   #sendingMode: string | undefined;
   #instance: number | undefined;
   #connectors: RoomosState['connectors'] = [];
+  #volume: number | null = null;
+  #muted: boolean | null = null;
 
   constructor(opts: RoomosOptions) {
     this.#opts = opts;
@@ -104,6 +109,8 @@ export class RoomosClient {
       reachable: this.#reachable,
       connector: this.#reachable ? this.#connector : null,
       connectors: this.#connectors,
+      volume: this.#reachable ? this.#volume : null,
+      muted: this.#reachable ? this.#muted : null,
     };
   }
 
@@ -244,12 +251,17 @@ export class RoomosClient {
 
   async #onOpen(socket: WebSocket): Promise<void> {
     try {
-      for (const query of [PRESENTATION, VIDEO_INPUT]) {
+      for (const query of [PRESENTATION, VIDEO_INPUT, AUDIO_VOLUME, AUDIO_MUTE]) {
         const reply = await this.#request('xFeedback/Subscribe', {
           Query: query,
           NotifyCurrentValue: false,
         });
-        if (reply.error) throw new Error(reply.error.message ?? 'subscribe refused');
+        // The presentation is what the connection is for; audio is only for
+        // a volume control, and a device that will not report it should
+        // still present. So only the first two are fatal.
+        if (reply.error && (query === PRESENTATION || query === VIDEO_INPUT)) {
+          throw new Error(reply.error.message ?? 'subscribe refused');
+        }
       }
       await this.#refresh();
     } catch (err) {
@@ -345,10 +357,16 @@ export class RoomosClient {
   }
 
   async #refresh(): Promise<void> {
-    const [presentation, input] = await Promise.all([
+    const [presentation, input, volume, mute] = await Promise.all([
       this.#get(PRESENTATION),
       this.#get(VIDEO_INPUT),
+      this.#leaf(AUDIO_VOLUME),
+      this.#leaf(AUDIO_MUTE),
     ]);
+    const level = int(volume);
+    const nextVolume = level === undefined ? null : level;
+    const muteWord = leaf(mute);
+    const nextMuted = muteWord === undefined ? null : muteWord.toLowerCase() === 'on';
 
     const sources = new Map<number, number>();
     for (const source of list(input['Source'])) {
@@ -391,10 +409,25 @@ export class RoomosClient {
 
     const changed =
       connector !== this.#connector ||
+      nextVolume !== this.#volume ||
+      nextMuted !== this.#muted ||
       JSON.stringify(connectors) !== JSON.stringify(this.#connectors);
     this.#connector = connector;
     this.#connectors = connectors;
+    this.#volume = nextVolume;
+    this.#muted = nextMuted;
     if (changed && this.#reachable) this.#onChange?.();
+  }
+
+  /** One leaf value — `Audio Volume` is a number, not a subtree. */
+  async #leaf(path: string[]): Promise<unknown> {
+    const reply = await this.#request('xGet', { Path: path });
+    if (reply.error) return undefined;
+    let node: unknown = reply.result;
+    if (isObj(node) && path[0]! in node) {
+      for (const key of path) node = isObj(node) ? node[key] : undefined;
+    }
+    return node;
   }
 
   /**

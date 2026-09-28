@@ -2413,6 +2413,13 @@
   color: var(--light-on);
 }
 
+/* A volume card's mute key is the accent colour, not the light's warm
+   one — it is a speaker, and warm would read as "a light is on". */
+.keylight.is-volume .keylight-power {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 /* Off is the quiet state, not the alarming one. */
 .keylight[data-off] .keylight-power {
   background: var(--surface-3);
