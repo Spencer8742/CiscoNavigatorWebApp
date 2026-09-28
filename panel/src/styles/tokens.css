@@ -153,6 +153,9 @@
   /* The long-press reveal ring, drawn over whatever the screen shows. */
   --ring: rgba(255, 255, 255, 0.5);
 
+  /* Laid over a control while it is held down, so it reads as pushed in. */
+  --press-shade: rgba(0, 0, 0, 0.22);
+
   --scrim: rgba(6, 7, 10, 0.82);
 }
 
@@ -188,6 +191,8 @@ html[data-theme='light'] {
   --climate-cool: #0284c7;
 
   --ring: rgba(16, 22, 34, 0.4);
+
+  --press-shade: rgba(16, 22, 34, 0.1);
 
   --scrim: rgba(28, 32, 42, 0.45);
 }

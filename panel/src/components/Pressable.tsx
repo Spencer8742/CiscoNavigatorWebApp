@@ -34,6 +34,13 @@ import type { ComponentChildren, JSX } from 'preact';
 
 const SLOP_PX = 14;
 
+/**
+ * Shortest time a tap stays visibly pushed in. A quick tap lifts well inside
+ * the press-in transition, so without this the key would start back up
+ * before it had got down, and read as a flicker rather than a press.
+ */
+const MIN_PRESS_MS = 110;
+
 export interface PressableProps {
   onPress?: () => void;
   /** Fired after ~550 ms held. Used to open entity detail sheets. */
@@ -74,21 +81,40 @@ export function Pressable({
   const start = useRef<{ x: number; y: number; id: number } | null>(null);
   const longTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const longFired = useRef(false);
+  const pressedAt = useRef(0);
+  const releaseTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const setPressed = useCallback((on: boolean) => {
     // Direct DOM write, deliberately bypassing the render cycle. See (1).
+    clearTimeout(releaseTimer.current);
+    releaseTimer.current = undefined;
     const node = el.current;
     if (!node) return;
-    if (on) node.setAttribute('data-pressed', '');
-    else node.removeAttribute('data-pressed');
+    if (on) {
+      pressedAt.current = performance.now();
+      node.setAttribute('data-pressed', '');
+    } else node.removeAttribute('data-pressed');
   }, []);
 
-  const end = useCallback(() => {
-    clearTimeout(longTimer.current);
-    longTimer.current = undefined;
-    start.current = null;
-    setPressed(false);
+  /** Release after a tap, holding it down for at least MIN_PRESS_MS. */
+  const releaseSoon = useCallback(() => {
+    const left = MIN_PRESS_MS - (performance.now() - pressedAt.current);
+    if (left <= 0) return setPressed(false);
+    clearTimeout(releaseTimer.current);
+    releaseTimer.current = setTimeout(() => setPressed(false), left);
   }, [setPressed]);
+
+  const end = useCallback(
+    (tap = false) => {
+      clearTimeout(longTimer.current);
+      longTimer.current = undefined;
+      start.current = null;
+      // A scroll or cancel lets go at once; only a real tap gets the hold.
+      if (tap) releaseSoon();
+      else setPressed(false);
+    },
+    [setPressed, releaseSoon],
+  );
 
   const onPointerDown = useCallback(
     (e: JSX.TargetedPointerEvent<HTMLElement>) => {
@@ -135,7 +161,7 @@ export function Pressable({
   const onPointerUp = useCallback(
     (e: JSX.TargetedPointerEvent<HTMLElement>) => {
       const s = start.current;
-      end();
+      end(true);
       if (disabled || !s || s.id !== e.pointerId || longFired.current) return;
       const moved = Math.abs(e.clientX - s.x) > SLOP_PX || Math.abs(e.clientY - s.y) > SLOP_PX;
       if (!moved) onPress?.();
@@ -149,7 +175,7 @@ export function Pressable({
     onPointerDown,
     onPointerMove,
     onPointerUp,
-    onPointerCancel: end,
+    onPointerCancel: () => end(),
     onClick: (e: JSX.TargetedMouseEvent<HTMLElement>) => {
       // Pointer activation already happened on release. Keyboard/AT clicks have no detail.
       if (e.detail === 0 && !disabled) onPress?.();

@@ -7,20 +7,49 @@
 /* ── Pressable ────────────────────────────────────────────────────────────
    The press response is a compositor-only scale. It is applied by an
    attribute written directly in the pointerdown handler, so it lands in the
-   very next frame without waiting for a render. */
+   very next frame without waiting for a render.
+
+   It is meant to feel like a physical key: it goes DOWN fast and flat, a
+   shade falls over the face so it reads as sunk rather than just smaller,
+   and on release it springs back OUT with a slight overshoot. The two
+   directions need different curves, so each state carries its own
+   transition — a transition is taken from the state being entered. */
 
 .pressable {
   position: relative;
   -webkit-user-select: none;
   user-select: none;
   touch-action: manipulation;
-  transition: transform var(--t-instant) var(--ease),
+  /* Release: pop back out, overshooting a touch past rest. */
+  transition: transform var(--t-base) var(--ease-out-back),
     background-color var(--t-fast) var(--ease);
   will-change: transform;
 }
 
+/* The "pushed in" shade. Opacity on a pseudo-element rather than a
+   background change, so it works over any fill (accent, danger, artwork)
+   and stays on the compositor. No box-shadow — see tokens.css. */
+.pressable::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--press-shade);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--t-base) var(--ease);
+}
+
 .pressable[data-pressed] {
-  transform: scale(0.965);
+  transform: scale(0.94);
+  /* Press: straight down, no bounce. */
+  transition: transform var(--t-instant) var(--ease),
+    background-color var(--t-fast) var(--ease);
+}
+
+.pressable[data-pressed]::after {
+  opacity: 1;
+  transition: opacity var(--t-instant) var(--ease);
 }
 
 .pressable:disabled {
@@ -29,11 +58,11 @@
 
 /* Small controls need a bigger relative squash to read as pressed at all. */
 .pressable.p-sm[data-pressed] {
-  transform: scale(0.9);
+  transform: scale(0.88);
 }
 /* Large cards need less, or the movement looks slack. */
 .pressable.p-lg[data-pressed] {
-  transform: scale(0.985);
+  transform: scale(0.97);
 }
 
 /* ── Navigation ───────────────────────────────────────────────────────────*/
