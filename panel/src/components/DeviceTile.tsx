@@ -314,7 +314,7 @@ function Meetings({ entities: e }: { entities: DeviceEntities }) {
   const meetings = all.filter((m) => !isOver(m, at));
 
   /*
-   * Which row gets the Join badge — and whether one is honest at all.
+   * Which row gets the Join badge.
    *
    * `join_next_meeting` is a single button with no argument. The integration
    * points it at the earliest booking in the DEVICE's list that carries a
@@ -322,10 +322,11 @@ function Meetings({ entities: e }: { entities: DeviceEntities }) {
    * meeting it starts. All the panel can do is put the badge on the row that
    * button will actually dial.
    *
-   * When that booking has already finished, the button is pointed at
-   * something nobody wants to join. Moving the badge to the meeting that IS
-   * happening would not change where it dials — it would just make the panel
-   * lie more convincingly. So no badge, and a line saying why.
+   * When that booking has already finished, no badge: moving it to the
+   * meeting that IS happening would not change where it dials. The backend
+   * refreshes the device's list the moment that booking ends (see
+   * server/src/ha/meetings.ts), which moves the button on, so this lasts
+   * only as long as that refresh takes.
    */
   const deviceTarget = all.find((m) => m.joinable);
   const stale = deviceTarget !== undefined && isOver(deviceTarget, at);
@@ -356,15 +357,6 @@ function Meetings({ entities: e }: { entities: DeviceEntities }) {
         </div>
       ) : (
         <div class="devtile-list scroll">
-          {stale ? (
-            <div class="devtile-stale">
-              <Icon name="alert" size="0.875rem" weight={1.9} />
-              <span>
-                Join is pointed at a meeting that has already finished — the list refreshes
-                on the half hour.
-              </span>
-            </div>
-          ) : null}
           {meetings.map((m, i) => (
             <div class="devtile-meeting" key={`${m.start_time ?? ''}-${i}`}>
               <div class="devtile-time tnum">{clockOf(m.start_time, t)}</div>
