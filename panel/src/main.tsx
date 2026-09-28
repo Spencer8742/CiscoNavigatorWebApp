@@ -4,6 +4,7 @@ import { setNativeWakePaused } from '~/assist/native.ts';
 import { App } from '~/app.tsx';
 import { initAuth } from '~/net/auth.ts';
 import { connect } from '~/net/socket.ts';
+import { installKineticScroll } from '~/lib/kinetic.ts';
 import { resyncClock, startClock } from '~/state/clock.ts';
 import { startIdleMonitor } from '~/state/idle.ts';
 import { startPlaceMemory } from '~/state/place.ts';
@@ -38,6 +39,9 @@ if (root) {
 
 startClock();
 startIdleMonitor();
+// Every list in the app glides after a swipe; the Navigator's own touch
+// scrolling stops dead on release. See lib/kinetic.ts.
+installKineticScroll();
 // Before connect(), so the effect is watching when the first `hello` lands
 // and the panel restores where it was in the same tick rather than after a
 // visible frame on Home.

@@ -1349,6 +1349,7 @@
        not the screen. The card stays put and the layout still reads as one
        screenful. */
     overflow-y: auto;
+    touch-action: none; /* scrolled by lib/kinetic.ts */
   }
 
   .side-card {
@@ -2082,6 +2083,7 @@
   display: flex;
   gap: var(--s-2);
   overflow-x: auto;
+  touch-action: none; /* scrolled by lib/kinetic.ts */
   padding: 0 var(--s-6) var(--s-4);
   scrollbar-width: none;
 }
@@ -2300,6 +2302,50 @@
   align-items: center;
   gap: var(--s-2);
   min-width: 0;
+}
+
+/* A volume card in the key grid. It spans the rest of its row (set inline
+   from the page's column count) and is exactly as tall as a key FACE, so it
+   lines up with the keys beside it rather than with their labels. */
+.macro-volume {
+  align-self: start;
+  margin-bottom: 0;
+  height: 4.75rem;
+  padding: var(--s-2) var(--s-4);
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+}
+
+/* A standard-size face is too short for a heading above a slider, so there
+   the card is one row: mute, name, slider. */
+.macro-volume .keylight-head {
+  flex: 0 0 auto;
+  max-width: 40%;
+  margin-bottom: 0;
+}
+.macro-volume .slider {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* The level is already in the heading beside it; the slider's own icon and
+   readout row would only push the track out of the card. */
+.macro-grid:not([data-size='lg']) .macro-volume .slider-head {
+  display: none;
+}
+
+/* `size: lg`: an 11rem face has room for the key light layout proper —
+   heading over a full-width slider. */
+.macro-grid[data-size='lg'] .macro-volume {
+  height: 11rem;
+  padding: var(--s-4) var(--s-5);
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: var(--s-3);
+}
+.macro-grid[data-size='lg'] .macro-volume .keylight-head {
+  max-width: none;
 }
 
 .macro-btn.is-wide {
@@ -3333,6 +3379,7 @@ html[data-theme='light'] .joinprompt {
   display: flex;
   gap: var(--s-3);
   overflow-x: auto;
+  touch-action: none; /* scrolled by lib/kinetic.ts */
   padding-bottom: var(--s-3);
   scrollbar-width: none;
 }
