@@ -1110,6 +1110,7 @@ media:
         'rememberPage',
         'screensaverMode',
         'showSettings',
+        'theme',
         'visiblePages',
       ],
       'no extra keys were introduced by a hostile payload',

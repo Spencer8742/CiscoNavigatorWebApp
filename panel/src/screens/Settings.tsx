@@ -5,7 +5,14 @@ import { Pressable } from '~/components/Pressable.tsx';
 import { WakeSettings } from '~/components/WakeSettings.tsx';
 import { reloadAllPanels, setPref } from '~/net/socket.ts';
 import { getPanelId } from '~/net/auth.ts';
-import { BOOLEAN_PREFS, PANEL_PAGES, type PanelPage, type PanelPrefs } from '@shared/protocol.ts';
+import {
+  BOOLEAN_PREFS,
+  PANEL_PAGES,
+  THEME_DAY_HOURS,
+  type PanelPage,
+  type PanelPrefs,
+} from '@shared/protocol.ts';
+import { theme } from '~/state/theme.ts';
 import { entityCount } from '~/state/entities.ts';
 import { speakers } from '~/state/selectors.ts';
 import { formatRelative } from '~/lib/format.ts';
@@ -77,6 +84,26 @@ export function Settings() {
       </div>
 
       <div class="screen-body scroll">
+        <div class="section-head">
+          <h2 class="section-title">Appearance</h2>
+        </div>
+        <div class="rows">
+          <div class="rows-row">
+            <span class="rows-key">Theme</span>
+            <div class="segmented" role="group" aria-label="Theme">
+              <ThemeItem value="auto" label="Auto" />
+              <ThemeItem value="light" label="Light" />
+              <ThemeItem value="dark" label="Dark" />
+            </div>
+          </div>
+        </div>
+        <p class="settings-note">
+          <strong>Auto</strong> is light from {hourLabel(THEME_DAY_HOURS.from)} to{' '}
+          {hourLabel(THEME_DAY_HOURS.until)} and dark overnight, on this panel's clock
+          — it is showing <strong>{theme.value}</strong> now. The screensaver stays
+          dark either way.
+        </p>
+
         <WakeSettings />
         <div class="section-head">
           <h2 class="section-title">Home screen</h2>
@@ -421,6 +448,27 @@ function SegItem({ value, label }: { value: PanelPrefs['homeSide']; label: strin
       {label}
     </Pressable>
   );
+}
+
+/** One option in the theme picker. Same shape as the two pickers either side. */
+function ThemeItem({ value, label }: { value: PanelPrefs['theme']; label: string }) {
+  const active = prefs.value.theme === value;
+  return (
+    <Pressable
+      class={active ? 'seg-item is-active' : 'seg-item'}
+      onPress={() => setPref('theme', value)}
+      ariaPressed={active}
+      ariaLabel={`Theme: ${label}`}
+    >
+      {label}
+    </Pressable>
+  );
+}
+
+/** "7 AM" / "07:00", in the clock style the panel is configured for. */
+function hourLabel(hour: number): string {
+  if (ui.value.clock !== '12h') return `${String(hour).padStart(2, '0')}:00`;
+  return `${hour % 12 || 12} ${hour < 12 ? 'AM' : 'PM'}`;
 }
 
 /**

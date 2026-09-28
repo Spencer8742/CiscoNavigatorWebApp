@@ -7,6 +7,7 @@ import { connect } from '~/net/socket.ts';
 import { resyncClock, startClock } from '~/state/clock.ts';
 import { startIdleMonitor } from '~/state/idle.ts';
 import { startPlaceMemory } from '~/state/place.ts';
+import { startTheme } from '~/state/theme.ts';
 import { startTimers } from '~/state/timers.ts';
 import { assistWakePaused, openAssistAndListen } from '~/state/ui.ts';
 
@@ -26,6 +27,8 @@ import '~/styles/timers.css';
 
 initAuth();
 startTimers();
+// Before the first render, so the first frame is already the right colour.
+startTheme();
 
 const root = document.getElementById('app');
 if (root) {

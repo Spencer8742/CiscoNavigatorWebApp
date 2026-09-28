@@ -628,6 +628,13 @@
 .forecast-temperatures > span { display: flex; flex-direction: column; }
 .forecast-temperatures > span + span { color: var(--text-dim); }
 .forecast-temperatures small { font-size: 0.7rem; color: var(--text-dim); }
+/* The pale weather hues above are chosen for a dark card and vanish on white. */
+html[data-theme='light'] .forecast-symbol[data-weather="sun"] { color: #d98a00; }
+html[data-theme='light'] .forecast-symbol[data-weather="rain"],
+html[data-theme='light'] .forecast-rain { color: #0284c7; }
+html[data-theme='light'] .forecast-symbol[data-weather="storm"] { color: #c0399a; }
+html[data-theme='light'] .forecast-symbol[data-weather="snow"],
+html[data-theme='light'] .forecast-symbol[data-weather="clear"] { color: #5b8fa8; }
 .forecast-rain { min-height: 1.4rem; margin-top: 0.4rem; display: flex; gap: 0.3rem; align-items: center; justify-content: center; color: #73c9ee; font-size: 0.8rem; }
 .forecast-status { min-height: 12rem; display: flex; align-items: center; justify-content: center; gap: 1rem; color: var(--text-dim); }
 .forecast-status .sheet-close { min-width: var(--touch-min); min-height: var(--touch-min); }

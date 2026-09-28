@@ -171,7 +171,7 @@ img {
   width: 26px;
   height: 26px;
   border-radius: var(--r-full);
-  border: 2px solid rgba(255, 255, 255, 0.5);
+  border: 2px solid var(--ring);
   opacity: 0;
   transform: scale(0.4);
   /* Only transform and opacity: the two properties Chromium 102 on this
