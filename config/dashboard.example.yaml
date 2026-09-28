@@ -703,6 +703,9 @@ controls:
   #          # Press:  wake sleep answer hangUp join refreshMeetings
   #          #         shareLocal shareToCall stopSharing
   #          #
+  #          # refreshMeetings has no key on the tile: the backend presses
+  #          # it whenever a call starts or ends, and at :00 and :30.
+  #          #
   #          # Overriding one, and dropping one:
   #          # volume: number.desk_pro_speaker_volume
   #          # selfview: null

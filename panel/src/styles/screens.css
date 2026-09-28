@@ -2760,18 +2760,6 @@
   color: var(--accent);
 }
 
-.devtile-refresh {
-  margin-left: auto;
-  width: var(--touch-min);
-  height: var(--touch-min);
-  border-radius: var(--r-full);
-  background: var(--surface-3);
-  color: var(--text-dim);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
 .devtile-empty {
   color: var(--text-faint);
   font-size: 0.9375rem;
