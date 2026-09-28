@@ -1532,7 +1532,7 @@
   border-radius: var(--r-full);
   font-size: 0.875rem;
   font-weight: 600;
-  color: var(--text);
+  color: #fff;
   /* Solid rather than translucent: backdrop-filter is the one effect the
      brief flagged as conditional on performance, and a chip over an
      arbitrary photo does not need it to stay legible. */
@@ -2617,6 +2617,10 @@
   animation: joinprompt-in var(--t-base) var(--ease);
 }
 
+html[data-theme='light'] .joinprompt {
+  background: rgba(28, 32, 42, 0.4);
+}
+
 .joinprompt-card {
   width: min(30rem, 100%);
   display: flex;
@@ -2932,7 +2936,7 @@
 .screen-lock[data-pressed],
 .devtile-power[data-pressed] {
   background: var(--surface-4);
-  border-color: rgba(255, 255, 255, 0.28);
+  border-color: var(--border-strong);
 }
 
 /* On a lit key the same press has to read as a press rather than as the key

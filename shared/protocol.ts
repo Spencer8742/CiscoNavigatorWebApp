@@ -1005,6 +1005,7 @@ export type ClientMessage =
       key: 'screensaverMode';
       value: PanelPrefs['screensaverMode'];
     }
+  | { t: 'pref'; id: number; key: 'theme'; value: PanelPrefs['theme'] }
   | { t: 'pref'; id: number; key: 'visiblePages'; value: PanelPage[] }
   | { t: 'pref'; id: number; key: 'homeTime'; value: boolean }
   | { t: 'pref'; id: number; key: 'photoScreensaverTime'; value: boolean }
@@ -1065,6 +1066,13 @@ export interface PanelPrefs {
    * never empty — which is the entire reason it exists.
    */
   homeSide: 'media' | 'photos';
+  /**
+   * Light or dark. `auto` — the default — is light by day and dark by night
+   * in the configured `ui.timezone` (see `THEME_DAY_HOURS`), so a panel in a
+   * bright room by day is not a black rectangle, and one in a dark room at
+   * night is not a lamp.
+   */
+  theme: 'auto' | 'light' | 'dark';
   /**
    * What the idle screen shows.
    *
@@ -1224,6 +1232,7 @@ export function panelIdOf(value: unknown): string | null {
 
 export const DEFAULT_PREFS: PanelPrefs = {
   homeSide: 'media',
+  theme: 'auto',
   screensaverMode: 'music',
   visiblePages: [...PANEL_PAGES],
   homeTime: true,
@@ -1254,8 +1263,15 @@ export const LAYOUT_LIMITS = { sections: 12, playersPerSection: 100, hidden: 200
  */
 export const PREF_VALUES: Record<string, readonly string[]> = {
   homeSide: ['media', 'photos'],
+  theme: ['auto', 'light', 'dark'],
   screensaverMode: ['photos', 'music', 'both'],
 };
+
+/**
+ * When `theme: auto` is light: from the first hour up to (not including) the
+ * second, on the panel's configured clock.
+ */
+export const THEME_DAY_HOURS = { from: 7, until: 19 } as const;
 
 /** Boolean preferences accepted from a panel and persisted by the backend. */
 export const BOOLEAN_PREFS = [

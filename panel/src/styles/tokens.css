@@ -26,51 +26,6 @@
      further away. */
   font-size: clamp(14px, min(1.25vw, 2vh), 21px);
 
-  /* ── Surfaces ───────────────────────────────────────────────────────────── */
-  --bg: #08090c; /* page — near-black, not black: avoids smearing on LCD */
-  --surface-1: #101218; /* cards */
-  --surface-2: #171a22; /* raised: sheets, popovers, active nav */
-  --surface-3: #1f232d; /* controls inside cards */
-  --surface-4: #2a2f3b; /* pressed / hover */
-
-  /* Fill used for "this thing is on" without going full accent. */
-  --surface-active: #22283a;
-
-  /* ── Borders ─────────────────────────────────────────────────────────────
-     Hairlines carry the depth that shadows would. */
-  --border-subtle: rgba(255, 255, 255, 0.06);
-  --border: rgba(255, 255, 255, 0.1);
-  --border-strong: rgba(255, 255, 255, 0.18);
-
-  /* ── Text ──────────────────────────────────────────────────────────────── */
-  --text: #f2f4f8;
-  --text-dim: #a4abbb;
-  --text-faint: #6b7285;
-
-  /* ── Accent ──────────────────────────────────────────────────────────────
-     --accent is overwritten at runtime from ui.accent in dashboard.yaml.
-     The -soft / -dim variants are pre-computed because Chromium 102 has no
-     color-mix() to derive them in CSS. */
-  --accent: #5b9dff;
-  --accent-soft: rgba(91, 157, 255, 0.16);
-  --accent-dim: rgba(91, 157, 255, 0.32);
-  --accent-text: #08090c;
-
-  /* ── Semantic ────────────────────────────────────────────────────────────
-     Chosen to stay distinguishable for the most common colour-vision
-     deficiencies: warn is amber not yellow-green, ok is teal-leaning. */
-  --ok: #34d399;
-  --warn: #fbbf24;
-  --danger: #f87171;
-  --info: #60a5fa;
-
-  /* Domain accents — used for the "on" glow of each entity class so a room
-     card is scannable without reading labels. */
-  --light-on: #ffd28a;
-  --light-on-soft: rgba(255, 210, 138, 0.15);
-  --climate-heat: #fb923c;
-  --climate-cool: #38bdf8;
-
   /* ── Radii ───────────────────────────────────────────────────────────────
      Generous and consistent: this is most of what makes a panel read as a
      product rather than a web page. */
@@ -134,12 +89,116 @@
      ui.blur is enabled in dashboard.yaml. Kept as a token so no component
      has to know whether blur is on. */
   --blur: none;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Colour — dark (the default) and light
+   ───────────────────────────────────────────────────────────────────────────
+   `html[data-theme]` is set by state/theme.ts from the `theme` preference.
+   The dark set is ALSO declared on the screensaver and cast views, which stay
+   dark whatever the theme: they are full-bleed photos and album art at
+   night, and a white frame around a photo is the one thing a screensaver
+   must not be. Declaring the tokens on those elements re-scopes every
+   var() inside them, so no rule below needs to know about themes.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root,
+.saver,
+.cast {
+  /* ── Surfaces ───────────────────────────────────────────────────────────── */
+  --bg: #08090c; /* page — near-black, not black: avoids smearing on LCD */
+  --surface-1: #101218; /* cards */
+  --surface-2: #171a22; /* raised: sheets, popovers, active nav */
+  --surface-3: #1f232d; /* controls inside cards */
+  --surface-4: #2a2f3b; /* pressed / hover */
+
+  /* Fill used for "this thing is on" without going full accent. */
+  --surface-active: #22283a;
+
+  /* ── Borders ─────────────────────────────────────────────────────────────
+     Hairlines carry the depth that shadows would. */
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.18);
+
+  /* ── Text ──────────────────────────────────────────────────────────────── */
+  --text: #f2f4f8;
+  --text-dim: #a4abbb;
+  --text-faint: #6b7285;
+
+  /* ── Accent ──────────────────────────────────────────────────────────────
+     --accent is overwritten at runtime from ui.accent in dashboard.yaml.
+     The -soft / -dim variants are pre-computed because Chromium 102 has no
+     color-mix() to derive them in CSS. */
+  --accent: #5b9dff;
+  --accent-soft: rgba(91, 157, 255, 0.16);
+  --accent-dim: rgba(91, 157, 255, 0.32);
+  --accent-text: #08090c;
+
+  /* ── Semantic ────────────────────────────────────────────────────────────
+     Chosen to stay distinguishable for the most common colour-vision
+     deficiencies: warn is amber not yellow-green, ok is teal-leaning. */
+  --ok: #34d399;
+  --warn: #fbbf24;
+  --danger: #f87171;
+  --info: #60a5fa;
+
+  /* Domain accents — used for the "on" glow of each entity class so a room
+     card is scannable without reading labels. */
+  --light-on: #ffd28a;
+  --light-on-soft: rgba(255, 210, 138, 0.15);
+  --climate-heat: #fb923c;
+  --climate-cool: #38bdf8;
+
+  /* The long-press reveal ring, drawn over whatever the screen shows. */
+  --ring: rgba(255, 255, 255, 0.5);
+
   --scrim: rgba(6, 7, 10, 0.82);
+}
+
+html[data-theme='light'] {
+  /* ── Surfaces ──────────────────────────────────────────────────────────────
+     Cards are white on a cool grey page, so the same layering reads the
+     other way up: depth is still hairlines and surfaces, never shadows. */
+  --bg: #eef0f4;
+  --surface-1: #ffffff;
+  --surface-2: #f7f8fa;
+  --surface-3: #e9ecf1;
+  --surface-4: #dde1e8;
+  --surface-active: #dde7fb;
+
+  --border-subtle: rgba(16, 22, 34, 0.07);
+  --border: rgba(16, 22, 34, 0.12);
+  --border-strong: rgba(16, 22, 34, 0.22);
+
+  --text: #12151c;
+  --text-dim: #4a5163;
+  --text-faint: #767d8f;
+
+  /* The semantic hues one step deeper, so they hold contrast as text on
+     white. Same hues as dark, so a state means the same colour in both. */
+  --ok: #059669;
+  --warn: #b45309;
+  --danger: #dc2626;
+  --info: #2563eb;
+
+  --light-on: #d98a00;
+  --light-on-soft: rgba(245, 158, 11, 0.16);
+  --climate-heat: #ea580c;
+  --climate-cool: #0284c7;
+
+  --ring: rgba(16, 22, 34, 0.4);
+
+  --scrim: rgba(28, 32, 42, 0.45);
 }
 
 html[data-blur='on'] {
   --blur: blur(20px) saturate(1.4);
   --scrim: rgba(6, 7, 10, 0.55);
+}
+
+html[data-blur='on'][data-theme='light'] {
+  --scrim: rgba(238, 240, 244, 0.6);
 }
 
 /* Respect the OS-level setting too, on top of our own ui.motion token. */

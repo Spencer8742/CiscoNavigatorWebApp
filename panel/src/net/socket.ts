@@ -565,6 +565,7 @@ type RememberedId = {
 }[keyof PanelPrefs];
 
 export function setPref(key: 'homeSide', value: PanelPrefs['homeSide']): boolean;
+export function setPref(key: 'theme', value: PanelPrefs['theme']): boolean;
 export function setPref(
   key: 'screensaverMode',
   value: PanelPrefs['screensaverMode'],
@@ -574,9 +575,10 @@ export function setPref(key: 'lastPage', value: PanelPrefs['lastPage']): boolean
 export function setPref(key: RememberedId, value: string | null): boolean;
 export function setPref(key: BooleanPref, value: boolean): boolean;
 export function setPref(
-  key: 'homeSide' | 'screensaverMode' | 'visiblePages' | 'lastPage' | RememberedId | BooleanPref,
+  key: 'homeSide' | 'theme' | 'screensaverMode' | 'visiblePages' | 'lastPage' | RememberedId | BooleanPref,
   value:
     | PanelPrefs['homeSide']
+    | PanelPrefs['theme']
     | PanelPrefs['screensaverMode']
     | PanelPrefs['visiblePages']
     | PanelPrefs['lastPage']
@@ -587,6 +589,9 @@ export function setPref(
   prefs.value = { ...prefs.value, [key]: value };
   if (key === 'homeSide') {
     return send({ t: 'pref', id: nextId(), key, value: value as PanelPrefs['homeSide'] });
+  }
+  if (key === 'theme') {
+    return send({ t: 'pref', id: nextId(), key, value: value as PanelPrefs['theme'] });
   }
   if (key === 'screensaverMode') {
     return send({
