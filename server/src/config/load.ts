@@ -9,6 +9,7 @@ import {
   CONTROL_SIZES,
   CONTROL_TONES,
   KEY_LIGHT_OPS,
+  APPLE_TV_KEY_OPS,
 } from '@shared/config.ts';
 import { panelIdOf } from '@shared/protocol.ts';
 import type {
@@ -23,6 +24,8 @@ import type {
   AppleTvShortcutConfig,
   TvConfig,
   RoomosConfig,
+  SshHostConfig,
+  AppleTvKeyOp,
   RoomosInputRef,
   ControlPage,
   DashboardConfig,
@@ -102,7 +105,15 @@ export const FALLBACK_CONFIG: DashboardConfig = {
     followMusic: true,
     audioKeepAlive: false,
   },
-  controls: { pages: [], keylights: [], tvs: [], roomos: [], appleTvs: [], pollSeconds: 15 },
+  controls: {
+    pages: [],
+    keylights: [],
+    tvs: [],
+    roomos: [],
+    ssh: [],
+    appleTvs: [],
+    pollSeconds: 15,
+  },
 };
 
 /* ── Coercion helpers ──────────────────────────────────────────────────────
@@ -407,6 +418,7 @@ function validate(raw: unknown): DashboardConfig {
       keylights: keyLightList(controlsRaw['keylights']),
       tvs: tvsParsed,
       roomos: roomosList(controlsRaw['roomos']),
+      ssh: sshHostList(controlsRaw['ssh']),
       appleTvs: appleTvList(controlsRaw['appleTvs']),
       pages: controlPages(controlsRaw['pages']),
       // 15s is a compromise: fast enough that turning a light off at the
@@ -636,6 +648,55 @@ function roomosList(v: unknown): RoomosConfig[] {
   return out;
 }
 
+/**
+ * Hosts a key may run a fixed command on. The credential is NOT read here —
+ * this object goes to every panel — but a `password:` written anyway is named,
+ * so it can be taken out of a file that is being sent around.
+ */
+function sshHostList(v: unknown): SshHostConfig[] {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v)) {
+    warn('controls.ssh', 'list', v);
+    return [];
+  }
+  const seen = new Set<string>();
+  const out: SshHostConfig[] = [];
+  v.forEach((item, i) => {
+    const path = `controls.ssh[${i}]`;
+    const raw = obj(item);
+    const host = str(raw['host'] ?? raw['ip'], '', `${path}.host`);
+    if (!host || host.includes('/') || /\s/.test(host)) {
+      warn(`${path}.host`, 'a bare address like 192.168.1.200', host || item);
+      return;
+    }
+    const id = str(raw['id'], `ssh${i + 1}`, `${path}.id`);
+    if (!/^[A-Za-z0-9_]+$/.test(id)) {
+      warn(`${path}.id`, 'letters, digits and _', id);
+      return;
+    }
+    if (seen.has(id)) {
+      log.warn(`${path}: duplicate id "${id}" — skipping`);
+      return;
+    }
+    seen.add(id);
+    const username = str(raw['username'] ?? raw['user'], '', `${path}.username`);
+    if (!username) {
+      warn(`${path}.username`, 'the account to log in as', raw['username']);
+      return;
+    }
+    for (const secret of ['password', 'privateKey', 'key']) {
+      if (raw[secret] !== undefined) {
+        log.warn(
+          `${path}.${secret} is ignored — the config is sent to the panel. Set ` +
+            `SSH_KEY_FILE_${id.toUpperCase()} (or SSH_PASSWORD_${id.toUpperCase()}) in .env instead.`,
+        );
+      }
+    }
+    out.push({ id, host, username });
+  });
+  return out;
+}
+
 /** `- 2`, or `- { connector: 3, name: USB-C }`, mixed freely. */
 function roomosInputList(v: unknown, path: string): RoomosInputRef[] {
   if (v === undefined || v === null) return [];
@@ -857,10 +918,9 @@ function controlItems(
       seen.add(id);
       /*
        * Keys drawn inside the tile, parsed by the very same code as any other
-       * key — recursion rather than a second parser. A camera key is a
-       * Companion press like every other Companion press, and it would be
-       * surprising for it to accept a different spelling because of where it
-       * happens to be drawn. Anything that is not a plain button (a nested
+       * key — recursion rather than a second parser. A key in the tile is a
+       * key like any other, and it would be surprising for it to accept a
+       * different spelling because of where it happens to be drawn. Anything that is not a plain button (a nested
        * device, a source picker) is dropped: the row has space for keys.
        */
       const keys = controlItems(
@@ -961,8 +1021,14 @@ function defaultIcon(action: ControlAction | undefined): string {
       return 'tv';
     case 'roomos':
       return 'share';
-    case 'companion':
+    case 'xcommand':
       return 'grid';
+    case 'appletv':
+      return 'tv';
+    case 'ssh':
+      return 'power';
+    case 'wait':
+      return 'clock';
     case 'webhook':
       return 'bolt';
     case 'keylight':
@@ -977,17 +1043,57 @@ function defaultIcon(action: ControlAction | undefined): string {
 }
 
 function controlAction(raw: Raw, path: string): ControlAction | null {
-  /* Companion: accepted as "1/0/2", [1, 0, 2] or {page, row, column}. The
-     slash form is what a Companion config export shows and what anyone
-     reading their button grid will type. */
-  const companion = raw['companion'];
-  if (companion !== undefined && companion !== null) {
-    const coords = companionCoords(companion);
-    if (!coords) {
-      warn(`${path}.companion`, 'page/row/column, e.g. "1/0/2"', companion);
+  /*
+   * Companion is gone: every step goes to its device directly now. A key
+   * still carrying one is named rather than silently dropped, because a key
+   * that quietly lost a step does less than it says with nothing to show why.
+   */
+  if (raw['companion'] !== undefined && raw['companion'] !== null) {
+    log.warn(
+      `${path}.companion: Companion support has been removed — replace this step with ` +
+        'roomos/xcommand, tv, appletv, ssh, entity or webhook (see dashboard.example.yaml)',
+    );
+    return null;
+  }
+
+  /* Pause before the next step: `wait: 10`, in seconds. */
+  if (raw['wait'] !== undefined) {
+    const seconds = raw['wait'];
+    if (typeof seconds !== 'number' || !(seconds > 0) || seconds > 120) {
+      warn(`${path}.wait`, 'seconds between 0 and 120', seconds);
       return null;
     }
-    return { kind: 'companion', ...coords };
+    return { kind: 'wait', seconds };
+  }
+
+  /*
+   * A fixed command on a host from `controls.ssh`:
+   *
+   *   { ssh: mac_studio, run: "caffeinate -u -t 1" }
+   */
+  const sshRef = raw['ssh'];
+  if (typeof sshRef === 'string' && sshRef.trim()) {
+    const run = str(raw['run'], '', `${path}.run`);
+    if (!run) {
+      warn(`${path}.run`, 'a command line to run', raw['run']);
+      return null;
+    }
+    return { kind: 'ssh', host: sshRef.trim(), run };
+  }
+
+  /*
+   * An Apple TV from `controls.appleTvs`:
+   *
+   *   { appletv: office_apple_tv, action: power_on }
+   */
+  const atvRef = raw['appletv'] ?? raw['appleTv'];
+  if (typeof atvRef === 'string' && atvRef.trim()) {
+    const op = raw['action'];
+    if (typeof op !== 'string' || !(APPLE_TV_KEY_OPS as readonly string[]).includes(op)) {
+      warn(`${path}.action`, APPLE_TV_KEY_OPS.join(' | '), op);
+      return null;
+    }
+    return { kind: 'appletv', device: atvRef.trim(), op: op as AppleTvKeyOp };
   }
 
   const webhook = raw['webhook'];
@@ -1035,6 +1141,35 @@ function controlAction(raw: Raw, path: string): ControlAction | null {
   const roomosRef = raw['roomos'];
   if (typeof roomosRef === 'string' && roomosRef.trim()) {
     const device = roomosRef.trim();
+
+    /*
+     * Any other xCommand, written the way the xAPI documentation writes it:
+     *
+     *   { roomos: desk_pro, command: Standby Deactivate }
+     *   { roomos: room_kit_mini, command: Audio Volume Increase, params: { Steps: 5 } }
+     */
+    if (raw['command'] !== undefined) {
+      const words = str(raw['command'], '', `${path}.command`)
+        .replace(/^xCommand\s+/i, '')
+        .split(/[\s/]+/)
+        .filter(Boolean);
+      if (words.length === 0 || !words.every((w) => /^[A-Za-z][A-Za-z0-9]*$/.test(w))) {
+        warn(`${path}.command`, 'an xCommand like "Audio Volume Increase"', raw['command']);
+        return null;
+      }
+      const params = raw['params'];
+      if (params !== undefined && (params === null || typeof params !== 'object' || Array.isArray(params))) {
+        warn(`${path}.params`, 'a map like { Steps: 5 }', params);
+        return null;
+      }
+      return {
+        kind: 'xcommand',
+        device,
+        command: words,
+        params: (params as Record<string, unknown> | undefined) ?? {},
+      };
+    }
+
     const connector = raw['connector'] ?? raw['input'];
     if (connector !== undefined) {
       if (typeof connector !== 'number' || !Number.isInteger(connector) || connector < 1) {
@@ -1083,7 +1218,7 @@ function controlAction(raw: Raw, path: string): ControlAction | null {
     return action;
   }
 
-  log.warn(`${path}: no action (companion, webhook, keylight, tv, roomos or entity) — skipping`);
+  log.warn(`${path}: no action (roomos, tv, appletv, ssh, keylight, entity, webhook or wait) — skipping`);
   return null;
 }
 
@@ -1191,25 +1326,6 @@ function sourceRefList(v: unknown, path: string): SourceRef[] {
   });
 
   return out;
-}
-
-function companionCoords(v: unknown): { page: number; row: number; column: number } | null {
-  let parts: unknown[];
-
-  if (typeof v === 'string') {
-    parts = v.split('/').map((p) => Number.parseInt(p.trim(), 10));
-  } else if (Array.isArray(v)) {
-    parts = v;
-  } else {
-    const o = obj(v);
-    parts = [o['page'], o['row'], o['column'] ?? o['col']];
-  }
-
-  if (parts.length !== 3) return null;
-  const nums = parts.map((p) => (typeof p === 'number' && Number.isInteger(p) && p >= 0 ? p : -1));
-  if (nums.some((n) => n < 0)) return null;
-
-  return { page: nums[0]!, row: nums[1]!, column: nums[2]! };
 }
 
 function roomList(v: unknown): RoomConfig[] {

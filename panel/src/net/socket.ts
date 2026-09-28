@@ -471,8 +471,8 @@ const pendingControls = new Map<number, string>();
  * Run a macro button.
  *
  * Sends the button's ID and nothing else — the backend resolves it against
- * dashboard.yaml. A panel cannot ask for a Companion coordinate or a webhook
- * it was not configured with; see server/src/controls/index.ts.
+ * dashboard.yaml. A panel cannot ask for a command line, an xCommand or a
+ * webhook it was not configured with; see server/src/controls/index.ts.
  *
  * Fire-and-forget, like every other command here: an error comes back as a
  * toast, and silence means the request was made.

@@ -1,63 +1,15 @@
 import { createServer } from 'node:http';
 
 /**
- * Mock Bitfocus Companion and mock Elgato Key Light.
+ * Mock Elgato Key Light.
  *
- * Both speak the real wire format, because that format is precisely what is
- * easy to get quietly wrong and impossible to check by reading:
- *
- *  - Companion 4.x presses at `POST /api/location/<page>/<row>/<column>/press`
- *    and answers 404 for a location with no button on it, which is what a
- *    rearranged Companion page looks like from here.
- *  - A Key Light speaks `{ numberOfLights, lights: [...] }` with `on` as 0/1
- *    and `temperature` in MIREDS — 143 (7000 K) to 344 (2900 K), a number
- *    that gets SMALLER as the light gets warmer. Getting that backwards is
- *    invisible in a unit test that uses the same helper both ways.
+ * It speaks the real wire format, because that format is precisely what is
+ * easy to get quietly wrong and impossible to check by reading: a Key Light
+ * speaks `{ numberOfLights, lights: [...] }` with `on` as 0/1 and
+ * `temperature` in MIREDS — 143 (7000 K) to 344 (2900 K), a number that gets
+ * SMALLER as the light gets warmer. Getting that backwards is invisible in a
+ * unit test that uses the same helper both ways.
  */
-
-/** Companion. Records every press; answers 404 for unknown locations. */
-export class MockCompanion {
-  #server;
-  #port;
-
-  /** Every press received, as { page, row, column }. */
-  presses = [];
-
-  /** Locations that exist. Anything else is a 404, as Companion does. */
-  buttons = new Set(['1/0/0', '1/0/1', '2/1/3']);
-
-  constructor(port) {
-    this.#port = port;
-  }
-
-  async start() {
-    this.#server = createServer((req, res) => {
-      const match = /^\/api\/location\/(\d+)\/(\d+)\/(\d+)\/press$/.exec(req.url ?? '');
-
-      if (!match || req.method !== 'POST') {
-        res.writeHead(404).end('Not found');
-        return;
-      }
-
-      const [, page, row, column] = match;
-      if (!this.buttons.has(`${page}/${row}/${column}`)) {
-        res.writeHead(404).end('No button at that location');
-        return;
-      }
-
-      this.presses.push({ page: Number(page), row: Number(row), column: Number(column) });
-      res.writeHead(200).end('ok');
-    });
-
-    await new Promise((resolve) => this.#server.listen(this.#port, '127.0.0.1', resolve));
-  }
-
-  async stop() {
-    if (!this.#server) return;
-    await new Promise((resolve) => this.#server.close(resolve));
-    this.#server = undefined;
-  }
-}
 
 /** One Elgato Key Light. `offline` makes it refuse connections. */
 export class MockKeyLight {

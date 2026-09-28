@@ -6,10 +6,10 @@ import { controlsConfig } from '~/config/index.ts';
 /**
  * Macro-page state: the Elgato Key Lights, and which button is mid-press.
  *
- * Key lights are the only thing on the Controls screen that HAS state. A
- * Companion press and a Home Assistant webhook are both one-way — Companion's
- * feedbacks live on its own surfaces and a webhook answers 200 whether or not
- * an automation was listening — so there is nothing to reflect back, and
+ * Key lights, televisions and RoomOS presentations are the things on the
+ * Controls screen that HAVE state. An xCommand, an SSH command and a Home
+ * Assistant webhook are one-way — a webhook answers 200 whether or not an
+ * automation was listening — so there is nothing to reflect back, and
  * pretending otherwise would be a lie the panel tells confidently.
  *
  * What the panel can honestly show for those is that the tap was received and
@@ -125,8 +125,8 @@ export function markPressed(id: string): void {
 /**
  * Drop a confirmation early, when the backend reports the press failed.
  *
- * A tick that stays up for its full 900 ms next to a "Companion unreachable"
- * toast is the panel contradicting itself.
+ * A tick that stays up for its full 900 ms next to a "Desk Pro is not
+ * reachable" toast is the panel contradicting itself.
  */
 export function clearPressed(id: string): void {
   clearTimeout(timers.get(id));

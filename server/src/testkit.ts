@@ -75,3 +75,4 @@ export { MediaArt } from '~/http/media-art.ts';
  */
 export { RoomosClient } from '~/roomos/xapi.ts';
 export { Controls } from '~/controls/index.ts';
+export { SshRunner } from '~/ssh/runner.ts';

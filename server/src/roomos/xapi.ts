@@ -169,6 +169,17 @@ export class RoomosClient {
     return this.#command('Presentation/Stop', {});
   }
 
+  /**
+   * Any xCommand, as written in dashboard.yaml: `['Standby', 'Deactivate']`.
+   *
+   * Refused while the connection is down rather than queued. These are
+   * transport commands — volume, standby — and one delivered a minute late,
+   * when the connection comes back, is worse than one that never arrives.
+   */
+  async xcommand(words: string[], params: Record<string, unknown>): Promise<string | null> {
+    return this.#command(words.join('/'), params);
+  }
+
   async #command(path: string, params: Record<string, unknown>): Promise<string | null> {
     try {
       const reply = await this.#request(`xCommand/${path}`, params);

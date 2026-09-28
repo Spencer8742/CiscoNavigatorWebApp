@@ -45,17 +45,21 @@ controls:
           icon: phone
           tone: accent
           wide: true
-          companion: 1/0/0
+          webhook: deskpro_join
         - id: deskpro.hangup
           name: Hang Up
           icon: phoneDown
           tone: danger
-          companion: { page: 1, row: 0, column: 1 }
-        # A location the mock Companion has no button at — a rearranged
-        # Companion page, from this end.
+          webhook: deskpro_hangup
+        # A step that can only fail: no such key light.
         - id: deskpro.missing
           name: Gone
-          companion: [9, 9, 9]
+          keylight: { light: key_nowhere, op: toggle }
+        # Companion support is gone. A key still carrying a Companion step is
+        # dropped, and named in the log rather than silently lost.
+        - id: deskpro.legacy
+          name: Legacy
+          companion: 1/0/0
 
     - id: scenes
       name: Scenes
@@ -111,13 +115,11 @@ controls:
             volume: number.dp_speaker_volume
             # Drops a slot the derivation would otherwise invent.
             selfview: null
-            # Keys drawn in the tile's own toggle row — a Companion press
-            # for something the integration does not expose. Deliberately NOT
-            # a camera key: the integration exposes a camera mute now, so an
-            # example using one would document the wrong thing.
+            # Keys drawn in the tile's own toggle row, for something the
+            # integration does not expose.
             keys:
-              - { id: desk.lights, name: Lights, companion: 1/0/1 }
-              - { id: desk.blinds, name: Blinds, companion: 2/1/3 }
+              - { id: desk.lights, name: Lights, webhook: desk_lights }
+              - { id: desk.blinds, name: Blinds, webhook: desk_blinds }
         # A device block naming nothing at all is not a device.
         - id: dp.empty
           device:
@@ -126,16 +128,13 @@ controls:
     - id: combo
       name: Combined
       items:
-        # One key, two places. The Companion location exists in the mock; the
-        # webhook is what proves the SECOND action ran.
+        # One key, two places, with a pause between them.
         - id: combo.both
           name: Office Power
           actions:
-            - { companion: 1/0/0 }
+            - { webhook: combo_first }
+            - { wait: 0.2 }
             - { webhook: combo_second }
-        # The first action fails (no button at 9/9/9), so the second must not
-        # run — a half-started room reported as a success is the failure this
-        # guards.
         # `on` and `off` are BOOLEANS in YAML 1.1. Written bare here on
         # purpose: quoting them would test the wrong thing.
         - id: combo.tvon
@@ -146,11 +145,14 @@ controls:
           name: TV Off
           tv: room_tv
           action: off
-        - id: combo.stops
-          name: Stops Early
+        # The first action fails (no such light). The second must STILL run —
+        # Shut Down should turn the lights off even when the Desk Pro is not
+        # answering — and the failure must still reach the panel.
+        - id: combo.carries
+          name: Carries On
           actions:
-            - { companion: 9/9/9 }
-            - { webhook: combo_never }
+            - { keylight: { light: key_nowhere, op: toggle } }
+            - { webhook: combo_after }
 
     - id: lights
       name: Lights

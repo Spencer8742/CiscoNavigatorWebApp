@@ -436,7 +436,7 @@ function Toggles({ entities: e, keys }: { entities: DeviceEntities; keys: Contro
 }
 
 /**
- * A configured key in the toggle row — a Companion press, a webhook, a scene.
+ * A configured key in the toggle row — an xCommand, a webhook, a scene.
  *
  * Deliberately NOT drawn as a toggle. It has no state to show: the press goes
  * out and nothing comes back, so it confirms that it went and claims nothing

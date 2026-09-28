@@ -12,12 +12,14 @@
   },
   "dependencies": {
     "parse-duration": "^2.1.8",
+    "ssh2": "^1.17.0",
     "words-to-numbers": "^1.5.1",
     "ws": "^8.18.0",
     "yaml": "^2.7.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",
+    "@types/ssh2": "^1.15.6",
     "@types/ws": "^8.5.13",
     "esbuild": "^0.24.2",
     "typescript": "^5.7.2"
