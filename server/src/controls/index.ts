@@ -2,8 +2,9 @@ import { logger } from '~/lib/log.ts';
 import { CompanionClient } from '~/controls/companion.ts';
 import { KeyLight } from '~/controls/keylight.ts';
 import { WebosClient } from '~/tv/webos.ts';
+import { RoomosClient } from '~/roomos/xapi.ts';
 import type { ControlAction, ControlItem, DashboardConfig, KeyLightOp } from '@shared/config.ts';
-import type { EntityState, KeyLightState, TvState } from '@shared/protocol.ts';
+import type { EntityState, KeyLightState, RoomosState, TvState } from '@shared/protocol.ts';
 
 const log = logger('controls');
 
@@ -48,6 +49,13 @@ export interface ControlsDeps {
   onLights: (lights: KeyLightState[]) => void;
   /** Called whenever a television's input changes. */
   onTvs: (tvs: TvState[]) => void;
+  /** Called whenever a RoomOS device's presentation or reachability changes. */
+  onRoomos: (devices: RoomosState[]) => void;
+  /**
+   * The xAPI password for one `controls.roomos` device, from the environment.
+   * Never in dashboard.yaml: that file is sent to every panel.
+   */
+  roomosPassword: (id: string) => string;
   /** Whether any panel is connected. Polling is pointless when none is. */
   hasPanels: () => boolean;
   /**
@@ -69,6 +77,7 @@ export class Controls {
   /** Live key lights, by config id. Rebuilt on every config change. */
   #lights = new Map<string, KeyLight>();
   #tvs = new Map<string, WebosClient>();
+  #roomos = new Map<string, RoomosClient>();
   #poll: ReturnType<typeof setInterval> | undefined;
   /** The interval currently armed, so a config edit only re-arms on a change. */
   #pollSeconds = 0;
@@ -143,6 +152,48 @@ export class Controls {
     }
     this.#tvs = nextTvs;
 
+    /*
+     * RoomOS devices, held open permanently.
+     *
+     * Not polled and not gated on a panel being connected, unlike the lights:
+     * the device pushes every change down one socket that costs nothing while
+     * idle, and a panel that connects should find the key already right
+     * rather than wait for a first read.
+     */
+    const nextRoomos = new Map<string, RoomosClient>();
+    for (const dev of cfg.roomos) {
+      const opts = {
+        id: dev.id,
+        host: dev.host,
+        username: dev.username,
+        password: this.#deps.roomosPassword(dev.id),
+      };
+      const existing = this.#roomos.get(dev.id);
+      if (existing?.matches(opts)) {
+        nextRoomos.set(dev.id, existing);
+        continue;
+      }
+      existing?.stop();
+      if (!opts.password) {
+        log.warn(
+          `controls.roomos "${dev.id}": no password — set ROOMOS_PASSWORD ` +
+            `(or ROOMOS_PASSWORD_${dev.id.toUpperCase()}) in .env`,
+        );
+      }
+      const client = new RoomosClient(opts);
+      client.onChange(() => this.#deps.onRoomos(this.roomosSnapshot()));
+      client.start();
+      nextRoomos.set(dev.id, client);
+    }
+    for (const [id, client] of this.#roomos) {
+      if (!nextRoomos.has(id)) client.stop();
+    }
+    const roomosChanged =
+      nextRoomos.size !== this.#roomos.size ||
+      [...nextRoomos].some(([id, c]) => this.#roomos.get(id) !== c);
+    this.#roomos = nextRoomos;
+    if (roomosChanged) this.#deps.onRoomos(this.roomosSnapshot());
+
     this.#arm(cfg.pollSeconds);
     // Only a change to the LIST — a light added, removed or renamed — is
     // worth a push from here. Each light's own state is pushed by the poll,
@@ -168,9 +219,15 @@ export class Controls {
     });
   }
 
+  /** Every RoomOS device's presentation, for `hello`. */
+  roomosSnapshot(): RoomosState[] {
+    return [...this.#roomos.values()].map((d) => d.state);
+  }
+
   stop(): void {
     clearInterval(this.#poll);
     this.#poll = undefined;
+    for (const d of this.#roomos.values()) d.stop();
   }
 
   /* ── Running a button ──────────────────────────────────────────────────*/
@@ -268,6 +325,65 @@ export class Controls {
     return want === 'on' ? tv.turnOn() : tv.turnOff();
   }
 
+  /* ── RoomOS presentation ───────────────────────────────────────────────*/
+
+  async #roomosAction(
+    deviceId: string,
+    op: 'next' | 'input' | 'stop',
+    connector?: number,
+  ): Promise<string | null> {
+    const cfg = this.#deps.getConfig().controls.roomos.find((d) => d.id === deviceId);
+    const dev = this.#roomos.get(deviceId);
+    if (!cfg || !dev) {
+      log.warn(`Refused RoomOS "${deviceId}": not in controls.roomos`);
+      return 'Unknown device';
+    }
+    if (!dev.state.reachable) return `${cfg.name} is not reachable`;
+
+    if (op === 'stop') return dev.stopPresenting();
+    if (op === 'input') {
+      if (connector === undefined) return 'No connector named';
+      return dev.present(connector);
+    }
+
+    /*
+     * Step to the next input AFTER the one the device says it is presenting.
+     *
+     * The anchor is the device's own answer, never the last input this key
+     * chose: that is the whole difference from the Companion key this
+     * replaces, which counted its own presses and so fell out of step the
+     * first time anybody plugged a laptop in.
+     *
+     * An input the device reports as unplugged is skipped, so a press never
+     * lands on a black screen while the other input has a laptop on it. When
+     * every other input is empty the press stays where it is; when nothing is
+     * presented at all it starts on the next input regardless — the device
+     * can say "no signal" on its own screen better than a key can.
+     */
+    const inputs =
+      cfg.inputs.length > 0
+        ? cfg.inputs.map((i) => i.connector)
+        : dev.inputConnectors.map((c) => c.id);
+    if (inputs.length === 0) return 'No inputs to switch between';
+
+    const plugged = new Map(dev.inputConnectors.map((c) => [c.id, c.connected]));
+    const current = dev.connector;
+    const at = current === null ? -1 : inputs.indexOf(current);
+    let next: number | undefined;
+    for (let step = 1; step <= inputs.length; step++) {
+      const candidate = inputs[(at + step) % inputs.length]!;
+      if (candidate === current) continue;
+      if (plugged.get(candidate) !== false) {
+        next = candidate;
+        break;
+      }
+    }
+    if (next === undefined) {
+      if (current !== null) return null;
+      next = inputs[(at + 1) % inputs.length]!;
+    }
+    return dev.present(next);
+  }
 
   /**
    * Choose an input on a `sources:` key.
@@ -343,6 +459,9 @@ export class Controls {
 
       case 'tv':
         return this.#tvAction(action.tv, action.op, action.input);
+
+      case 'roomos':
+        return this.#roomosAction(action.device, action.op, action.connector);
 
       case 'entity': {
         const domain = action.entity.slice(0, action.entity.indexOf('.'));

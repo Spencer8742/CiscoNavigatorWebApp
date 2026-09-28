@@ -3010,6 +3010,23 @@ html[data-theme='light'] .joinprompt {
   text-align: center;
 }
 
+/* The live second line under a configured key — the input a Presentation
+   key's device is showing. Same voice as the grid's .macro-btn-sub. */
+.devtile-key-sub {
+  max-width: 100%;
+  margin-top: -0.25rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-dim);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.devtile-key-sub[data-assumed] {
+  font-style: italic;
+  opacity: 0.72;
+}
+
 .devtile-row {
   display: grid;
   grid-template-columns: 1.4fr 1fr;

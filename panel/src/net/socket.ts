@@ -2,7 +2,7 @@ import { Backoff } from '@shared/backoff.ts';
 import { authHeaders, socketUrl } from '~/net/auth.ts';
 import { applyPatch, applySnapshot } from '~/state/entities.ts';
 import { setPlayers, sources } from '~/state/players.ts';
-import { appleTvs, clearPressed, keyLights, markPressed, tvs } from '~/state/controls.ts';
+import { appleTvs, clearPressed, keyLights, markPressed, roomos, tvs } from '~/state/controls.ts';
 import { setConfig } from '~/config/index.ts';
 import { connectionProblem, health, prefs, ready, showToast, socketState } from '~/state/ui.ts';
 import { diagnose } from '~/net/diagnose.ts';
@@ -199,6 +199,7 @@ function handle(msg: ServerMessage): void {
       setPlayers(msg.players, msg.queues);
       keyLights.value = msg.keylights;
       tvs.value = msg.tvs;
+      roomos.value = msg.roomos ?? [];
       appleTvs.value = msg.appleTvs;
       sources.value = msg.sources;
       socketState.value = 'connected';
@@ -231,6 +232,10 @@ function handle(msg: ServerMessage): void {
 
     case 'tvs':
       tvs.value = msg.tvs;
+      break;
+
+    case 'roomos':
+      roomos.value = msg.devices;
       break;
 
     case 'apple-tvs':

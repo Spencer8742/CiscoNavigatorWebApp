@@ -670,6 +670,25 @@ export interface TvState {
   confirmed: boolean;
 }
 
+/**
+ * What a device in `controls.roomos` is presenting, as the device reports it.
+ *
+ * `connector` is the video input connector on screen as a presentation, or
+ * null when nothing is being presented. Unlike a television this is never a
+ * guess: the device pushes every change, so there is no "assumed" state.
+ */
+export interface RoomosState {
+  id: string;
+  /** False while the xAPI connection is down; `connector` is then null. */
+  reachable: boolean;
+  connector: number | null;
+  /**
+   * What the device calls each input connector, by id — `HDMI`, `USB-C`.
+   * The fallback label for a connector the config does not rename.
+   */
+  connectors: { id: number; type: string; connected: boolean | null }[];
+}
+
 export type AppleTvPairingState = 'idle' | 'starting' | 'pin' | 'paired' | 'error';
 
 /** Live state from a configured Apple TV. Credentials never leave the backend. */
@@ -818,6 +837,7 @@ export type ServerMessage =
       /** Every Elgato Key Light named in `controls.keylights`. */
       keylights: KeyLightState[];
       tvs: TvState[];
+      roomos: RoomosState[];
       appleTvs: AppleTvState[];
       /** Music services this household has. Empty until they are discovered. */
       sources: MusicSource[];
@@ -850,6 +870,7 @@ export type ServerMessage =
   /** Where a device link has got to, in answer to a `link` request. */
   | { t: 'link'; ref: number; link: ServiceLink }
   | { t: 'tvs'; tvs: TvState[] }
+  | { t: 'roomos'; devices: RoomosState[] }
   | { t: 'apple-tvs'; appleTvs: AppleTvState[] }
   /** Config file changed on disk and revalidated. */
   | { t: 'config'; config: DashboardConfig }

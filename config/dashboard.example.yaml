@@ -526,6 +526,43 @@ controls:
   #       - { companion: 1/2/4 }
   #       - { tv: office_lg, action: on }
 
+  # ── Cisco devices, spoken to directly ──────────────────────────────────
+  #
+  # A Desk Pro (or any RoomOS device) over its own xAPI WebSocket, for the
+  # one thing Companion and Home Assistant cannot tell the panel: which input
+  # is ACTUALLY being presented. A Companion key that flips HDMI/USB-C counts
+  # its own presses, so it drifts the first time a laptop is plugged in or a
+  # source is picked on the Desk Pro's screen. This subscribes to the device's
+  # presentation status and follows every change, whoever made it.
+  #
+  # (The Home Assistant integration's "Share source" select is a stored
+  # choice for its Share buttons, not a report of what is on screen.)
+  #
+  # The PASSWORD is not written here — this file is sent to the panel. Set
+  # ROOMOS_PASSWORD in .env. Use a local user with the Integrator role.
+  roomos: []
+  #  - id: desk_pro
+  #    name: Desk Pro
+  #    host: 192.168.1.50
+  #    username: panel
+  #    # Connector ids, as `xStatus Video Input Connector` lists them. On a
+  #    # Desk Pro, 1 is the camera, 2 is HDMI and 3 is USB-C. Omit to step
+  #    # through every input the device reports.
+  #    inputs:
+  #      - { connector: 2, name: HDMI }
+  #      - { connector: 3, name: USB-C }
+  #
+  # On a page, `roomos:` is an ACTION a key can take:
+  #
+  #   - { name: Presentation, icon: share, roomos: desk_pro, action: next }
+  #   - { name: Laptop,       icon: input, roomos: desk_pro, connector: 3 }
+  #   - { name: Stop Share,   icon: close, roomos: desk_pro, action: stop }
+  #
+  # `next` presents the input AFTER the one the device says is on screen,
+  # skipping one with nothing plugged in, and draws the current input under
+  # the key's name. Switching keeps the presentation's sending mode, so it
+  # does not stop sharing into a call; starting from nothing is local only.
+
   # Apple TVs appear on their own page in the bottom navigation.
   # Give each one a fixed DHCP lease. The first Pair tap displays a PIN on the
   # television; enter it on the panel once. Credentials are encrypted by the

@@ -5,7 +5,7 @@ import { Pressable } from '~/components/Pressable.tsx';
 import { Slider } from '~/components/Slider.tsx';
 import { controlPage, kiosk, markActivity, openSources } from '~/state/ui.ts';
 import { entity } from '~/state/entities.ts';
-import { keyLightFor, pressed, tvStateOf } from '~/state/controls.ts';
+import { keyLightFor, liveLabelOf, pressed } from '~/state/controls.ts';
 import { pressControl, setKeyLight } from '~/net/socket.ts';
 import { KEY_LIGHT_MAX_KELVIN, KEY_LIGHT_MIN_KELVIN } from '@shared/protocol.ts';
 import { DeviceTile } from '~/components/DeviceTile.tsx';
@@ -220,7 +220,7 @@ function Page({ page }: { page: ControlPage }) {
 
 function MacroButton({ button }: { button: ControlButton }) {
   const confirming = pressed.value.has(button.id);
-  const live = tvLabel(button);
+  const live = liveLabelOf(button);
   // The input belongs in the accessible name too: the visible label is a
   // second line under the key, and a screen reader that only ever hears
   // "LG Input" is missing the half that changes.
@@ -267,28 +267,6 @@ function MacroButton({ button }: { button: ControlButton }) {
       ) : null}
     </Pressable>
   );
-}
-
-/**
- * The current input, for a key that cycles them. Null for every other key, so
- * nothing else grows a second line.
- *
- * An em dash when nothing at all is known — the set is off, or on something
- * that is not an input. `assumed` marks an input the panel selected but the
- * television has not confirmed, which is all there is to go on for a set that
- * never reports its foreground app.
- */
-function tvLabel(button: ControlButton): { text: string; assumed: boolean } | null {
-  const action = button.actions.find((a) => a.kind === 'tv' && a.op === 'next');
-  if (!action || action.kind !== 'tv') return null;
-
-  const state = tvStateOf(action.tv);
-  if (!state?.input) return { text: '—', assumed: false };
-
-  // Named the way the room names it, falling back to the socket id.
-  const tv = controlsConfig.value.tvs.find((t) => t.id === action.tv);
-  const named = tv?.inputs.find((i) => i.source === state.input);
-  return { text: named?.name ?? state.input, assumed: !state.confirmed };
 }
 
 /**

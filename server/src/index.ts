@@ -529,6 +529,7 @@ async function main(): Promise<void> {
 
     getKeyLights: () => controls.snapshot(),
     getTvs: () => controls.tvSnapshot(),
+    getRoomos: () => controls.roomosSnapshot(),
     getAppleTvs: () => appleTv.snapshot,
     onAppleTv: (device, op) => appleTv.command(device, op),
     onAppleTvSwipe: (device, gesture) => appleTv.swipe(device, gesture),
@@ -566,6 +567,11 @@ async function main(): Promise<void> {
     getEntity: (entityId) => store.get(entityId),
     onLights: (lights) => hub.broadcastKeyLights(lights),
     onTvs: (tvs) => hub.broadcastTvs(tvs),
+    onRoomos: (devices) => hub.broadcastRoomos(devices),
+    // Per device first, so two devices with different passwords can coexist;
+    // the shared one covers the usual case of a single device.
+    roomosPassword: (id) =>
+      process.env[`ROOMOS_PASSWORD_${id.toUpperCase()}`] || process.env['ROOMOS_PASSWORD'] || '',
     // Nothing is polled while no panel is connected. A wall panel that has
     // gone to sleep, or a container running before the device is provisioned,
     // should not be talking to the lights every fifteen seconds.

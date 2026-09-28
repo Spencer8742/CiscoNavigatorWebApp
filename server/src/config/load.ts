@@ -22,6 +22,8 @@ import type {
   AppleTvConfig,
   AppleTvShortcutConfig,
   TvConfig,
+  RoomosConfig,
+  RoomosInputRef,
   ControlPage,
   DashboardConfig,
   DeviceEntities,
@@ -100,7 +102,7 @@ export const FALLBACK_CONFIG: DashboardConfig = {
     followMusic: true,
     audioKeepAlive: false,
   },
-  controls: { pages: [], keylights: [], tvs: [], appleTvs: [], pollSeconds: 15 },
+  controls: { pages: [], keylights: [], tvs: [], roomos: [], appleTvs: [], pollSeconds: 15 },
 };
 
 /* ── Coercion helpers ──────────────────────────────────────────────────────
@@ -404,6 +406,7 @@ function validate(raw: unknown): DashboardConfig {
     controls: {
       keylights: keyLightList(controlsRaw['keylights']),
       tvs: tvsParsed,
+      roomos: roomosList(controlsRaw['roomos']),
       appleTvs: appleTvList(controlsRaw['appleTvs']),
       pages: controlPages(controlsRaw['pages']),
       // 15s is a compromise: fast enough that turning a light off at the
@@ -573,6 +576,91 @@ function tvList(v: unknown): TvConfig[] {
     out.push(cfg);
   });
 
+  return out;
+}
+
+/**
+ * Cisco devices spoken to over their own xAPI. Same shape as `tvs:` — an
+ * address, an id, and the inputs a `next` key steps through.
+ */
+function roomosList(v: unknown): RoomosConfig[] {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v)) {
+    warn('controls.roomos', 'list', v);
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const out: RoomosConfig[] = [];
+
+  v.forEach((item, i) => {
+    const path = `controls.roomos[${i}]`;
+    const raw = typeof item === 'string' ? { host: item } : obj(item);
+
+    const host = str(raw['host'] ?? raw['ip'], '', `${path}.host`);
+    if (!host || host.includes('/') || /\s/.test(host)) {
+      warn(`${path}.host`, 'a bare address like 192.168.1.50', host || item);
+      return;
+    }
+
+    const id = str(raw['id'], `roomos${i + 1}`, `${path}.id`);
+    if (!/^[A-Za-z0-9_]+$/.test(id)) {
+      // The id names its password variable, ROOMOS_PASSWORD_<ID>, so it has
+      // to be something an environment variable can be called.
+      warn(`${path}.id`, 'letters, digits and _', id);
+      return;
+    }
+    if (seen.has(id)) {
+      log.warn(`${path}: duplicate id "${id}" — skipping`);
+      return;
+    }
+    seen.add(id);
+
+    if (raw['password'] !== undefined) {
+      // Refused rather than used: this object is sent to every panel.
+      log.warn(
+        `${path}.password is ignored — the config is sent to the panel. ` +
+          `Set ROOMOS_PASSWORD (or ROOMOS_PASSWORD_${id.toUpperCase()}) in .env instead.`,
+      );
+    }
+
+    out.push({
+      id,
+      name: str(raw['name'], id, `${path}.name`),
+      host,
+      username: str(raw['username'], 'admin', `${path}.username`),
+      inputs: roomosInputList(raw['inputs'], `${path}.inputs`),
+    });
+  });
+
+  return out;
+}
+
+/** `- 2`, or `- { connector: 3, name: USB-C }`, mixed freely. */
+function roomosInputList(v: unknown, path: string): RoomosInputRef[] {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v)) {
+    warn(path, 'list of connector ids', v);
+    return [];
+  }
+  const out: RoomosInputRef[] = [];
+  const seen = new Set<number>();
+  v.forEach((item, i) => {
+    const at = `${path}[${i}]`;
+    const raw = typeof item === 'number' ? { connector: item } : obj(item);
+    const connector = raw['connector'] ?? raw['id'];
+    if (typeof connector !== 'number' || !Number.isInteger(connector) || connector < 1) {
+      warn(at, 'a connector id, e.g. 2', item);
+      return;
+    }
+    if (seen.has(connector)) {
+      log.warn(`${at}: duplicate connector ${connector} — skipping`);
+      return;
+    }
+    seen.add(connector);
+    const name = str(raw['name'], '', `${at}.name`);
+    out.push(name ? { connector, name } : { connector });
+  });
   return out;
 }
 
@@ -871,6 +959,8 @@ function defaultIcon(action: ControlAction | undefined): string {
   switch (action?.kind) {
     case 'tv':
       return 'tv';
+    case 'roomos':
+      return 'share';
     case 'companion':
       return 'grid';
     case 'webhook':
@@ -935,6 +1025,28 @@ function controlAction(raw: Raw, path: string): ControlAction | null {
     return { kind: 'tv', tv, op };
   }
 
+  /*
+   * A Cisco device from `controls.roomos`, over its own xAPI.
+   *
+   *   { roomos: desk_pro, action: next }    step through the inputs
+   *   { roomos: desk_pro, connector: 3 }    present one connector
+   *   { roomos: desk_pro, action: stop }    stop presenting
+   */
+  const roomosRef = raw['roomos'];
+  if (typeof roomosRef === 'string' && roomosRef.trim()) {
+    const device = roomosRef.trim();
+    const connector = raw['connector'] ?? raw['input'];
+    if (connector !== undefined) {
+      if (typeof connector !== 'number' || !Number.isInteger(connector) || connector < 1) {
+        warn(`${path}.connector`, 'a connector id, e.g. 2', connector);
+        return null;
+      }
+      return { kind: 'roomos', device, op: 'input', connector };
+    }
+    const op = oneOf(raw['action'], ['next', 'stop'] as const, 'next', `${path}.action`);
+    return { kind: 'roomos', device, op };
+  }
+
   const keylight = raw['keylight'];
   if (keylight !== undefined && keylight !== null) {
     const spec = typeof keylight === 'string' ? { op: keylight } : obj(keylight);
@@ -971,7 +1083,7 @@ function controlAction(raw: Raw, path: string): ControlAction | null {
     return action;
   }
 
-  log.warn(`${path}: no action (companion, webhook, keylight, entity or light) — skipping`);
+  log.warn(`${path}: no action (companion, webhook, keylight, tv, roomos or entity) — skipping`);
   return null;
 }
 

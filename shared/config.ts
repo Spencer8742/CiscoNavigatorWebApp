@@ -358,6 +358,16 @@ export type ControlAction =
    */
   | { kind: 'tv'; tv: string; op: 'on' | 'off' | 'toggle' | 'input' | 'next'; input?: string }
   /**
+   * Drive the presentation on a Cisco device listed in `controls.roomos`,
+   * over its own xAPI rather than through Companion.
+   *
+   * `next` steps through the configured inputs — HDMI, then USB-C, then back
+   * — `input` presents one connector, and `stop` ends the presentation. The
+   * device reports what it is actually presenting, so a key carrying `next`
+   * can show it, including when somebody changed it on the device itself.
+   */
+  | { kind: 'roomos'; device: string; op: 'next' | 'input' | 'stop'; connector?: number }
+  /**
    * Call a Home Assistant service, exactly as a dashboard tile does.
    *
    * Goes through the same ServiceGuard as everything else, and the entity is
@@ -687,6 +697,41 @@ export interface TvConfig {
   inputs: SourceRef[];
 }
 
+/**
+ * A Cisco RoomOS device (Desk Pro, Room Bar, ...) spoken to over its own
+ * xAPI WebSocket, for the things Home Assistant cannot tell us.
+ *
+ * The RoomOS integration's share source is a stored CHOICE, not a report of
+ * what is on screen: it never changes when somebody plugs a laptop in and the
+ * device starts presenting it. This connection subscribes to the device's
+ * presentation status instead, so a key can say what is actually showing.
+ *
+ * The password is not here. This whole object is sent to every panel in
+ * `hello`, so it comes from the environment — ROOMOS_PASSWORD, or
+ * ROOMOS_PASSWORD_<ID> for one device — and never leaves the backend.
+ */
+export interface RoomosConfig {
+  id: string;
+  name: string;
+  /** A bare LAN address. The xAPI is served on wss://<host>/ws. */
+  host: string;
+  /** A local user on the device with the integrator or admin role. */
+  username: string;
+  /**
+   * The connectors a `next` key steps through, in order, optionally renamed.
+   * Empty = every input connector the device reports, except cameras.
+   */
+  inputs: RoomosInputRef[];
+}
+
+/** One video input connector, by the device's own id. */
+export interface RoomosInputRef {
+  /** `Video Input Connector` id — on a Desk Pro, 2 is HDMI and 3 is USB-C. */
+  connector: number;
+  /** What the key says. Defaults to the connector's type, e.g. HDMI. */
+  name?: string;
+}
+
 /** One launchable app deliberately exposed as a shortcut on the wall panel. */
 export interface AppleTvShortcutConfig {
   name: string;
@@ -710,6 +755,7 @@ export interface ControlsConfig {
   pages: ControlPage[];
   keylights: KeyLightConfig[];
   tvs: TvConfig[];
+  roomos: RoomosConfig[];
   appleTvs: AppleTvConfig[];
   /**
    * Seconds between key light state polls. 0 stops polling.
