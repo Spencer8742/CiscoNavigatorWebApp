@@ -687,6 +687,10 @@ export interface RoomosState {
    * The fallback label for a connector the config does not rename.
    */
   connectors: { id: number; type: string; connected: boolean | null }[];
+  /** `Audio Volume`, 0–100, or null when unknown or unreachable. */
+  volume: number | null;
+  /** `Audio VolumeMute`, or null when unknown or unreachable. */
+  muted: boolean | null;
 }
 
 export type AppleTvPairingState = 'idle' | 'starting' | 'pin' | 'paired' | 'error';
@@ -1008,6 +1012,14 @@ export type ClientMessage =
    * that no page put there.
    */
   | { t: 'source'; id: number; item: string; value: string }
+  /**
+   * Set the level of, or mute, a `volume:` item's device.
+   *
+   * Names the ITEM, not the device, like `source` above: the backend looks up
+   * which device that item drives, so a panel can only reach a device some
+   * page put a volume control on.
+   */
+  | { t: 'roomos-volume'; id: number; item: string; op: 'level' | 'mute' | 'unmute'; value?: number }
   /** Heartbeat. Detects half-open sockets that TCP will not report. */
   | { t: 'ping'; id: number }
   /**

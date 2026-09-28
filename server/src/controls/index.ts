@@ -340,6 +340,36 @@ export class Controls {
     return want === 'on' ? tv.turnOn() : tv.turnOff();
   }
 
+  /* ── RoomOS volume ─────────────────────────────────────────────────────*/
+
+  /**
+   * Set the level of, or mute, the device behind a `volume:` item.
+   *
+   * The panel names the ITEM; the device comes from the config. The level is
+   * clamped here rather than trusted, and mute is explicit rather than a
+   * toggle: two panels, or a double tap, must not flip it back.
+   */
+  async roomosVolume(
+    itemId: string,
+    op: 'level' | 'mute' | 'unmute',
+    value?: number,
+  ): Promise<string | null> {
+    const item = this.#find(itemId);
+    if (!item || item.type !== 'volume') {
+      log.warn(`Refused volume "${itemId}": not a volume item in dashboard.yaml`);
+      return 'Unknown control';
+    }
+    const dev = this.#roomos.get(item.device);
+    if (!dev) return 'Unknown device';
+    if (!dev.state.reachable) return `${item.name} is not reachable`;
+
+    if (op === 'mute') return dev.xcommand(['Audio', 'Volume', 'Mute'], {});
+    if (op === 'unmute') return dev.xcommand(['Audio', 'Volume', 'Unmute'], {});
+    if (typeof value !== 'number' || !Number.isFinite(value)) return 'No level given';
+    const level = Math.max(0, Math.min(100, Math.round(value)));
+    return dev.xcommand(['Audio', 'Volume', 'Set'], { Level: level });
+  }
+
   /* ── RoomOS presentation ───────────────────────────────────────────────*/
 
   async #roomosAction(

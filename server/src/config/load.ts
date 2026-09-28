@@ -964,6 +964,24 @@ function controlItems(
       return;
     }
 
+    /*
+     * `volume:` names a device in `controls.roomos` and makes this item its
+     * volume slider and mute key, rather than a button. Only at the top of
+     * an item: inside a `device:` block, `volume:` is an entity slot, and
+     * that block has already been handled above.
+     */
+    const volume = raw['volume'];
+    if (typeof volume === 'string' && volume.trim() && !volume.includes('.')) {
+      seen.add(id);
+      out.push({
+        type: 'volume',
+        id,
+        device: volume.trim(),
+        name: str(raw['name'], 'Volume', `${itemPath}.name`),
+      });
+      return;
+    }
+
     // `light:` (with no op) means the full light control rather than a button.
     const light = raw['light'];
     if (typeof light === 'string' && light.trim() && raw['keylight'] === undefined) {

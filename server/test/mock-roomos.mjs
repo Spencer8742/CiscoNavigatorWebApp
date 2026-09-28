@@ -37,6 +37,9 @@ export class MockRoomos {
   ];
   /** The live local presentation, or null. */
   presenting = null;
+  /** `Audio Volume` and `Audio VolumeMute`. */
+  volume = 40;
+  muted = false;
 
   constructor(port, { cert, key }) {
     this.#port = port;
@@ -80,6 +83,13 @@ export class MockRoomos {
     });
   }
 
+  /** The volume changed on the device — its own buttons, or a call. */
+  setVolumeLocally(level, muted = this.muted) {
+    this.volume = level;
+    this.muted = muted;
+    this.#emit({ Audio: { Volume: level, VolumeMute: muted ? 'On' : 'Off' } });
+  }
+
   stopLocally() {
     this.presenting = null;
     this.#emit({ Conference: { Presentation: { LocalInstance: [{ id: 1, ghost: 'True' }] } } });
@@ -101,6 +111,7 @@ export class MockRoomos {
     }
     return {
       Status: {
+        Audio: { Volume: this.volume, VolumeMute: this.muted ? 'On' : 'Off' },
         Conference: { Presentation: presentation },
         Video: {
           Input: {
@@ -146,7 +157,17 @@ export class MockRoomos {
         this.stopLocally();
         return;
       }
-      // Anything else — volume, standby — is accepted, as a real device
+      if (path === 'Audio/Volume/Set') {
+        reply({ result: { status: 'OK' } });
+        this.setVolumeLocally(msg.params.Level);
+        return;
+      }
+      if (path === 'Audio/Volume/Mute' || path === 'Audio/Volume/Unmute') {
+        reply({ result: { status: 'OK' } });
+        this.setVolumeLocally(this.volume, path.endsWith('/Mute'));
+        return;
+      }
+      // Anything else — volume steps, standby — is accepted, as a real device
       // accepts any valid command; `commands` is what the tests assert on.
       return reply({ result: { status: 'OK' } });
     }

@@ -402,3 +402,112 @@ controls:
     }
   });
 });
+
+describe('a volume control', () => {
+  const YAML = `
+version: 1
+controls:
+  pollSeconds: 0
+  roomos:
+    - { id: rkm, name: Room Kit Mini, host: "127.0.0.1:${PORT}", username: panel }
+  pages:
+    - id: room
+      name: Room
+      items:
+        - { id: rkm_volume, volume: rkm, name: Room Kit Mini }
+        - { id: not_volume, name: Wake, roomos: rkm, command: Standby Deactivate }
+`;
+
+  async function controlsWith() {
+    const path = join(dir, `volume-${Math.random().toString(36).slice(2)}.yaml`);
+    await writeFile(path, YAML);
+    const config = new ConfigStore(path);
+    assert.equal(await config.load(), true);
+    const pushes = [];
+    const controls = new Controls({
+      getConfig: () => config.current,
+      haUrl: '',
+      callService: async () => null,
+      getEntity: () => null,
+      onLights: () => {},
+      onTvs: () => {},
+      onRoomos: (devices) => pushes.push(devices),
+      roomosPassword: () => 'secret',
+      appleTvCommand: async () => null,
+      sshCredential: async () => ({}),
+      sshKnownHostsFile: join(dir, 'ssh-known-hosts.json'),
+      hasPanels: () => false,
+      tvKeyFile: join(dir, 'tv-keys.json'),
+    });
+    return { config, controls, pushes };
+  }
+
+  test('parses as a control, not a button', async () => {
+    const { config, controls } = await controlsWith();
+    try {
+      assert.deepEqual(config.current.controls.pages[0].items[0], {
+        type: 'volume',
+        id: 'rkm_volume',
+        device: 'rkm',
+        name: 'Room Kit Mini',
+      });
+    } finally {
+      controls.stop();
+      config.close();
+    }
+  });
+
+  test('reports the level and mute the device reports, and follows it', async () => {
+    device.setVolumeLocally(40, false);
+    const { config, controls, pushes } = await controlsWith();
+    try {
+      await waitFor(() => pushes.at(-1)?.[0]?.volume === 40, 'the level on connect');
+      assert.equal(pushes.at(-1)[0].muted, false);
+      // Changed on the device itself.
+      device.setVolumeLocally(55, true);
+      await waitFor(
+        () => pushes.at(-1)?.[0]?.volume === 55 && pushes.at(-1)[0].muted === true,
+        'the device-side change',
+      );
+    } finally {
+      controls.stop();
+      config.close();
+    }
+  });
+
+  test('sets a clamped level, and mutes explicitly', async () => {
+    device.setVolumeLocally(40, false);
+    const { config, controls, pushes } = await controlsWith();
+    try {
+      await waitFor(() => pushes.at(-1)?.[0]?.reachable, 'connected');
+      device.commands.length = 0;
+
+      assert.equal(await controls.roomosVolume('rkm_volume', 'level', 72.4), null);
+      assert.equal(await controls.roomosVolume('rkm_volume', 'level', 180), null);
+      assert.equal(await controls.roomosVolume('rkm_volume', 'mute'), null);
+      assert.deepEqual(device.commands, [
+        { path: 'Audio/Volume/Set', params: { Level: 72 } },
+        { path: 'Audio/Volume/Set', params: { Level: 100 } },
+        { path: 'Audio/Volume/Mute', params: {} },
+      ]);
+      await waitFor(() => pushes.at(-1)?.[0]?.muted === true, 'mute read back');
+    } finally {
+      device.setVolumeLocally(40, false);
+      controls.stop();
+      config.close();
+    }
+  });
+
+  test('refuses an item that is not a volume control', async () => {
+    const { config, controls } = await controlsWith();
+    try {
+      device.commands.length = 0;
+      assert.equal(await controls.roomosVolume('not_volume', 'level', 10), 'Unknown control');
+      assert.equal(await controls.roomosVolume('rkm', 'mute'), 'Unknown control');
+      assert.equal(device.commands.length, 0);
+    } finally {
+      controls.stop();
+      config.close();
+    }
+  });
+});
