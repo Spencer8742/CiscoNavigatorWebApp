@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { fileURLToPath, URL } from 'node:url';
 import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { loadEnv } from '~/env.ts';
 import { logger } from '~/lib/log.ts';
@@ -549,9 +550,10 @@ async function main(): Promise<void> {
   });
 
   /* ── Macro pages ─────────────────────────────────────────────────────────
-     The Controls screen: Companion button presses, Home Assistant webhooks
-     and Elgato Key Lights, driven from dashboard.yaml. This is what replaced
-     the on-device RoomOS macro — see controls/index.ts.
+     The Controls screen: RoomOS xAPI, webOS, Apple TV, SSH, Home Assistant
+     and Elgato Key Lights, each spoken to directly, driven from
+     dashboard.yaml. This is what replaced the on-device RoomOS macro and
+     Bitfocus Companion — see controls/index.ts.
 
      Declared AFTER the hub because its first reload can already broadcast a
      key light list, and because the two reference each other the annotations
@@ -559,7 +561,6 @@ async function main(): Promise<void> {
 
   const controls: Controls = new Controls({
     getConfig: () => config.current,
-    companionUrl: env.companion.url,
     haUrl: env.ha.url,
     // The same guard the dashboard tiles go through: a macro button that
     // calls a service gets no more reach than a tile that calls the same one.
@@ -572,6 +573,20 @@ async function main(): Promise<void> {
     // the shared one covers the usual case of a single device.
     roomosPassword: (id) =>
       process.env[`ROOMOS_PASSWORD_${id.toUpperCase()}`] || process.env['ROOMOS_PASSWORD'] || '',
+    appleTvCommand: (device, op) => appleTv.command(device, op),
+    sshCredential: async (id) => {
+      const keyFile = process.env[`SSH_KEY_FILE_${id.toUpperCase()}`];
+      const password = process.env[`SSH_PASSWORD_${id.toUpperCase()}`];
+      if (keyFile) {
+        try {
+          return { privateKey: await readFile(keyFile, 'utf8') };
+        } catch (err) {
+          log.warn(`Could not read SSH_KEY_FILE_${id.toUpperCase()} (${keyFile}):`, err);
+        }
+      }
+      return password ? { password } : {};
+    },
+    sshKnownHostsFile: join(dirname(env.configPath), 'ssh-known-hosts.json'),
     // Nothing is polled while no panel is connected. A wall panel that has
     // gone to sleep, or a container running before the device is provisioned,
     // should not be talking to the lights every fifteen seconds.

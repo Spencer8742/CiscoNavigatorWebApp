@@ -4,13 +4,13 @@ import { spawn } from 'node:child_process';
 import { WebSocket } from 'ws';
 import { fileURLToPath, URL } from 'node:url';
 import { MockHomeAssistant } from './mock-ha.mjs';
-import { MockCompanion, MockKeyLight } from './mock-controls.mjs';
+import { MockKeyLight } from './mock-controls.mjs';
 
 /**
  * End-to-end tests for the macro pages — the Controls screen.
  *
- * Black box, like the bridge tests: a real backend process, a mock Companion
- * and two mock Elgato Key Lights speaking their real wire formats, and a
+ * Black box, like the bridge tests: a real backend process, a mock Home
+ * Assistant and two mock Elgato Key Lights speaking their real wire formats, and a
  * WebSocket client standing in for the panel.
  *
  * What this suite exists to protect, in order:
@@ -31,7 +31,6 @@ import { MockCompanion, MockKeyLight } from './mock-controls.mjs';
 
 const HA_PORT = 19123;
 const PANEL_PORT = 19099;
-const COMPANION_PORT = 19800;
 const LEFT_PORT = 19201;
 const RIGHT_PORT = 19202;
 const TOKEN = 'controls-test-token';
@@ -40,7 +39,6 @@ const SERVER = fileURLToPath(new URL('../dist/server.js', import.meta.url));
 const CONFIG = fileURLToPath(new URL('./fixtures/controls.test.yaml', import.meta.url));
 
 let ha;
-let companion;
 let left;
 let right;
 let backend;
@@ -176,9 +174,6 @@ before(async () => {
   });
   await ha.start();
 
-  companion = new MockCompanion(COMPANION_PORT);
-  await companion.start();
-
   left = new MockKeyLight(LEFT_PORT);
   // 213 mireds is 4700 K; 20% brightness. Written as the light would send it.
   left.light = { on: 0, brightness: 20, temperature: 213 };
@@ -197,7 +192,6 @@ before(async () => {
       CONFIG_PATH: CONFIG,
       HA_URL: `http://127.0.0.1:${HA_PORT}`,
       HA_TOKEN: 'mock-ha-token',
-      COMPANION_URL: `http://127.0.0.1:${COMPANION_PORT}`,
       IMMICH_URL: '',
       IMMICH_API_KEY: '',
       LOG_LEVEL: 'warn',
@@ -242,7 +236,7 @@ after(async () => {
       }, 3000);
     });
   }
-  await Promise.all([ha?.stop(), companion?.stop(), left?.stop(), right?.stop()]);
+  await Promise.all([ha?.stop(), left?.stop(), right?.stop()]);
 });
 
 /** A page by id, so a fixture edit does not renumber every assertion. */
@@ -272,14 +266,20 @@ describe('control pages', () => {
     assert.equal(join.type, 'button');
     assert.equal(join.wide, true);
     assert.equal(join.tone, 'accent');
-    assert.deepEqual(join.actions, [{ kind: 'companion', page: 1, row: 0, column: 0 }]);
+    assert.deepEqual(join.actions, [{ kind: 'webhook', id: 'deskpro_join' }]);
   });
 
-  test('accept all three Companion coordinate spellings', () => {
-    const [slashes, object, array] = page('deskpro').items;
-    assert.deepEqual(slashes.actions, [{ kind: 'companion', page: 1, row: 0, column: 0 }]);
-    assert.deepEqual(object.actions, [{ kind: 'companion', page: 1, row: 0, column: 1 }]);
-    assert.deepEqual(array.actions, [{ kind: 'companion', page: 9, row: 9, column: 9 }]);
+  test('a Companion step is dropped, and named in the log', () => {
+    // Companion support is gone. A key that only pressed Companion has no
+    // step left, so it is not a key; the log says why.
+    assert.equal(
+      page('deskpro').items.find((i) => i.id === 'deskpro.legacy'),
+      undefined,
+    );
+    assert.ok(
+      backendLog.some((l) => l.includes('Companion support has been removed')),
+      'the dropped step must be named',
+    );
   });
 
   test('a bare `light:` item is a control, not a button', () => {
@@ -299,49 +299,47 @@ describe('control pages', () => {
   });
 });
 
-/* ── Companion ────────────────────────────────────────────────────────────*/
+/* ── The panel names a key ────────────────────────────────────────────────*/
 
-describe('Companion buttons', () => {
-  test('press the configured location', async () => {
-    companion.presses.length = 0;
+describe('keys', () => {
+  test('run the configured step', async () => {
+    ha.webhooks.length = 0;
     panel.press('deskpro.join');
 
-    const press = await waitFor(() => companion.presses[0], 'a Companion press');
-    assert.deepEqual(press, { page: 1, row: 0, column: 0 });
+    await waitFor(() => ha.webhooks.some((w) => w.id === 'deskpro_join'), 'the key to run');
   });
 
-  test('report a location Companion has no button at', async () => {
+  test('report a step that fails', async () => {
     const ref = panel.press('deskpro.missing');
     const error = await panel.errorFor(ref);
 
     assert.equal(error.code, 'control_failed');
-    // The message names the coordinates, because the fix is in Companion.
-    assert.match(error.message, /9\/9\/9/);
+    assert.equal(error.message, 'Unknown light');
   });
 
   test('refuse a button id that is not in the config', async () => {
-    companion.presses.length = 0;
+    ha.webhooks.length = 0;
     const ref = panel.press('deskpro.nonexistent');
     const error = await panel.errorFor(ref);
 
     assert.equal(error.message, 'Unknown button');
-    assert.equal(companion.presses.length, 0, 'nothing may be sent for an unknown id');
+    assert.equal(ha.webhooks.length, 0, 'nothing may be sent for an unknown id');
   });
 
-  test('the panel cannot name a location directly', async () => {
-    companion.presses.length = 0;
+  test('the panel cannot name a request directly', async () => {
+    ha.webhooks.length = 0;
 
-    // The shape a compromised panel would reach for: coordinates, not an id.
-    // There is no message that carries them, so this is simply ignored.
+    // The shape a compromised panel would reach for: a request, not an id.
+    // There is no message that carries one, so this is simply refused.
     panel.ws.send(
-      JSON.stringify({ t: 'control', id: 900, button: '2/1/3', page: 2, row: 1, column: 3 }),
+      JSON.stringify({ t: 'control', id: 900, button: 'desk_blinds', webhook: 'desk_blinds' }),
     );
 
     await waitFor(
       () => panel.errors.find((e) => e.ref === 900),
       'the press to be refused',
     );
-    assert.equal(companion.presses.length, 0, '2/1/3 exists in Companion but was never pressed');
+    assert.equal(ha.webhooks.length, 0, 'desk_blinds is a real webhook but was never fired');
   });
 });
 
@@ -350,21 +348,25 @@ describe('Companion buttons', () => {
 describe('a key with more than one action', () => {
   /*
    * One key is often one INTENTION carried out in several places: "power the
-   * office on" is a Companion macro AND a television Companion cannot reach.
-   * Splitting that across two keys makes the person pressing them responsible
-   * for remembering the pair.
+   * office on" is a Desk Pro, a television, the lights and a Mac. Splitting
+   * that across keys makes the person pressing them responsible for
+   * remembering the set.
    */
 
-  test('runs every action, in order', async () => {
-    companion.presses.length = 0;
+  test('runs every action, in order, waiting where told to', async () => {
     ha.webhooks.length = 0;
+    const started = Date.now();
     panel.press('combo.both');
 
     await waitFor(
       () => ha.webhooks.some((w) => w.id === 'combo_second'),
       'the second action to run',
     );
-    assert.equal(companion.presses.length, 1, 'and the first to have run too');
+    assert.deepEqual(
+      ha.webhooks.map((w) => w.id),
+      ['combo_first', 'combo_second'],
+    );
+    assert.ok(Date.now() - started >= 200, 'the wait between them was honoured');
   });
 
   test('reads `action: on` as ON, not as the YAML boolean it is', () => {
@@ -382,18 +384,17 @@ describe('a key with more than one action', () => {
     assert.deepEqual(off.actions, [{ kind: 'tv', tv: 'room_tv', op: 'off' }]);
   });
 
-  test('stops at the first failure', async () => {
-    // Carrying on would leave the room half-started while the panel reported
-    // only whatever the last action did.
+  test('carries on past a failure, and still reports it', async () => {
+    // Shut Down should turn the lights off even when the Desk Pro is not
+    // answering — but a partly-done press must not read as a clean one.
     ha.webhooks.length = 0;
-    const ref = panel.press('combo.stops');
+    const ref = panel.press('combo.carries');
     const error = await panel.errorFor(ref);
 
-    assert.ok(error, 'the failure must reach the panel');
-    assert.equal(
-      ha.webhooks.some((w) => w.id === 'combo_never'),
-      false,
-      'the action after a failed one must not run',
+    assert.equal(error.message, 'Unknown light');
+    await waitFor(
+      () => ha.webhooks.some((w) => w.id === 'combo_after'),
+      'the step after the failed one to run',
     );
   });
 });
@@ -494,7 +495,7 @@ describe('media player keys', () => {
 
   test('a control id that is not a sources key is refused', async () => {
     ha.serviceCalls.length = 0;
-    // A real key, but a Companion one — it has no entity to select on.
+    // A real key, but a webhook one — it has no entity to select on.
     const ref = panel.source('deskpro.join', 'HDMI 1');
     const error = await panel.errorFor(ref);
     assert.equal(error.message, 'Unknown control');
@@ -642,8 +643,7 @@ describe('device tiles', () => {
 describe('a device tile\'s own keys', () => {
   /*
    * `keys:` inside a `device:` block — for the things the integration does
-   * not expose, like camera on/off, which have to go through Companion
-   * instead. Parsed by the same controlItems() as any other key, so it needs
+   * not expose. Parsed by the same controlItems() as any other key, so it needs
    * to be resolvable by press() the same way. Without the lookup added to
    * ControlRunner#find, a nested key would parse fine, render fine, and every
    * tap would be refused as "not in dashboard.yaml" — which is exactly the
@@ -651,11 +651,10 @@ describe('a device tile\'s own keys', () => {
    */
 
   test('is a real button the panel can press', async () => {
-    companion.presses.length = 0;
+    ha.webhooks.length = 0;
     panel.press('desk.lights');
 
-    const press = await waitFor(() => companion.presses[0], 'a Companion press');
-    assert.deepEqual(press, { page: 1, row: 0, column: 1 });
+    await waitFor(() => ha.webhooks.some((w) => w.id === 'desk_lights'), 'the key to run');
   });
 
   test('is on the tile, not on the page grid', () => {

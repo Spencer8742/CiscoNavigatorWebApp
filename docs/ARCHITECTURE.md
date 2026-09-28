@@ -268,7 +268,9 @@ CiscoNavigatorWebApp/
 │       ├── sonos/             # client, events, store, commands, browse
 │       ├── immich/            # client.ts, images.ts
 │       ├── cast/              # protocol.ts, device.ts, keeper.ts
-│       ├── controls/          # companion.ts, keylight.ts — the macro pages
+│       ├── controls/          # index.ts, keylight.ts — the macro pages
+│       ├── roomos/            # xapi.ts — Cisco devices over the xAPI WebSocket
+│       ├── ssh/               # runner.ts — fixed commands, host key pinned
 │       └── lib/               # backoff.ts, log.ts, lru.ts
 │
 ├── Dockerfile                 # multi-stage: build panel → run server
@@ -409,17 +411,19 @@ reasoning, as the artwork registry in `http/media-art.ts`.
 clock are unaffected; the Media screen explains what is missing rather than
 sitting empty.
 
-### Companion, key lights and webhooks are the same shape as everything else
+### The macro keys are the same shape as everything else
 
 The Controls screen replaces a RoomOS macro (`companion_bridge.js`) that used
-to run on the Room Bar and map Navigator widget taps onto HTTP calls. Its
-three upstreams — Bitfocus Companion, Elgato Key Lights, Home Assistant
-webhooks — are reached from the backend, and none of that is a preference:
+to run on the Room Bar and map Navigator widget taps onto Bitfocus Companion,
+and then Companion itself. Every key now goes straight to the device it
+drives — and all of it from the backend, which is not a preference:
 
 | | Why it cannot be done from the page |
 |---|---|
-| Companion | HTTP-only, no auth. An HTTPS page may not fetch `http://192.168.1.x` — mixed content, blocked before CORS is consulted |
-| Elgato Key Light | Same, and it sends no CORS headers either |
+| Cisco xAPI | Needs the device's password, which must never reach the page |
+| LG webOS | A self-signed WebSocket on the LAN, and a pairing key kept on disk |
+| SSH | A private key, and a host key pinned on first use |
+| Elgato Key Light | HTTP-only. An HTTPS page may not fetch `http://192.168.1.x` — mixed content, blocked before CORS is consulted — and it sends no CORS headers either |
 | HA webhook | Would put the Home Assistant origin in the page's reach |
 
 So the panel sends a **button id** and the backend resolves it against

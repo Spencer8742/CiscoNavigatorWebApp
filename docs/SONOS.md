@@ -209,7 +209,7 @@ navigator-panel (Node 22)
   │
   ├── ha/       Home Assistant     — the house. Unchanged.
   ├── immich/   photos             — unchanged.
-  ├── controls/ Companion, lights  — unchanged.
+  ├── controls/ macro keys, lights — unchanged.
   │
   └── sonos/    THE MUSIC          — new
         discovery.ts   SSDP + seed host → one reachable player

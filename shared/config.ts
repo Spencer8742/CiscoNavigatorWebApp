@@ -309,7 +309,8 @@ export interface CastDisplay {
 
    A Room Bar previously ran a JavaScript macro that mapped Navigator widget
    taps onto HTTP calls: Bitfocus Companion button presses, Home Assistant
-   webhooks, and Elgato Key Lights. A factory reset destroyed all of it —
+   webhooks, and Elgato Key Lights. Companion has since gone too: every key
+   now speaks to the device it drives, over that device's own protocol. A factory reset destroyed all of it —
    macro, panel XML and HttpClient config all live on the device and none of
    it has a single artefact to reapply.
 
@@ -318,7 +319,7 @@ export interface CastDisplay {
 
    The important structural rule: a button is identified to the backend by
    ITS ID, never by the request it makes. The panel cannot ask the backend to
-   press Companion page 3 button 7 — it can only ask it to run
+   run an xCommand or an SSH command of its choosing — it can only ask it to run
    `deskpro.hangup`, which the backend then looks up here. Same reasoning as
    the Home Assistant entity allow-list in allReferencedEntities() below: a
    panel on a wall is trusted to drive the dashboard, not to compose
@@ -331,14 +332,6 @@ export interface CastDisplay {
  * the far end, so there is nothing to configure beyond which one.
  */
 export type ControlAction =
-  /**
-   * Press a Bitfocus Companion button by its grid location.
-   *
-   * `POST /api/location/<page>/<row>/<column>/press` — Companion 4.x. The
-   * coordinates are Companion's own and are re-derived from a config export;
-   * they are not stable across a Companion page rearrangement.
-   */
-  | { kind: 'companion'; page: number; row: number; column: number }
   /**
    * Fire a Home Assistant webhook: `POST /api/webhook/<id>`.
    *
@@ -359,7 +352,7 @@ export type ControlAction =
   | { kind: 'tv'; tv: string; op: 'on' | 'off' | 'toggle' | 'input' | 'next'; input?: string }
   /**
    * Drive the presentation on a Cisco device listed in `controls.roomos`,
-   * over its own xAPI rather than through Companion.
+   * over its own xAPI.
    *
    * `next` steps through the configured inputs — HDMI, then USB-C, then back
    * — `input` presents one connector, and `stop` ends the presentation. The
@@ -368,6 +361,34 @@ export type ControlAction =
    */
   | { kind: 'roomos'; device: string; op: 'next' | 'input' | 'stop'; connector?: number }
   /**
+   * Any other xCommand on a device in `controls.roomos` — `Standby
+   * Deactivate`, `Audio Volume Increase` with `{ Steps: 5 }`.
+   *
+   * General on purpose: the xAPI has hundreds of commands and each one a key
+   * could want is a line of YAML, not a release. It is no wider a door than
+   * the rest of this file — the command is written here, and the panel can
+   * only name the key.
+   */
+  | { kind: 'xcommand'; device: string; command: string[]; params: Record<string, unknown> }
+  /**
+   * Run a command over SSH on a host in `controls.ssh` — `caffeinate -u -t 1`
+   * on the Mac, to light its display after it wakes.
+   *
+   * The command is fixed here for the same reason as everything else: the
+   * panel names a key, never a command line.
+   */
+  | { kind: 'ssh'; host: string; run: string }
+  /** A command to an Apple TV in `controls.appleTvs`, over its own protocols. */
+  | { kind: 'appletv'; device: string; op: AppleTvKeyOp }
+  /**
+   * Pause before the next step, in seconds.
+   *
+   * For the step that needs the one before it to have finished on the far
+   * side: a Desk Pro takes a few seconds to close a presentation, and one
+   * sent to standby before then wakes straight back up to finish it.
+   */
+  | { kind: 'wait'; seconds: number }
+  /**
    * Call a Home Assistant service, exactly as a dashboard tile does.
    *
    * Goes through the same ServiceGuard as everything else, and the entity is
@@ -375,6 +396,38 @@ export type ControlAction =
    * a macro page grants no more than putting it on Home does.
    */
   | { kind: 'entity'; entity: string; service: string; data?: Record<string, unknown> };
+
+/** What a key may ask an Apple TV to do. The remote's own commands, less the swipes. */
+export type AppleTvKeyOp =
+  | 'power_on'
+  | 'power_off'
+  | 'play_pause'
+  | 'play'
+  | 'pause'
+  | 'stop'
+  | 'next'
+  | 'previous'
+  | 'volume_up'
+  | 'volume_down'
+  | 'home'
+  | 'menu'
+  | 'screensaver';
+
+export const APPLE_TV_KEY_OPS: readonly AppleTvKeyOp[] = [
+  'power_on',
+  'power_off',
+  'play_pause',
+  'play',
+  'pause',
+  'stop',
+  'next',
+  'previous',
+  'volume_up',
+  'volume_down',
+  'home',
+  'menu',
+  'screensaver',
+];
 
 export type KeyLightOp = 'toggle' | 'on' | 'off' | 'brightness' | 'temperature';
 
@@ -405,13 +458,14 @@ export interface ControlButton {
   /** Twice the width in the grid, for a primary action like Join. */
   wide: boolean;
   /**
-   * What the press does. More than one runs in order, stopping at the first
-   * failure.
+   * What the press does. More than one runs in order, and EVERY step runs
+   * even when an earlier one fails; the key then reports the first failure.
    *
    * A list because one key is often one INTENTION carried out in several
-   * places: "power the office on" is a Companion macro and a television that
-   * Companion cannot reach. Splitting that across two keys makes the person
-   * pressing them responsible for remembering the pair.
+   * places: "power the office on" is a Desk Pro, a television, the lights, an
+   * Apple TV and a Mac. Carrying on past a failure is what a person pressing
+   * "Shut Down" means — the lights should go off even when the Desk Pro is
+   * not answering — and the key still says what did not happen.
    */
   actions: ControlAction[];
 }
@@ -510,14 +564,13 @@ export interface ControlDevice {
    * Extra keys drawn in the tile's toggle row.
    *
    * For the things the RoomOS integration does not expose but the device can
-   * still be made to do another way — camera on/off, notably, which has no
-   * entity and has to go through Companion. They belong in the row because
-   * that is where someone looks for them, not at the bottom of the page with
-   * the room macros.
+   * still be made to do another way — an `xcommand:` on a `controls.roomos`
+   * device, typically. They belong in the row because that is where someone
+   * looks for them, not at the bottom of the page with the room macros.
    *
    * They are ordinary buttons and they look it: no state, a confirmation tick
-   * on press. A Companion press has no feedback, and a key that borrowed the
-   * lit-up look of the real toggles beside it would be claiming to know
+   * on press. A fire-once command has no feedback, and a key that borrowed
+   * the lit-up look of the real toggles beside it would be claiming to know
    * something it cannot.
    */
   keys: ControlButton[];
@@ -732,6 +785,22 @@ export interface RoomosInputRef {
   name?: string;
 }
 
+/**
+ * A host the backend may run fixed commands on over SSH.
+ *
+ * The credential is not here — this object is sent to every panel. It comes
+ * from the environment: SSH_KEY_FILE_<ID> (a private key file mounted into
+ * the container), or SSH_PASSWORD_<ID>. The host's key is pinned on first
+ * contact in ssh-known-hosts.json beside dashboard.yaml, and a host that
+ * later presents a different key is refused.
+ */
+export interface SshHostConfig {
+  id: string;
+  /** Bare address, optionally with `:port`. */
+  host: string;
+  username: string;
+}
+
 /** One launchable app deliberately exposed as a shortcut on the wall panel. */
 export interface AppleTvShortcutConfig {
   name: string;
@@ -756,6 +825,7 @@ export interface ControlsConfig {
   keylights: KeyLightConfig[];
   tvs: TvConfig[];
   roomos: RoomosConfig[];
+  ssh: SshHostConfig[];
   appleTvs: AppleTvConfig[];
   /**
    * Seconds between key light state polls. 0 stops polling.

@@ -190,9 +190,10 @@ each row:
 
 `IMMICH_URL` and `IMMICH_API_KEY` are optional, as are `PLEX_URL` and
 `PLEX_TOKEN` (see [Plex](#plex--browse-on-the-panel-play-on-an-apple-tv)),
-and `COMPANION_URL` — set
-that one to your Bitfocus Companion (`http://192.168.1.x:8000`) if you want
-the `companion:` buttons on the Controls screen. `SONOS_HOST` is optional too;
+and `ROOMOS_PASSWORD` — set that one if the Controls keys drive a Desk Pro
+or another Cisco device (`controls.roomos` in `dashboard.yaml`). A key that
+runs a command over SSH needs `SSH_KEY_FILE_<ID>` too, pointing at a private
+key you have put under the config directory. `SONOS_HOST` is optional too;
 see [Sonos](#sonos) below. Key lights are configured in `dashboard.yaml`, not
 here.
 

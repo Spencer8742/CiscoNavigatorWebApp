@@ -421,22 +421,29 @@ cast:
 #
 # So the buttons live here now. The device holds one URL (see
 # scripts/provision-roombar.sh) and everything else is this file. A factory
-# reset costs one script run.
+# reset costs one script run. Bitfocus Companion, which the macro used to
+# drive, is gone too: every step now goes straight to the device it drives.
 #
 # What the buttons can reach, and how:
 #
-#   companion:  a Bitfocus Companion button, by its grid location.
-#               Needs COMPANION_URL in .env.
+#   roomos:     a Cisco device in `roomos:` below, over its own xAPI —
+#               presentation (`action: next`, `connector:`, `action: stop`)
+#               or any xCommand (`command: Standby Deactivate`).
+#   tv:         an LG webOS television in `tvs:` below.
+#   appletv:    an Apple TV in `appleTvs:` below — power_on, power_off,
+#               play_pause, volume_up, volume_down, home, menu, ...
+#   ssh:        a fixed command on a host in `ssh:` below.
 #   webhook:    a Home Assistant webhook — POST /api/webhook/<id>.
 #               Uses HA_URL; no extra credentials, the id is the secret.
 #   entity:     an ordinary Home Assistant service call, exactly as a tile
 #               makes. Subject to the same allow-list as everything else in
 #               this file.
 #   keylight:   an Elgato Key Light, listed under `keylights:` below.
+#   wait:       a pause between two steps, in seconds.
 #   light:      not a button — the FULL key light control, with power,
 #               brightness and colour temperature.
 #
-# The panel never sends a URL, a Companion coordinate or a webhook id. It
+# The panel never sends a URL, a command or a webhook id. It
 # sends the button's id and the backend looks it up here, for the same reason
 # service calls are checked against the entity list above: a screen on a wall
 # is trusted to drive the dashboard, not to compose requests to your LAN.
@@ -506,7 +513,7 @@ controls:
   #
   # `action:` is toggle | on | off | next. `toggle` asks whether the set
   # answers and does the opposite, so it cannot drift the way a latching
-  # Companion key does. `next` steps through the inputs listed above, and
+  # key that only counts its own presses does. `next` steps through the inputs listed above, and
   # draws the CURRENT one under the key's name — pushed by the TV, so it
   # follows the television's own remote too, and reads "—" when the set is
   # off or showing something that is not an input.
@@ -517,23 +524,34 @@ controls:
   # Note the YAML: `on` and `off` are booleans in YAML 1.1, and are read here
   # as the words they look like.
   #
-  # A key may carry SEVERAL actions, run in order and stopped at the first
-  # failure. One key is often one intention in more than one place:
+  # A key may carry SEVERAL actions. They run in order, and every one runs
+  #   even if an earlier one fails — the key then reports what failed. One key
+  #   is often one intention in more than one place:
   #
   #   - name: Office Power
   #     icon: power
   #     actions:
-  #       - { companion: 1/2/4 }
+  #       - { roomos: desk_pro, command: Standby Deactivate }
   #       - { tv: office_lg, action: on }
+  #       - { roomos: desk_pro, connector: 2 }
+  #       - { entity: light.all_office_lights }
+  #       - { appletv: office_apple_tv, action: power_on }
+  #       - { entity: button.wake_on_lan_mac, service: press }
+  #       - { ssh: mac_studio, run: caffeinate -u -t 1 }
 
   # ── Cisco devices, spoken to directly ──────────────────────────────────
   #
-  # A Desk Pro (or any RoomOS device) over its own xAPI WebSocket, for the
-  # one thing Companion and Home Assistant cannot tell the panel: which input
-  # is ACTUALLY being presented. A Companion key that flips HDMI/USB-C counts
-  # its own presses, so it drifts the first time a laptop is plugged in or a
-  # source is picked on the Desk Pro's screen. This subscribes to the device's
-  # presentation status and follows every change, whoever made it.
+  # A Desk Pro, Room Kit Mini or any RoomOS device over its own xAPI
+  # WebSocket. It runs any xCommand a key names, and it reports the one
+  # thing Home Assistant cannot: which input is ACTUALLY being presented. A
+  # key that flips HDMI/USB-C by counting its own presses drifts the first
+  # time a laptop is plugged in or a source is picked on the Desk Pro's
+  # screen; this subscribes to the device's presentation status and follows
+  # every change, whoever made it.
+  #
+  # The device must serve the xAPI over WebSocket:
+  #   xConfiguration NetworkServices Websocket: FollowHTTPService
+  #   xConfiguration NetworkServices HTTP Mode: HTTPS
   #
   # (The Home Assistant integration's "Share source" select is a stored
   # choice for its Share buttons, not a report of what is on screen.)
@@ -545,23 +563,62 @@ controls:
   #    name: Desk Pro
   #    host: 192.168.1.50
   #    username: panel
-  #    # Connector ids, as `xStatus Video Input Connector` lists them. On a
-  #    # Desk Pro, 1 is the camera, 2 is HDMI and 3 is USB-C. Omit to step
-  #    # through every input the device reports.
+  #    # Connector ids, as `xStatus Video Input Connector` lists them. They
+  #    # differ by model — check yours; connector 1 is usually the camera.
+  #    # Omit to step through every input the device reports.
   #    inputs:
   #      - { connector: 2, name: HDMI }
-  #      - { connector: 3, name: USB-C }
+  #      - { connector: 4, name: USB-C }
+  #  - id: room_kit_mini
+  #    name: Room Kit Mini
+  #    host: 192.168.1.77
+  #    username: panel
   #
   # On a page, `roomos:` is an ACTION a key can take:
   #
   #   - { name: Presentation, icon: share, roomos: desk_pro, action: next }
-  #   - { name: Laptop,       icon: input, roomos: desk_pro, connector: 3 }
+  #   - { name: Laptop,       icon: input, roomos: desk_pro, connector: 4 }
   #   - { name: Stop Share,   icon: close, roomos: desk_pro, action: stop }
+  #
+  # ...or any xCommand, written the way the xAPI documentation writes it,
+  # with its parameters under `params:`:
+  #
+  #   - { name: Wake,  roomos: desk_pro, command: Standby Deactivate }
+  #   - { name: Sleep, roomos: desk_pro, command: Standby Halfwake }
+  #   - name: RKM Vol +
+  #     icon: volumeUp
+  #     roomos: room_kit_mini
+  #     command: Audio Volume Increase
+  #     params: { Steps: 5 }
+  #   - { name: RKM Mute, icon: mute, roomos: room_kit_mini, command: Audio Volume ToggleMute }
   #
   # `next` presents the input AFTER the one the device says is on screen,
   # skipping one with nothing plugged in, and draws the current input under
   # the key's name. Switching keeps the presentation's sending mode, so it
   # does not stop sharing into a call; starting from nothing is local only.
+
+  # ── Hosts a key may run a command on, over SSH ─────────────────────────
+  #
+  # For the one step no API covers — `caffeinate -u -t 1` on a Mac, to light
+  # its display once Wake-on-LAN has woken it. Turn on Remote Login on the
+  # Mac (System Settings > General > Sharing).
+  #
+  # The CREDENTIAL is not written here — this file is sent to the panel. In
+  # .env, per host id in upper case:
+  #   SSH_KEY_FILE_MAC_STUDIO=/config/ssh/mac_studio   (preferred: a private
+  #                                                     key file mounted in)
+  #   SSH_PASSWORD_MAC_STUDIO=...                      (or a password)
+  #
+  # The host's key is pinned the first time it connects, in
+  # ssh-known-hosts.json beside this file; a host that later presents a
+  # different key is refused before any credential is sent. Reinstalled the
+  # Mac? Delete its line from that file.
+  ssh: []
+  #  - id: mac_studio
+  #    host: 192.168.1.200
+  #    username: spencer
+  #
+  #   - { name: Wake Mac, icon: power, ssh: mac_studio, run: caffeinate -u -t 1 }
 
   # Apple TVs appear on their own page in the bottom navigation.
   # Give each one a fixed DHCP lease. The first Pair tap displays a PIN on the
@@ -605,27 +662,27 @@ controls:
   #    # on a screen someone stabs at mid-call without looking straight at it.
   #    size: lg
   #    items:
-  #      # Companion, written the way a config export shows it: page/row/column.
-  #      # {page: 1, row: 0, column: 0} and [1, 0, 0] are also accepted.
-  #      #
-  #      # These coordinates are Companion's own and they MOVE when you
-  #      # rearrange a Companion page. Re-derive them from a fresh Companion
-  #      # config export rather than from memory.
-  #      - name: Join
+  #      - name: Wake
   #        icon: phone
   #        tone: accent
   #        wide: true          # spans two columns
-  #        companion: 1/0/0
-  #      - name: Hang Up
-  #        icon: phoneDown
+  #        roomos: desk_pro
+  #        command: Standby Deactivate
+  #      - name: Sleep
+  #        icon: moon
   #        tone: danger        # outlined, not filled — see screens.css
-  #        companion: 1/0/1
-  #      - name: Mute
-  #        icon: micOff
-  #        companion: 1/1/0
-  #      - name: Share
-  #        icon: share
-  #        companion: 1/1/1
+  #        roomos: desk_pro
+  #        command: Standby Halfwake
+  #      - name: Office Off
+  #        icon: power
+  #        actions:
+  #          - { roomos: desk_pro, action: stop }
+  #          # A Desk Pro closes a presentation in a few seconds. Sent to
+  #          # standby before then, it wakes straight back up to finish it.
+  #          - { wait: 10 }
+  #          - { roomos: desk_pro, command: Standby Halfwake }
+  #          - { appletv: office_apple_tv, action: power_off }
+  #          - { tv: office_lg, action: off }
   #
   #  - id: lights
   #    name: Lights
@@ -710,11 +767,10 @@ controls:
   #  # tile: the device's own meeting list, live occupancy and noise, the four
   #  # mute states, volume, share source, and call control.
   #  #
-  #  # It is the one control here that is NOT fire-and-forget. A Companion key
-  #  # can only report that the press was sent; this reads the device back, so
-  #  # a mute key honestly shows that the mic IS muted. Where a device tile
-  #  # covers something, it should REPLACE the Companion keys for it rather
-  #  # than sit beside them.
+  #  # It is NOT fire-and-forget. A key can only report that its command was
+  #  # sent; this reads the device back, so a mute key honestly shows that the
+  #  # mic IS muted. Where a device tile covers something, it should REPLACE
+  #  # the keys for it rather than sit beside them.
   #  #
   #  # Needs github.com/Spencer8742/HomeAssistantCiscoRoomOS in Home Assistant.
   #  #
@@ -749,11 +805,11 @@ controls:
   #
   #          # Keys drawn INSIDE the tile, in the row with Mic and Speaker,
   #          # for something the integration does not expose. They are
-  #          # ordinary keys — a Companion press has no feedback, so they
+  #          # ordinary keys — a one-off command has no feedback, so they
   #          # confirm with a tick and claim nothing about the result.
   #          #
   #          # keys:
-  #          #   - { name: Lights, icon: bulb, companion: 1/3/0 }
+  #          #   - { name: DND, icon: moon, roomos: desk_pro, command: Conference DoNotDisturb Activate }
   #
   #      # One gap the tile cannot close:
   #      #
@@ -762,7 +818,7 @@ controls:
   #      #   the five minutes before it starts. A Join on the 12:00 row that
   #      #   started the 9:00 meeting is worse than no button.
   #      #
-  #      # Camera mute USED to be a gap here, covered by two Companion keys.
+  #      # Camera mute USED to be a gap here, covered by two separate keys.
   #      # cisco_roomos 0.6.0 exposes switch.<device>_camera_mute, so the tile
   #      # has a real Camera toggle and those keys should be deleted — a key
   #      # that only says "the press was sent" is strictly worse than a toggle

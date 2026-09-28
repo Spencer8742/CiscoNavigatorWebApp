@@ -1,9 +1,15 @@
 import { logger } from '~/lib/log.ts';
-import { CompanionClient } from '~/controls/companion.ts';
 import { KeyLight } from '~/controls/keylight.ts';
 import { WebosClient } from '~/tv/webos.ts';
 import { RoomosClient } from '~/roomos/xapi.ts';
-import type { ControlAction, ControlItem, DashboardConfig, KeyLightOp } from '@shared/config.ts';
+import { SshRunner } from '~/ssh/runner.ts';
+import type {
+  AppleTvKeyOp,
+  ControlAction,
+  ControlItem,
+  DashboardConfig,
+  KeyLightOp,
+} from '@shared/config.ts';
 import type { EntityState, KeyLightState, RoomosState, TvState } from '@shared/protocol.ts';
 
 const log = logger('controls');
@@ -12,7 +18,8 @@ const log = logger('controls');
  * The macro pages: what a button press actually does.
  *
  * This is the replacement for `companion_bridge.js`, the RoomOS macro this
- * app's Controls screen exists to retire. That macro mapped Navigator widget
+ * app's Controls screen exists to retire — and, since, for Bitfocus Companion
+ * itself: every step now goes straight to the device it drives. That macro mapped Navigator widget
  * taps onto HTTP calls, and it lived *on the device* — so a factory reset
  * destroyed it along with the panel XML and the HttpClient config, with no
  * artefact to reapply. The device now holds a URL and this holds the map.
@@ -23,7 +30,8 @@ const log = logger('controls');
  * screen on a wall that anyone in the room can touch; it is trusted to drive
  * the dashboard, not to compose arbitrary HTTP requests to things on the LAN.
  * The Home Assistant side has always worked this way (ha/services.ts) and
- * there is no reason for Companion or a key light to be looser.
+ * there is no reason for an xCommand, an SSH command or a key light to be
+ * looser.
  *
  * Failures are reported, never retried. Every action here is a transport
  * command — hang up, mute, lights off — and a duplicate arriving a second
@@ -32,8 +40,6 @@ const log = logger('controls');
 
 export interface ControlsDeps {
   getConfig: () => DashboardConfig;
-  /** Companion base URL, or '' when it is not configured. */
-  companionUrl: string;
   /** Home Assistant base URL, for webhooks. '' disables them. */
   haUrl: string;
   /** The ServiceGuard, so `entity:` buttons obey the same allow-list as tiles. */
@@ -56,6 +62,15 @@ export interface ControlsDeps {
    * Never in dashboard.yaml: that file is sent to every panel.
    */
   roomosPassword: (id: string) => string;
+  /** An Apple TV command, through the same bridge its remote uses. */
+  appleTvCommand: (device: string, op: AppleTvKeyOp) => Promise<string | null>;
+  /**
+   * The credential for one `controls.ssh` host, from the environment. Read
+   * at press time, so a key file mounted after start-up is picked up.
+   */
+  sshCredential: (id: string) => Promise<{ privateKey?: string; password?: string }>;
+  /** Where SSH host keys are pinned. Beside the config, like tv-keys.json. */
+  sshKnownHostsFile: string;
   /** Whether any panel is connected. Polling is pointless when none is. */
   hasPanels: () => boolean;
   /**
@@ -73,7 +88,7 @@ const WEBHOOK_TIMEOUT_MS = 5000;
 
 export class Controls {
   readonly #deps: ControlsDeps;
-  readonly #companion: CompanionClient;
+  readonly #ssh: SshRunner;
   /** Live key lights, by config id. Rebuilt on every config change. */
   #lights = new Map<string, KeyLight>();
   #tvs = new Map<string, WebosClient>();
@@ -84,7 +99,7 @@ export class Controls {
 
   constructor(deps: ControlsDeps) {
     this.#deps = deps;
-    this.#companion = new CompanionClient(deps.companionUrl);
+    this.#ssh = new SshRunner(deps.sshKnownHostsFile);
     this.reload();
   }
 
@@ -432,25 +447,34 @@ export class Controls {
   }
 
   /**
-   * Run a key's actions in order, stopping at the first failure.
+   * Run a key's actions in order — all of them — and report the first failure.
    *
-   * Stopping matters: "power the office on" is a Companion macro AND a
-   * television, and carrying on after the macro failed would leave the room
-   * half-started while the panel reported only the last thing that happened.
+   * Carrying on is deliberate. "Shut Down Office" is a Desk Pro, the lights,
+   * an Apple TV, a Mac and a television, and a Desk Pro that happens not to
+   * answer should not leave the lights on. The step that failed is still what
+   * the key reports, and a key with more than one failure says how many, so
+   * a partly-started room does not read as a clean press.
    */
   async #runAll(actions: ControlAction[], label: string): Promise<string | null> {
+    const problems: string[] = [];
     for (const action of actions) {
-      const problem = await this.#run(action, label);
-      if (problem) return problem;
+      let problem: string | null;
+      try {
+        problem = await this.#run(action, label);
+      } catch (err) {
+        problem = err instanceof Error ? err.message : String(err);
+      }
+      if (problem) {
+        log.warn(`${label}: step ${action.kind} failed: ${problem}`);
+        problems.push(problem);
+      }
     }
-    return null;
+    if (problems.length === 0) return null;
+    return problems.length === 1 ? problems[0]! : `${problems[0]} (+${problems.length - 1} more)`;
   }
 
   async #run(action: ControlAction, label: string): Promise<string | null> {
     switch (action.kind) {
-      case 'companion':
-        return this.#companion.press(action.page, action.row, action.column);
-
       case 'webhook':
         return this.#webhook(action.id);
 
@@ -462,6 +486,32 @@ export class Controls {
 
       case 'roomos':
         return this.#roomosAction(action.device, action.op, action.connector);
+
+      case 'xcommand': {
+        const dev = this.#roomos.get(action.device);
+        if (!dev) {
+          log.warn(`Refused RoomOS "${action.device}": not in controls.roomos`);
+          return 'Unknown device';
+        }
+        return dev.xcommand(action.command, action.params);
+      }
+
+      case 'ssh': {
+        const cfg = this.#deps.getConfig().controls.ssh.find((h) => h.id === action.host);
+        if (!cfg) {
+          log.warn(`Refused SSH host "${action.host}": not in controls.ssh`);
+          return 'Unknown host';
+        }
+        const credential = await this.#deps.sshCredential(cfg.id);
+        return this.#ssh.run({ ...cfg, ...credential }, action.run);
+      }
+
+      case 'appletv':
+        return this.#deps.appleTvCommand(action.device, action.op);
+
+      case 'wait':
+        await new Promise((resolve) => setTimeout(resolve, action.seconds * 1000));
+        return null;
 
       case 'entity': {
         const domain = action.entity.slice(0, action.entity.indexOf('.'));

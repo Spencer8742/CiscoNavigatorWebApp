@@ -984,8 +984,8 @@ export type ClientMessage =
   /**
    * Run a macro button from `controls.pages`.
    *
-   * Carries the button's ID and nothing else — no URL, no Companion
-   * coordinates, no webhook name. The backend looks the button up in the
+   * Carries the button's ID and nothing else — no URL, no command line,
+   * no webhook name. The backend looks the button up in the
    * config it already holds and performs whatever that says, so the set of
    * requests a panel can cause is exactly the set written in dashboard.yaml.
    * See shared/config.ts for why that is not merely tidier.

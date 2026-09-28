@@ -163,9 +163,9 @@ describe('a Presentation key', () => {
     const config = new ConfigStore(path);
     assert.equal(await config.load(), true);
     const pushes = [];
+    const appleTvCalls = [];
     const controls = new Controls({
       getConfig: () => config.current,
-      companionUrl: '',
       haUrl: '',
       callService: async () => null,
       getEntity: () => null,
@@ -173,10 +173,16 @@ describe('a Presentation key', () => {
       onTvs: () => {},
       onRoomos: (devices) => pushes.push(devices),
       roomosPassword: (id) => (id === 'desk_pro' ? 'secret' : ''),
+      appleTvCommand: async (device, op) => {
+        appleTvCalls.push({ device, op });
+        return null;
+      },
+      sshCredential: async () => ({}),
+      sshKnownHostsFile: join(dir, 'ssh-known-hosts.json'),
       hasPanels: () => false,
       tvKeyFile: join(dir, 'tv-keys.json'),
     });
-    return { config, controls, pushes };
+    return { config, controls, pushes, appleTvCalls };
   }
 
   const YAML = `
@@ -263,6 +269,134 @@ controls:
       assert.equal(device.commands.length, 0);
     } finally {
       device.connectors = device.connectors.map((c) => ({ ...c, Connected: 'True' }));
+      controls.stop();
+      config.close();
+    }
+  });
+});
+
+describe('direct steps that replace Companion', () => {
+  async function controlsWith(yaml) {
+    const path = join(dir, `direct-${Math.random().toString(36).slice(2)}.yaml`);
+    await writeFile(path, yaml);
+    const config = new ConfigStore(path);
+    assert.equal(await config.load(), true);
+    const appleTvCalls = [];
+    const controls = new Controls({
+      getConfig: () => config.current,
+      haUrl: '',
+      callService: async () => null,
+      getEntity: () => null,
+      onLights: () => {},
+      onTvs: () => {},
+      onRoomos: () => {},
+      roomosPassword: () => 'secret',
+      appleTvCommand: async (device, op) => {
+        appleTvCalls.push({ device, op });
+        return device === 'office_apple_tv' ? null : 'Apple TV is not configured';
+      },
+      sshCredential: async () => ({}),
+      sshKnownHostsFile: join(dir, 'ssh-known-hosts.json'),
+      hasPanels: () => false,
+      tvKeyFile: join(dir, 'tv-keys.json'),
+    });
+    return { config, controls, appleTvCalls };
+  }
+
+  const YAML = `
+version: 1
+controls:
+  pollSeconds: 0
+  roomos:
+    - { id: desk_pro, host: "127.0.0.1:${PORT}", username: panel }
+  ssh:
+    - { id: mac_studio, host: 127.0.0.1, username: me, password: nope }
+  pages:
+    - id: room
+      name: Room
+      items:
+        - id: vol_up
+          name: Vol +
+          roomos: desk_pro
+          command: Audio Volume Increase
+          params: { Steps: 5 }
+        - { id: wake, name: Wake, roomos: desk_pro, command: xCommand Standby Deactivate }
+        - { id: atv_on, name: ATV, appletv: office_apple_tv, action: power_on }
+        - { id: caffeinate, name: Wake Mac, ssh: mac_studio, run: caffeinate -u -t 1 }
+        - id: shut_down
+          name: Shut Down
+          actions:
+            - { roomos: desk_pro, command: Presentation Stop }
+            - { wait: 0.1 }
+            - { appletv: bedroom_apple_tv, action: power_off }
+            - { roomos: desk_pro, command: Standby Halfwake }
+            - { appletv: office_apple_tv, action: power_off }
+        - { id: bad_command, name: Bad, roomos: desk_pro, command: "Audio; rm -rf" }
+        - { id: bad_atv, name: Bad, appletv: office_apple_tv, action: swipe }
+`;
+
+  test('parse into fixed steps, with credentials kept out', async () => {
+    const { config, controls } = await controlsWith(YAML);
+    try {
+      const items = config.current.controls.pages[0].items;
+      const byId = (id) => items.find((i) => i.id === id);
+      assert.deepEqual(byId('vol_up').actions, [
+        { kind: 'xcommand', device: 'desk_pro', command: ['Audio', 'Volume', 'Increase'], params: { Steps: 5 } },
+      ]);
+      assert.deepEqual(byId('wake').actions[0].command, ['Standby', 'Deactivate']);
+      assert.deepEqual(byId('atv_on').actions, [{ kind: 'appletv', device: 'office_apple_tv', op: 'power_on' }]);
+      assert.deepEqual(byId('caffeinate').actions, [{ kind: 'ssh', host: 'mac_studio', run: 'caffeinate -u -t 1' }]);
+      assert.deepEqual(byId('shut_down').actions[1], { kind: 'wait', seconds: 0.1 });
+      // Malformed steps are dropped, and a key left with none is not a key.
+      assert.equal(byId('bad_command'), undefined);
+      assert.equal(byId('bad_atv'), undefined);
+      // The ssh host keeps no password — the config is sent to the panel.
+      assert.deepEqual(config.current.controls.ssh, [{ id: 'mac_studio', host: '127.0.0.1', username: 'me' }]);
+      assert.equal(JSON.stringify(config.current).includes('nope'), false);
+    } finally {
+      controls.stop();
+      config.close();
+    }
+  });
+
+  test('an xCommand reaches the device as written', async () => {
+    const { config, controls } = await controlsWith(YAML);
+    try {
+      await waitFor(() => controls.roomosSnapshot()[0]?.reachable, 'connected');
+      device.commands.length = 0;
+      assert.equal(await controls.press('vol_up'), null);
+      assert.deepEqual(device.commands, [{ path: 'Audio/Volume/Increase', params: { Steps: 5 } }]);
+    } finally {
+      controls.stop();
+      config.close();
+    }
+  });
+
+  test('a multi-step key carries on past a failure and reports it', async () => {
+    const { config, controls, appleTvCalls } = await controlsWith(YAML);
+    try {
+      await waitFor(() => controls.roomosSnapshot()[0]?.reachable, 'connected');
+      device.commands.length = 0;
+      const result = await controls.press('shut_down');
+      // The bedroom Apple TV is not configured: that step fails...
+      assert.equal(result, 'Apple TV is not configured');
+      // ...and every step after it still ran.
+      assert.deepEqual(
+        device.commands.map((c) => c.path),
+        ['Presentation/Stop', 'Standby/Halfwake'],
+      );
+      assert.deepEqual(appleTvCalls.map((c) => c.device), ['bedroom_apple_tv', 'office_apple_tv']);
+    } finally {
+      controls.stop();
+      config.close();
+    }
+  });
+
+  test('an SSH step with no credential says which variable to set', async () => {
+    const { config, controls } = await controlsWith(YAML);
+    try {
+      assert.match(await controls.press('caffeinate'), /SSH_KEY_FILE_MAC_STUDIO/);
+    } finally {
       controls.stop();
       config.close();
     }

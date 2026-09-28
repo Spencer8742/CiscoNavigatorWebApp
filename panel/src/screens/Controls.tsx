@@ -23,14 +23,15 @@ import type { KeyLightState } from '@shared/protocol.ts';
  *
  * This is the RoomOS macro's UI Extension panels, rebuilt as a web page: the
  * Desk Pro call controls, the office lights, the Apple TV and the rest, each
- * tap going to Bitfocus Companion, a Home Assistant webhook, or an Elgato Key
+ * tap going straight to the device it drives — the Desk Pro's xAPI, the
+ * television, an Apple TV, a Mac over SSH, Home Assistant or an Elgato Key
  * Light — through the backend, which is the only thing that knows their
  * addresses.
  *
  * Two things it deliberately does NOT do:
  *
- * **It does not pretend a macro button has state.** A Companion press and a
- * webhook are one-way; there is no feedback to read back and no way to know
+ * **It does not pretend a macro button has state.** An xCommand, an SSH
+ * command and a webhook are one-way; there is no feedback to read back and no way to know
  * whether the thing at the far end happened. So a button confirms that the
  * request went, and nothing more. A toggle that shows "muted" when it only
  * knows it *asked* for mute is worse than a button.
@@ -58,8 +59,9 @@ export function Controls() {
         <div class="screen-body scroll">
           <Empty icon="grid" title="No control pages configured">
             Add a <code>controls:</code> section to <code>config/dashboard.yaml</code>.
-            A page is a list of buttons, each one a Companion location, a Home
-            Assistant webhook, a scene, or an Elgato Key Light.
+            A page is a list of buttons, each one a command to a Cisco device, a
+            TV, an Apple TV or a Mac, a Home Assistant scene or webhook, or an
+            Elgato Key Light.
           </Empty>
         </div>
       </div>

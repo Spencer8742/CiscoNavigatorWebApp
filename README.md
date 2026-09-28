@@ -42,7 +42,9 @@ Room Navigator ──── one origin, HTTPS ────▶ navigator-panel (N
   no credentials                              ├──▶ Sonos           (SOAP + events)
                                               ├──▶ Immich          (REST)
                                               ├──▶ Plex            (REST + Companion)
-                                              ├──▶ Bitfocus Companion
+                                              ├──▶ Cisco RoomOS    (xAPI WebSocket)
+                                              ├──▶ LG webOS TVs    (SSAP WebSocket)
+                                              ├──▶ Hosts over SSH  (fixed commands)
                                               └──▶ Elgato Key Lights
 ```
 
@@ -163,7 +165,9 @@ device**, and a factory reset destroyed every one of them with no single
 artefact to put back.
 
 The Controls screen is that macro, inverted. The device holds one URL; the
-buttons live in `config/dashboard.yaml`:
+buttons live in `config/dashboard.yaml`. Bitfocus Companion, which the macro
+drove, is gone as well — every key talks to the device it drives, over that
+device's own protocol:
 
 ```yaml
 controls:
@@ -179,22 +183,29 @@ controls:
         - { name: Plex, app: com.plexapp.plex }
         - { name: YouTube, app: com.google.ios.youtube }
 
+  roomos:
+    - { id: desk_pro, name: Desk Pro, host: 192.168.1.19, username: panel }
+
   pages:
     - id: deskpro
       name: Desk Pro
       icon: phone
       items:
-        - { name: Join,     icon: phone,     tone: accent, wide: true, companion: 1/0/0 }
-        - { name: Hang Up,  icon: phoneDown, tone: danger, companion: 1/0/1 }
+        - { name: Wake,     icon: phone,     tone: accent, wide: true, roomos: desk_pro, command: Standby Deactivate }
+        - { name: Share,    icon: share,     roomos: desk_pro, action: next }
         - { name: Listen,   icon: mic,       webhook: office_voice_listen }
         - { name: Meeting,  entity: scene.office_meeting }
         - { light: all, name: Key Lights }   # power + brightness + temperature
 ```
 
-A button reaches Companion (`POST /api/location/<page>/<row>/<column>/press`),
-a Home Assistant webhook, an ordinary service call, or an Elgato Key Light. A
-bare `light:` item is not a button at all — it is the full light control, with
-live state.
+A button reaches a Cisco device's xAPI (any xCommand, or the presentation),
+an LG television, an Apple TV, a fixed command on a host over SSH, a Home
+Assistant webhook or service call, or an Elgato Key Light — or several of
+those in order, with `wait:` between them. Every step of a multi-step key runs
+even if an earlier one fails, and the key reports what failed. A bare `light:`
+item is not a button at all — it is the full light control, with live state.
+Passwords and SSH keys come from `.env`, never this file, because this file is
+sent to the panel.
 
 **Apple TVs need the container on host networking.** AirPlay's remote control
 channel, which carries now-playing metadata, is not a plain outbound
@@ -310,11 +321,11 @@ Two properties are worth stating explicitly:
   in the room can touch is trusted to drive the dashboard, not to compose HTTP
   requests to your LAN — the same reasoning as the entity allow-list above,
   and `entity:` buttons go through that guard unchanged.
-- **A macro button does not pretend to have state.** Companion sends no
-  feedback here and Home Assistant answers `200` for a webhook that does not
-  exist, so a tap confirms that the request went and nothing more. Key lights
-  are the exception, and the only thing on the screen drawn as a control
-  rather than a key.
+- **A macro button does not pretend to have state.** An xCommand reports only
+  that it was accepted and Home Assistant answers `200` for a webhook that
+  does not exist, so a tap confirms that the request went and nothing more.
+  Key lights are drawn as a control; a key that steps through a TV's or a
+  Desk Pro's inputs shows the one the device reports is on screen.
 
 What this screen **cannot** do is read the Room Bar itself. RoomOS does inject
 a bound `xapi` object in Persistent Web App mode, but its supported surface is
@@ -349,7 +360,7 @@ already in this repository. `--dry-run` prints the XML without sending it.
 | 6 | Immich gallery | ✅ |
 | 7 | Photo slideshow | ✅ |
 | 8 | Idle and screensaver | ✅ |
-| 9 | Controls: Companion, webhooks and key lights — replaces the RoomOS macro | ✅ |
+| 9 | Controls: direct RoomOS, TV, Apple TV, SSH, webhooks and key lights — replaces the RoomOS macro and Companion | ✅ |
 | 10 | Failure hardening | ⬜ |
 | 11 | Performance pass on-device | ⬜ |
 | 12 | Deployment polish | 🟡 CI, GHCR images, Unraid template and the device provisioning script done |
@@ -388,7 +399,9 @@ server/     backend  (Node 22, deps: ws + yaml)
   sonos/      Sonos, direct on the LAN · topology, events, control, browsing
   immich/     REST client · playlist · image proxy (originals unreachable)
   cast/       Cast v2 — keeps Google Nest Hubs showing the dashboard
-  controls/   Companion presses · Elgato Key Lights · HA webhooks
+  controls/   the macro keys · Elgato Key Lights · HA webhooks
+  roomos/     Cisco xAPI over WebSocket — commands and live presentation
+  ssh/        fixed commands on a host, with its key pinned on first use
   test/       integration tests + mock Home Assistant and Immich
 ```
 

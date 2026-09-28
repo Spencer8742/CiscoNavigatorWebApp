@@ -99,20 +99,6 @@ export interface Env {
     token: string;
     enabled: boolean;
   };
-
-  /**
-   * Bitfocus Companion, for the macro pages on the Controls screen.
-   *
-   * Base URL only — there is no token, because Companion's HTTP API has no
-   * authentication. That is exactly why it belongs behind this backend rather
-   * than being called from the page: the browser would need to reach
-   * Companion directly, over HTTP, from an HTTPS origin, which RoomOS blocks
-   * as mixed content even before CORS gets a say.
-   */
-  companion: {
-    url: string;
-    enabled: boolean;
-  };
 }
 
 function str(name: string, fallback = ''): string {
@@ -160,7 +146,6 @@ export function loadEnv(): Env {
   const haToken = str('HA_TOKEN');
   const immichUrl = normalizeUrl(str('IMMICH_URL'));
   const immichKey = str('IMMICH_API_KEY');
-  const companionUrl = normalizeUrl(str('COMPANION_URL'));
   const plexUrl = normalizeUrl(str('PLEX_URL'));
   const plexToken = str('PLEX_TOKEN').trim();
   // A bare address, not a URL: the port and paths are fixed by Sonos.
@@ -215,11 +200,6 @@ export function loadEnv(): Env {
       token: plexToken,
       enabled: Boolean(plexUrl && plexToken),
     },
-
-    companion: {
-      url: companionUrl,
-      enabled: Boolean(companionUrl),
-    },
   };
 
   if (!env.panelToken) {
@@ -237,10 +217,10 @@ export function loadEnv(): Env {
     log.warn('IMMICH_URL / IMMICH_API_KEY not set — photo features are disabled.');
   }
 
-  if (!env.companion.enabled) {
-    log.info(
-      'COMPANION_URL not set — Controls pages can still drive Home Assistant, ' +
-        'webhooks and key lights; Companion buttons will report it is not configured.',
+  if (str('COMPANION_URL')) {
+    log.warn(
+      'COMPANION_URL is set but Companion support has been removed — every key now talks to ' +
+        'its device directly. Remove the line from .env.',
     );
   }
 

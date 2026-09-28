@@ -2345,8 +2345,8 @@
 }
 
 /* ── Press confirmation ────────────────────────────────────────────────────
-   A macro button has nothing to toggle: Companion sends no feedback here and
-   a Home Assistant webhook answers 200 whether or not anything was listening.
+   A macro button has nothing to toggle: an xCommand or SSH command reports
+   only that it ran, and a Home Assistant webhook answers 200 whether or not anything was listening.
    So the honest acknowledgement is "the request went", shown by swapping the
    icon for a tick for ~900 ms — the smallest thing that distinguishes a tap
    that registered from a tap that missed.

@@ -146,7 +146,9 @@ export class MockRoomos {
         this.stopLocally();
         return;
       }
-      return reply({ error: { code: 1, message: 'Unknown command' } });
+      // Anything else — volume, standby — is accepted, as a real device
+      // accepts any valid command; `commands` is what the tests assert on.
+      return reply({ result: { status: 'OK' } });
     }
   }
 }

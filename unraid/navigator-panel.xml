@@ -189,26 +189,26 @@
     Mask="false"/>
 
   <Config
-    Name="Companion URL"
-    Target="COMPANION_URL"
-    Default=""
-    Mode=""
-    Description="Base URL of your Bitfocus Companion, no trailing slash - for example http://192.168.1.93:8000. Powers the Companion buttons on the Controls screen. Leave empty and the rest of that screen still works: key lights, Home Assistant webhooks and scenes need nothing from this."
-    Type="Variable"
-    Display="advanced"
-    Required="false"
-    Mask="false"/>
-
-  <Config
     Name="RoomOS Password"
     Target="ROOMOS_PASSWORD"
     Default=""
     Mode=""
-    Description="Password for the Cisco devices under controls.roomos in dashboard.yaml (a local Integrator user on the Desk Pro). Lets the Presentation key show which input is actually on screen. Kept here rather than in dashboard.yaml because that file is sent to the panel."
+    Description="Password for the Cisco devices under controls.roomos in dashboard.yaml (a local Integrator user on the Desk Pro or Room Kit Mini). The Controls keys drive those devices over their own xAPI with it. Kept here rather than in dashboard.yaml because that file is sent to the panel."
     Type="Variable"
     Display="advanced"
     Required="false"
     Mask="true"/>
+
+  <Config
+    Name="SSH key file (Mac Studio)"
+    Target="SSH_KEY_FILE_MAC_STUDIO"
+    Default=""
+    Mode=""
+    Description="Path inside the container to a private key for the host with id mac_studio under controls.ssh in dashboard.yaml - for example /config/ssh/mac_studio. For another host id, add a variable named SSH_KEY_FILE_ followed by its id in upper case."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false"/>
 
   <Config
     Name="Plex URL"
