@@ -2768,11 +2768,12 @@ html[data-theme='light'] .joinprompt {
   display: flex;
   flex-direction: column;
   gap: var(--s-2);
-  /* Vertical pan is the only gesture here, and at either end of the list a
-     swipe carries on into the page instead of dying in a box a few rows
-     tall — `.scroll` contains it, which is right for a whole screen and
-     wrong for a list nested inside one. */
-  touch-action: pan-y;
+  /* The drag is handled in script (lib/kinetic.ts) so it can glide after
+     the finger lifts, which the Navigator's own touch scrolling does not.
+     `none` hands the whole gesture to those pointer events rather than
+     letting the browser start a pan and cancel them. The script also passes
+     a drag that runs out of list on to the page. */
+  touch-action: none;
   overscroll-behavior-y: auto;
 }
 

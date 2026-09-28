@@ -1,4 +1,5 @@
 import { Fragment } from 'preact';
+import { useRef } from 'preact/hooks';
 import { Icon, hasIcon } from '~/components/Icon.tsx';
 import { Pressable } from '~/components/Pressable.tsx';
 import { Slider } from '~/components/Slider.tsx';
@@ -15,6 +16,7 @@ import {
 } from '~/state/ui.ts';
 import { timeOpts } from '~/config/index.ts';
 import { now } from '~/state/clock.ts';
+import { useKineticScroll } from '~/lib/kinetic.ts';
 import {
   formatDate,
   formatDayShort,
@@ -330,6 +332,10 @@ function Meetings({ entities: e }: { entities: DeviceEntities }) {
 
   const t = timeOpts.value;
 
+  // The Navigator will not fling an overflow list; see lib/kinetic.ts.
+  const list = useRef<HTMLDivElement>(null);
+  useKineticScroll(list, meetings.length > 0);
+
   return (
     <div class="card devtile-meetings">
       <div class="devtile-card-head">
@@ -349,7 +355,7 @@ function Meetings({ entities: e }: { entities: DeviceEntities }) {
               : 'Nothing booked. The device reports its own calendar, so this needs it paired with a calendar service.'}
         </div>
       ) : (
-        <div class="devtile-list scroll">
+        <div class="devtile-list scroll" ref={list}>
           {meetings.map((m, i) => (
             <Fragment key={`${m.start_time ?? ''}-${i}`}>
               {dayHeading(meetings, i, at, t)}
