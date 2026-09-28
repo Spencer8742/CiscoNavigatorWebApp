@@ -16,6 +16,7 @@ import { Hub } from '~/hub/index.ts';
 import { AssistPipelineError, HaClient } from '~/ha/client.ts';
 import { HaStore, isEmptyPatch } from '~/ha/store.ts';
 import { WeatherForecasts } from '~/ha/weather.ts';
+import { MeetingRefresher } from '~/ha/meetings.ts';
 import { ServiceGuard } from '~/ha/services.ts';
 import { SonosClient } from '~/sonos/client.ts';
 import { SonosStore } from '~/sonos/store.ts';
@@ -241,6 +242,7 @@ async function main(): Promise<void> {
     onEntityEvent(event) {
       const patch = store.apply(event);
       if (!isEmptyPatch(patch)) hub.broadcastPatch(patch);
+      meetingRefresher.check();
     },
 
     onResubscribe() {
@@ -287,6 +289,15 @@ async function main(): Promise<void> {
 
       hub.broadcastHealth(getHealth());
     },
+  });
+
+  /* Presses each RoomOS device's refresh_meetings when a call starts or ends
+     and on the half hour, so the tile's meeting list needs no refresh key.
+     See ha/meetings.ts. */
+  const meetingRefresher = new MeetingRefresher({
+    getConfig: () => config.current,
+    getState: (id) => store.get(id),
+    press: (id) => haClient.callService('button', 'press', id),
   });
 
   const weatherForecasts = new WeatherForecasts((entityId) =>
@@ -591,6 +602,7 @@ async function main(): Promise<void> {
   });
 
   haClient.start();
+  meetingRefresher.start();
   sonosClient.start();
   sonosStore.start();
   // Reads stored service tokens. Discovery of the services themselves is

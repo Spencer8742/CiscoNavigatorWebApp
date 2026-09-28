@@ -341,18 +341,9 @@ function Meetings({ entities: e }: { entities: DeviceEntities }) {
       <div class="devtile-card-head">
         <span class="devtile-card-title">Meetings</span>
         {meetings.length > 0 ? <span class="devtile-count tnum">{meetings.length}</span> : null}
-        {e.refreshMeetings ? (
-          <Pressable
-            class="devtile-refresh"
-            onPress={() => {
-              pressButton(e.refreshMeetings!);
-              markActivity();
-            }}
-            ariaLabel="Refresh meetings"
-          >
-            <Icon name="refresh" size="1rem" weight={1.9} />
-          </Pressable>
-        ) : null}
+        {/* No refresh key: the backend presses refresh_meetings itself when a
+            call starts or ends and on every half hour. See
+            server/src/ha/meetings.ts. */}
       </div>
 
       {meetings.length === 0 ? (
@@ -369,8 +360,8 @@ function Meetings({ entities: e }: { entities: DeviceEntities }) {
             <div class="devtile-stale">
               <Icon name="alert" size="0.875rem" weight={1.9} />
               <span>
-                Join is pointed at a meeting that has already finished — refresh to move it
-                on.
+                Join is pointed at a meeting that has already finished — the list refreshes
+                on the half hour.
               </span>
             </div>
           ) : null}
