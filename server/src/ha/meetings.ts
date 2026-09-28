@@ -13,6 +13,9 @@ const SLOT_MS = 30 * 60_000;
  */
 const DEBOUNCE_MS = 5_000;
 
+/** setTimeout's ceiling; a later end time is re-armed when it fires. */
+const MAX_TIMER_MS = 2 **31 - 1;
+
 interface Deps {
   getConfig: () => DashboardConfig;
   /** Current state of an entity, or null when unknown. */
@@ -34,6 +37,8 @@ interface Deps {
  *  - when a call starts (a meeting was just joined — from the panel or the
  *    device itself),
  *  - when a call ends (somebody hung up; the meeting they were in is done),
+ *  - when the booking `join_next_meeting` points at has ended, so Join
+ *    moves on to the next meeting instead of dialling one that is over,
  *  - and at the top and bottom of every hour, which is where bookings start
  *    and end.
  *
@@ -48,6 +53,10 @@ export class MeetingRefresher {
   readonly #calls = new Map<string, 'on' | 'off'>();
   /** When each refresh button was last pressed, for the debounce. */
   readonly #pressedAt = new Map<string, number>();
+  /** The booking each refresh button was last pressed for having ended. */
+  readonly #endedFor = new Map<string, string>();
+  /** A timer per refresh button, set for when its Join target ends. */
+  readonly #endTimers = new Map<string, { key: string; timer: ReturnType<typeof setTimeout> }>();
   #timer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(deps: Deps) {
@@ -63,6 +72,8 @@ export class MeetingRefresher {
   stop(): void {
     clearTimeout(this.#timer);
     this.#timer = undefined;
+    for (const { timer } of this.#endTimers.values()) clearTimeout(timer);
+    this.#endTimers.clear();
   }
 
   /**
@@ -86,6 +97,53 @@ export class MeetingRefresher {
 
       this.#refresh(e.refreshMeetings, state === 'on' ? 'call started' : 'call ended');
     }
+
+    for (const e of this.#devices()) this.#watchJoinTarget(e);
+  }
+
+  /**
+   * Refresh when the booking Join would dial has finished.
+   *
+   * The integration points `join_next_meeting` at the first booking in the
+   * device's list with a dial-in number, whether or not it is over, and the
+   * device keeps finished bookings until it re-reads its calendar. So the
+   * moment that booking ends is exactly when the list needs re-reading.
+   *
+   * Pressed once per ended booking: if the device still lists it after the
+   * refresh, pressing again on every entity event would hammer the codec.
+   */
+  #watchJoinTarget(e: DeviceEntities): void {
+    const button = e.refreshMeetings!;
+    const target = e.meetings ? joinTarget(this.#deps.getState(e.meetings)) : null;
+    const end = target?.end_time ? Date.parse(target.end_time) : NaN;
+    const armed = this.#endTimers.get(button);
+
+    if (!target || !Number.isFinite(end)) {
+      if (armed) clearTimeout(armed.timer);
+      this.#endTimers.delete(button);
+      return;
+    }
+
+    const key = `${target.start_time ?? ''}|${target.title ?? ''}|${target.end_time}`;
+    const wait = end - this.#now();
+
+    if (wait <= 0) {
+      if (armed) clearTimeout(armed.timer);
+      this.#endTimers.delete(button);
+      if (this.#endedFor.get(button) === key) return;
+      this.#endedFor.set(button, key);
+      this.#refresh(button, 'join target ended');
+      return;
+    }
+
+    if (armed?.key === key) return;
+    if (armed) clearTimeout(armed.timer);
+    const timer = setTimeout(() => {
+      this.#endTimers.delete(button);
+      this.check();
+    }, Math.min(wait, MAX_TIMER_MS));
+    timer.unref?.();
+    this.#endTimers.set(button, { key, timer });
   }
 
   /** Every device tile's entities, one per refresh button. */
@@ -133,4 +191,19 @@ export class MeetingRefresher {
     }, next - at);
     this.#timer.unref?.();
   }
+}
+
+interface Booking {
+  title?: string;
+  start_time?: string;
+  end_time?: string;
+  joinable?: boolean;
+}
+
+/** The booking `join_next_meeting` dials: the first joinable one listed. */
+function joinTarget(state: EntityState | null): Booking | null {
+  const raw = state?.a['meetings'];
+  if (!Array.isArray(raw)) return null;
+  const found = raw.find((m): m is Booking => !!m && typeof m === 'object' && !!(m as Booking).joinable);
+  return found ?? null;
 }

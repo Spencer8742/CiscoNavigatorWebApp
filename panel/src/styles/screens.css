@@ -2704,19 +2704,6 @@
   }
 }
 
-/* The Join badge cannot be trusted while the device's list is stale. */
-.devtile-stale {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  padding: var(--s-2) var(--s-3);
-  border-radius: var(--r-md);
-  background: rgba(251, 191, 36, 0.12);
-  color: var(--warn);
-  font-size: 0.8125rem;
-  line-height: 1.35;
-}
-
 .devtile-body {
   flex: 1 1 auto;
   min-height: 0;
