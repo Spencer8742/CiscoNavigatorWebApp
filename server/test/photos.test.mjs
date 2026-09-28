@@ -1101,6 +1101,7 @@ media:
         'lastControlPage',
         'lastPage',
         'lastRoom',
+        'meetingPromptEverywhere',
         'nowPlayingScreensaverDate',
         'nowPlayingScreensaverTime',
         'photoScreensaverDate',

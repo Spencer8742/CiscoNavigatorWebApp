@@ -188,6 +188,24 @@ export function Settings() {
         </p>
 
         <div class="section-head">
+          <h2 class="section-title">Meetings</h2>
+        </div>
+        <div class="settings-page-grid" role="group" aria-label="Meeting prompt">
+          <OverlayToggle
+            pref="meetingPromptEverywhere"
+            what="meeting prompt"
+            label="Show over every screen"
+          />
+        </div>
+        <p class="settings-note">
+          The <strong>meeting about to start</strong> prompt for a Desk Pro or
+          other RoomOS device normally appears only on that device's Controls
+          page. Turn this on and it breaks through whatever is showing — any
+          page, and the screensaver — from five minutes before the meeting until
+          it is joined, dismissed or over.
+        </p>
+
+        <div class="section-head">
           <h2 class="section-title">Visible pages</h2>
         </div>
         <div class="settings-page-grid" role="group" aria-label="Visible pages">

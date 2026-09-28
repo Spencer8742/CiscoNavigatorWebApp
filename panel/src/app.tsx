@@ -20,6 +20,7 @@ import { DeviceSourceSheet } from '~/components/DeviceSourceSheet.tsx';
 import { DeviceAlertsSheet } from '~/components/DeviceAlertsSheet.tsx';
 import { AssistSheet } from '~/components/AssistSheet.tsx';
 import { AssistWakeListener } from '~/components/AssistWakeListener.tsx';
+import { MeetingAlerts } from '~/components/JoinPrompt.tsx';
 import { castConfig, ui } from '~/config/index.ts';
 import {
   connectionProblem,
@@ -135,6 +136,9 @@ export function App() {
           {showScreensaver ? null : <Screen />}
         </main>
       </div>
+      {/* A meeting about to start, over every screen and the screensaver —
+          only when Settings asks for it; see components/JoinPrompt.tsx. */}
+      {ready.value ? <MeetingAlerts /> : null}
       {/* One sheet for the whole app, driven by the `openEntity` signal.
           Mounted here so any screen can open one by writing a value, and so
           only one can ever be open. */}

@@ -1017,6 +1017,7 @@ export type ClientMessage =
   | { t: 'pref'; id: number; key: 'photoScreensaverWeather'; value: boolean }
   | { t: 'pref'; id: number; key: 'showSettings'; value: boolean }
   | { t: 'pref'; id: number; key: 'rememberPage'; value: boolean }
+  | { t: 'pref'; id: number; key: 'meetingPromptEverywhere'; value: boolean }
   /**
    * Not a setting anybody taps — the panel noting where it is, so it can
    * come back here after a reload. Sent on navigation rather than on a
@@ -1137,6 +1138,14 @@ export interface PanelPrefs {
    */
   rememberPage: boolean;
   /**
+   * Show a RoomOS device's "meeting about to start" prompt over every screen,
+   * the screensaver included, instead of only on that device's page.
+   *
+   * Off by default: most panels are not the meeting room's, and a prompt
+   * breaking into the photos or the Lights page there is an interruption.
+   */
+  meetingPromptEverywhere: boolean;
+  /**
    * The page this panel was last on, or null if it has not been anywhere.
    *
    * Written by the panel as it navigates, read back once when it reconnects
@@ -1245,6 +1254,7 @@ export const DEFAULT_PREFS: PanelPrefs = {
   photoScreensaverWeather: true,
   showSettings: true,
   rememberPage: true,
+  meetingPromptEverywhere: false,
   lastPage: null,
   lastRoom: null,
   lastControlPage: null,
@@ -1285,6 +1295,7 @@ export const BOOLEAN_PREFS = [
   'photoScreensaverWeather',
   'showSettings',
   'rememberPage',
+  'meetingPromptEverywhere',
 ] as const;
 
 /** Application-level heartbeat interval. A Wi-Fi roam can leave a socket

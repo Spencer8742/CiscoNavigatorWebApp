@@ -8,22 +8,25 @@ import { toggle, pressButton, setEntityNumber } from '~/state/actions.ts';
 import { pressed } from '~/state/controls.ts';
 import { pressControl } from '~/net/socket.ts';
 import {
-  dismissedJoin,
   health,
   markActivity,
   openDeviceAlerts,
   openDeviceSource,
+  prefs,
 } from '~/state/ui.ts';
+import { JoinPrompt } from '~/components/JoinPrompt.tsx';
 import { timeOpts } from '~/config/index.ts';
 import { now } from '~/state/clock.ts';
 import { useKineticScroll } from '~/lib/kinetic.ts';
+import { formatDate, formatDayShort, type TimeOpts } from '~/lib/format.ts';
 import {
-  formatDate,
-  formatDayShort,
-  formatMeridiem,
-  formatTime,
-  type TimeOpts,
-} from '~/lib/format.ts';
+  clockOf,
+  isDue,
+  isOver,
+  joinTargetOf,
+  readMeetings,
+  type Meeting,
+} from '~/lib/meetings.ts';
 import type { ControlButton, ControlDevice, DeviceEntities } from '@shared/config.ts';
 import type { EntityState } from '@shared/protocol.ts';
 
@@ -85,101 +88,11 @@ export function DeviceTile({ item, compact }: { item: ControlDevice; compact?: b
           appearing over the Lights page. It covers the screen area rather
           than the whole viewport, which leaves the nav reachable when the
           panel is not locked. */}
-      {blind ? null : <JoinPrompt entities={e} />}
+      {/* Unless the panel has been told to show it over everything, in which
+          case MeetingAlerts at the app root draws it (components/JoinPrompt). */}
+      {blind || prefs.value.meetingPromptEverywhere ? null : <JoinPrompt entities={e} />}
     </div>
   );
-}
-
-/**
- * The five-minutes-to-go prompt.
- *
- * A badge on a row in a list is easy to walk past. This is the same offer
- * made unmissable, for the one moment it matters: somebody is at the desk and
- * a meeting is about to start.
- *
- * It takes itself away rather than needing to be managed. Four things close
- * it, and only one of them is the dismiss button:
- *
- *  - the meeting starts being joined (`inCall` goes on),
- *  - the meeting ends,
- *  - the device stops offering it as the joinable one,
- *  - or somebody says not now.
- *
- * The same honesty rule as the row badge applies: `join_next_meeting` takes
- * no argument, so this only ever names the booking that button will dial
- * (see `joinTargetOf`).
- */
-function JoinPrompt({ entities: e }: { entities: DeviceEntities }) {
-  const meetings = readMeetings(useState(e.meetings));
-  const inCall = useState(e.inCall);
-  const dismissed = dismissedJoin.value;
-  const at = now.value;
-  const t = timeOpts.value;
-
-  if (!e.join || inCall?.s === 'on') return null;
-
-  const target = joinTargetOf(meetings, at);
-  if (!target || !isDue(target, at)) return null;
-  if (dismissed === keyOf(target)) return null;
-
-  return (
-    <div class="joinprompt">
-      <div class="joinprompt-card">
-        <div class="joinprompt-when">
-          <Icon name="clock" size="1rem" weight={1.9} />
-          <span>{startsIn(target, at, t)}</span>
-        </div>
-
-        <div class="joinprompt-title">{target.title}</div>
-        {target.organizer ? (
-          <div class="joinprompt-org truncate">{target.organizer}</div>
-        ) : null}
-
-        <div class="joinprompt-actions">
-          <Pressable
-            class="joinprompt-join"
-            tone="ok"
-            onPress={() => {
-              pressButton(e.join!);
-              // Waved away as well as joined: the device takes a moment to
-              // report the call, and the prompt should not sit there through
-              // it looking as though the press did nothing.
-              dismissedJoin.value = keyOf(target);
-              markActivity();
-            }}
-            ariaLabel={`Join ${target.title}`}
-          >
-            <Icon name="camera" size="1.25rem" weight={1.8} />
-            <span>Join</span>
-          </Pressable>
-
-          <Pressable
-            class="joinprompt-later"
-            onPress={() => {
-              dismissedJoin.value = keyOf(target);
-              markActivity();
-            }}
-            ariaLabel="Dismiss"
-          >
-            <span>Not now</span>
-          </Pressable>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/** "Starts in 4 min" / "Started 10:30 AM" — never a bare countdown to zero. */
-function startsIn(m: Meeting, at: Date, t: TimeOpts): string {
-  const start = m.start_time ? Date.parse(m.start_time) : NaN;
-  if (!Number.isFinite(start)) return 'Starting now';
-
-  const mins = Math.round((start - at.getTime()) / 60_000);
-  if (mins > 1) return `Starts in ${mins} min`;
-  if (mins >= 0) return 'Starts now';
-  // Already running. The clock is more use than "3 minutes ago" for somebody
-  // working out whether they are the one holding it up.
-  return `Started ${clockOf(m.start_time, t)}`;
 }
 
 /**
@@ -285,22 +198,6 @@ function Head({ item }: { item: ControlDevice }) {
 
 /* ── Meetings ─────────────────────────────────────────────────────────────*/
 
-interface Meeting {
-  title: string;
-  start_time?: string;
-  /** Published by the integration alongside `start_time`; may be absent
-      depending on which calendar service the device is paired with. */
-  end_time?: string;
-  organizer?: string;
-  /**
-   * NOT a statement about time. The integration sets this from whether the
-   * booking carries a dialable callback number — a plain calendar block with
-   * no video meeting is listed but not joinable. A meeting that finished
-   * hours ago stays `joinable: true` for as long as the device lists it.
-   */
-  joinable?: boolean;
-}
-
 function Meetings({ entities: e }: { entities: DeviceEntities }) {
   const state = useState(e.meetings);
   const all = readMeetings(state);
@@ -396,48 +293,6 @@ function Meetings({ entities: e }: { entities: DeviceEntities }) {
 }
 
 /**
- * How long before a meeting starts its Join offer appears.
- *
- * Five minutes: long enough to be in the room and ready, short enough that
- * the button on screen always means the meeting you are about to walk into.
- * A Join sitting there all morning is the thing that made it ignorable.
- */
-const JOIN_LEAD_MS = 5 * 60_000;
-
-/** The meetings a device is reporting, newest parse of a live attribute. */
-function readMeetings(state: EntityState | null): Meeting[] {
-  const raw = state?.a['meetings'];
-  return Array.isArray(raw) ? (raw.filter((m) => m && typeof m === 'object') as Meeting[]) : [];
-}
-
-/**
- * Is this meeting close enough to start that Join should be offered?
- *
- * An unreadable or missing start time counts as due, for the same reason a
- * missing end time counts as not-over: a meeting we cannot place in time
- * should be joinable rather than silently un-joinable.
- */
-function isDue(m: Meeting, at: Date): boolean {
-  if (!m.start_time) return true;
-  const start = Date.parse(m.start_time);
-  if (!Number.isFinite(start)) return true;
-  return start - at.getTime() <= JOIN_LEAD_MS;
-}
-
-/**
- * The booking `join_next_meeting` will dial right now.
- *
- * Mirrors the integration (0.6.0+): the earliest booking with a dial-in
- * number that has not already ended. The device keeps finished bookings in
- * its list for the rest of the day, so "the first joinable one" on its own
- * is this morning's meeting — which is what hid Join for the whole afternoon
- * once the day's first call was over.
- */
-function joinTargetOf(meetings: Meeting[], at: Date): Meeting | undefined {
-  return meetings.find((m) => m.joinable && !isOver(m, at));
-}
-
-/**
  * "Tomorrow" / "Wed 30 Sep" above the first booking of each later day.
  *
  * The list runs as far ahead as the calendar goes, and a bare "10:00" under
@@ -458,24 +313,6 @@ function dayOf(m: Meeting, t: TimeOpts): string | null {
   if (!m.start_time) return null;
   const d = new Date(m.start_time);
   return Number.isNaN(d.getTime()) ? null : formatDate(d, t);
-}
-
-/** Identity for "this exact booking", for remembering a dismissal. */
-function keyOf(m: Meeting): string {
-  return `${m.start_time ?? ''}|${m.title}`;
-}
-
-/**
- * Has this booking already finished?
- *
- * Unknown when the calendar service did not give an end time, and unknown
- * means NOT over: hiding a meeting we cannot reason about would be worse than
- * showing one that has passed.
- */
-function isOver(m: Meeting, at: Date): boolean {
-  if (!m.end_time) return false;
-  const end = Date.parse(m.end_time);
-  return Number.isFinite(end) && end <= at.getTime();
 }
 
 /* ── Controls ─────────────────────────────────────────────────────────────*/
@@ -793,20 +630,4 @@ function uptimeOf(raw: string): string {
   if (d > 0) return `${d}d ${h}h`;
   if (h > 0) return `${h}h ${m}m`;
   return `${m}m`;
-}
-
-/**
- * An ISO start time as a wall clock, in the panel's configured zone.
- *
- * The meridiem is appended on a 12-hour clock, unlike everywhere else in the
- * app: the big Home clock can drop it because you know roughly what time it
- * is, but a LIST of bookings cannot — "5:00" against "5:00" is the difference
- * between a stand-up and dinner, and the list may run across noon.
- */
-function clockOf(iso: string | undefined, opts: TimeOpts): string {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '—';
-  const time = formatTime(d, opts);
-  return opts.hour12 ? `${time} ${formatMeridiem(d, opts)}` : time;
 }
