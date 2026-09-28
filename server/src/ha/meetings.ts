@@ -1,6 +1,7 @@
 import { logger } from '~/lib/log.ts';
 import type { DashboardConfig, DeviceEntities } from '@shared/config.ts';
 import type { EntityState } from '@shared/protocol.ts';
+import { joinTargetOf } from '@shared/meetings.ts';
 
 const log = logger('meetings');
 
@@ -102,9 +103,8 @@ export class MeetingRefresher {
   /**
    * Refresh when the booking Join would dial has finished.
    *
-   * The integration (0.6.0+) points `join_next_meeting` at the earliest
-   * booking with a dial-in number that has not ended, so Join moves on by
-   * itself. Re-reading the calendar at that moment as well picks up anything
+   * The integration points `join_next_meeting` at its own choice of booking
+   * (shared/meetings.ts), so Join moves on by itself. Re-reading the calendar at that moment as well picks up anything
    * that changed during the meeting — a booking added, moved or cancelled —
    * rather than waiting for the next half hour.
    *
@@ -196,22 +196,10 @@ interface Booking {
   joinable?: boolean;
 }
 
-/**
- * The booking `join_next_meeting` dials: the first joinable one that has not
- * ended, as the integration chooses it. One with no readable end time counts
- * as not ended, the same as the integration and the panel.
- */
+/** The booking `join_next_meeting` dials; see shared/meetings.ts. */
 function joinTarget(state: EntityState | null, at: number): Booking | null {
   const raw = state?.a['meetings'];
   if (!Array.isArray(raw)) return null;
-  const found = raw.find(
-    (m): m is Booking =>
-      !!m && typeof m === 'object' && !!(m as Booking).joinable && !ended(m as Booking, at),
-  );
-  return found ?? null;
-}
-
-function ended(m: Booking, at: number): boolean {
-  const end = m.end_time ? Date.parse(m.end_time) : NaN;
-  return Number.isFinite(end) && end <= at;
+  const bookings = raw.filter((m): m is Booking => !!m && typeof m === 'object');
+  return joinTargetOf(bookings, at) ?? null;
 }

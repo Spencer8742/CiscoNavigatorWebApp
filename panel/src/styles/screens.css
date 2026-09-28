@@ -2617,6 +2617,12 @@
   animation: joinprompt-in var(--t-base) var(--ease);
 }
 
+/* Over every screen: above the screensaver (70) as well, which is the point
+   of it. Still dark over the screensaver's photos only by its own scrim. */
+.joinprompt[data-global] {
+  z-index: 80;
+}
+
 html[data-theme='light'] .joinprompt {
   background: rgba(28, 32, 42, 0.4);
 }
