@@ -7,7 +7,7 @@ import { appleTvCommand, appleTvSwipe, launchAppleTvApp, pairAppleTv } from '~/n
 import { markActivity } from '~/state/ui.ts';
 import { getToken } from '~/net/auth.ts';
 import { controlsConfig } from '~/config/index.ts';
-import { AppleTvServiceLogo } from '~/components/AppleTvServiceLogo.tsx';
+import { AppleTvServiceLogo, appleTvServiceLogoUrl } from '~/components/AppleTvServiceLogo.tsx';
 import type { AppleTvCommand, AppleTvState } from '@shared/protocol.ts';
 
 /**
@@ -54,6 +54,7 @@ export function AppleTvRemote({ tv }: { tv: AppleTvState }) {
     appleTvCommand(tv.id, op);
     markActivity();
   };
+  const appLogo = tv.app ? appleTvServiceLogoUrl(tv.app) : null;
   const status = tv.pairing === 'pin' ? 'Enter PIN from TV' : tv.reachable ?
     (tv.power === 'off' ? 'Off' : 'Connected') : 'Unavailable';
 
@@ -92,9 +93,15 @@ export function AppleTvRemote({ tv }: { tv: AppleTvState }) {
         onPointerDown={keepOpen}
       >
         <div class="apple-tv-media">
+          {/* Live TV (YouTube TV, most sports apps) publishes no artwork at
+              all, so the square used to sit empty under a perfectly good
+              title. The app's own logo is the next best picture of what is
+              on; the generic icon is left for apps we have no logo for. */}
           <div class="apple-tv-art" data-empty={tv.artwork ? undefined : ''}>
             {tv.artwork ? (
               <img src={`${tv.artwork}${token ? `&t=${encodeURIComponent(token)}` : ''}`} alt="" />
+            ) : appLogo ? (
+              <img class="apple-tv-art-logo" src={appLogo} alt="" aria-hidden="true" />
             ) : <Icon name={tv.mediaType === 'music' ? 'media' : 'tv'} size="3rem" />}
           </div>
           <div class="apple-tv-now">

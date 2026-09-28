@@ -17,9 +17,14 @@ const BRANDS: Array<[RegExp, string]> = [
   [/plex/i, 'plex'],
 ];
 
-export function AppleTvServiceLogo({ name, bundleId }: { name: string; bundleId: string }) {
-  const value = `${name} ${bundleId}`;
+/** The bundled logo for an app, matched on its name and/or bundle id, if we have one. */
+export function appleTvServiceLogoUrl(value: string): string | null {
   const brand = BRANDS.find(([pattern]) => pattern.test(value))?.[1];
-  if (!brand) return <Icon name="grid" size="3rem" />;
-  return <img class="apple-tv-service-logo" src={`/app-logos/${brand}.svg`} alt="" aria-hidden="true" />;
+  return brand ? `/app-logos/${brand}.svg` : null;
+}
+
+export function AppleTvServiceLogo({ name, bundleId }: { name: string; bundleId: string }) {
+  const src = appleTvServiceLogoUrl(`${name} ${bundleId}`);
+  if (!src) return <Icon name="grid" size="3rem" />;
+  return <img class="apple-tv-service-logo" src={src} alt="" aria-hidden="true" />;
 }
