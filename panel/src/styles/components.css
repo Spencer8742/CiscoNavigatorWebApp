@@ -669,7 +669,7 @@ html[data-theme='light'] .forecast-symbol[data-weather="clear"] { color: #5b8fa8
 .forecast-status .sheet-close { min-width: var(--touch-min); min-height: var(--touch-min); }
 .assist-panel.assist-panel-weather { grid-template-columns: var(--touch) minmax(0, 1fr); }
 .assist-panel-weather .assist-mic { width: var(--touch); height: var(--touch); }
-.assist-panel-weather .assist-exchange { min-height: var(--touch); max-height: 7rem; overflow-y: auto; }
+.assist-panel-weather .assist-exchange { min-height: var(--touch); max-height: 7rem; overflow-y: auto; touch-action: none; }
 .assist-panel-weather .assist-form { grid-column: 1 / -1; }
 
 @media (max-width: 25rem) {
@@ -1466,6 +1466,7 @@ html[data-theme='light'] .forecast-symbol[data-weather="clear"] { color: #5b8fa8
   gap: var(--s-2);
   padding: var(--s-2) var(--s-5);
   overflow-x: auto;
+  touch-action: none; /* scrolled by lib/kinetic.ts */
   border-bottom: 1px solid var(--border-subtle);
 }
 

@@ -76,14 +76,23 @@ img {
 }
 
 /* Scrollable panes ---------------------------------------------------------
-   Momentum scrolling, no scrollbar chrome (there is no mouse), and a
-   contained overscroll so a list at its end never scrolls the shell. */
+   No scrollbar chrome (there is no mouse), and a contained overscroll so a
+   list at its end never scrolls the shell.
+
+   `touch-action: none` hands the drag to lib/kinetic.ts, which scrolls with
+   momentum: the Navigator's own touch scrolling moves exactly as far as the
+   finger and stops dead on release, which reads as jerky. It is set on the
+   SCROLLERS, never broadly — a scroller's descendants are covered by it,
+   and anything outside a scroller keeps the browser's behaviour. Every
+   element with overflow auto/scroll needs it (see the shelves in
+   screens.css), or the browser starts its own pan and cancels the drag. */
 .scroll {
   overflow-y: auto;
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
   scrollbar-width: none;
+  touch-action: none;
 }
 .scroll::-webkit-scrollbar {
   display: none;

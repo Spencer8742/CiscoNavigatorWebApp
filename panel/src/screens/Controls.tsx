@@ -173,11 +173,14 @@ function Page({ page }: { page: ControlPage }) {
    */
   // Source pickers sit in the key grid: they look like keys and are pressed
   // like keys. Only what happens next differs.
-  const keys = page.items.filter((i): i is ControlButton | ControlSources =>
-    i.type === 'button' || i.type === 'sources',
+  // Volume controls sit in the grid too, filling the rest of their row — so
+  // a card beside the last key uses the space instead of leaving a gap and
+  // adding another block below.
+  const keys = page.items.filter((i): i is ControlButton | ControlSources | ControlVolume =>
+    i.type === 'button' || i.type === 'sources' || i.type === 'volume',
   );
+  const spans = volumeSpans(keys, page.columns);
   const lights = page.items.filter(isLight);
-  const volumes = page.items.filter((i): i is ControlVolume => i.type === 'volume');
   const devices = page.items.filter((i): i is ControlDevice => i.type === 'device');
 
   return (
@@ -189,7 +192,7 @@ function Page({ page }: { page: ControlPage }) {
         <DeviceTile
           key={item.id}
           item={item}
-          compact={keys.length > 0 || lights.length > 0 || volumes.length > 0}
+          compact={keys.length > 0 || lights.length > 0}
         />
       ))}
 
@@ -212,16 +215,19 @@ function Page({ page }: { page: ControlPage }) {
           {keys.map((item) =>
             item.type === 'sources' ? (
               <SourcesButton key={item.id} item={item} />
+            ) : item.type === 'volume' ? (
+              <VolumeCard
+                key={item.id}
+                item={item}
+                span={spans.get(item.id) ?? 0}
+                large={page.size === 'lg'}
+              />
             ) : (
               <MacroButton key={item.id} button={item} />
             ),
           )}
         </div>
       ) : null}
-
-      {volumes.map((item) => (
-        <VolumeCard key={item.id} item={item} />
-      ))}
 
       {lights.map((item) => (
         <KeyLightCard key={item.id} item={item} />
@@ -419,14 +425,48 @@ function SourcesButton({ item }: { item: ControlSources }) {
  * an xCommand to a codec, and a stream of them would arrive out of order and
  * leave the volume wherever the losing one said.
  */
-function VolumeCard({ item }: { item: ControlVolume }) {
+/**
+ * How many columns each volume card spans: the rest of the row it starts in,
+ * or the whole row when it starts one. 0 means the whole row regardless —
+ * the page has no fixed column count, so where a row ends is not known.
+ */
+function volumeSpans(
+  keys: (ControlButton | ControlSources | ControlVolume)[],
+  columns: number,
+): Map<string, number> {
+  const spans = new Map<string, number>();
+  let at = 0;
+  for (const item of keys) {
+    if (item.type === 'volume') {
+      if (columns <= 0) {
+        spans.set(item.id, 0);
+        continue;
+      }
+      const span = columns - (at % columns);
+      spans.set(item.id, span);
+      at += span;
+      continue;
+    }
+    const width = item.type === 'button' && item.wide ? 2 : 1;
+    // A wide key that would not fit wraps, and so does the count.
+    if (columns > 0 && width > 1 && (at % columns) + width > columns) at += columns - (at % columns);
+    at += width;
+  }
+  return spans;
+}
+
+function VolumeCard({ item, span, large }: { item: ControlVolume; span: number; large: boolean }) {
   const state = roomosStateOf(item.device);
   const reachable = Boolean(state?.reachable) && state?.volume !== null;
   const level = state?.volume ?? 0;
   const muted = state?.muted === true;
 
   return (
-    <div class="card keylight is-volume" data-off={muted || !reachable ? '' : undefined}>
+    <div
+      class="card keylight is-volume macro-volume"
+      data-off={muted || !reachable ? '' : undefined}
+      style={{ gridColumn: span > 0 ? `span ${span}` : '1 / -1' }}
+    >
       <div class="keylight-head">
         <Pressable
           class="keylight-power"
@@ -453,7 +493,7 @@ function VolumeCard({ item }: { item: ControlVolume }) {
         value={level}
         min={0}
         max={100}
-        size="lg"
+        size={large ? 'lg' : undefined}
         disabled={!reachable}
         readout={String(level)}
         ariaLabel={`${item.name} volume`}
