@@ -17,6 +17,7 @@ import type {
   PlexResult,
   KeyLightState,
   TvState,
+  RoomosState,
   Player,
   PlayerQueue,
   MusicCommand,
@@ -85,6 +86,7 @@ export interface HubDeps {
   /** Current Elgato Key Light states, sent in `hello`. */
   getKeyLights: () => KeyLightState[];
   getTvs: () => TvState[];
+  getRoomos: () => RoomosState[];
   getAppleTvs: () => AppleTvState[];
   onAppleTv?: (device: string, op: AppleTvCommand) => Promise<string | null>;
   onAppleTvSwipe?: (device: string, gesture: AppleTvSwipe) => Promise<string | null>;
@@ -226,6 +228,7 @@ export class Hub {
       queues: music.queues,
       keylights: this.#deps.getKeyLights(),
       tvs: this.#deps.getTvs(),
+      roomos: this.#deps.getRoomos(),
       appleTvs: this.#deps.getAppleTvs(),
       sources: this.#deps.getSources(),
     });
@@ -519,6 +522,10 @@ export class Hub {
 
   broadcastTvs(tvs: TvState[]): void {
     this.broadcast({ t: 'tvs', tvs });
+  }
+
+  broadcastRoomos(devices: RoomosState[]): void {
+    this.broadcast({ t: 'roomos', devices });
   }
 
   broadcastAppleTvs(appleTvs: AppleTvState[]): void {

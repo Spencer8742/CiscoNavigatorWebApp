@@ -5,7 +5,7 @@ import { Pressable } from '~/components/Pressable.tsx';
 import { Slider } from '~/components/Slider.tsx';
 import { entity } from '~/state/entities.ts';
 import { toggle, pressButton, setEntityNumber } from '~/state/actions.ts';
-import { pressed } from '~/state/controls.ts';
+import { liveLabelOf, pressed } from '~/state/controls.ts';
 import { pressControl } from '~/net/socket.ts';
 import {
   health,
@@ -445,6 +445,9 @@ function Toggles({ entities: e, keys }: { entities: DeviceEntities; keys: Contro
  */
 function MacroKey({ button }: { button: ControlButton }) {
   const confirming = pressed.value.has(button.id);
+  // A key that reads its device back — a Presentation key on a direct xAPI
+  // connection — says what is on screen, like the same key in the grid.
+  const live = liveLabelOf(button);
 
   return (
     <Pressable
@@ -453,7 +456,7 @@ function MacroKey({ button }: { button: ControlButton }) {
         pressControl(button.id);
         markActivity();
       }}
-      ariaLabel={button.name}
+      ariaLabel={live ? `${button.name}, ${live.text}` : button.name}
     >
       <span class="devtile-key-face" data-confirm={confirming ? '' : undefined}>
         <Icon
@@ -465,6 +468,11 @@ function MacroKey({ button }: { button: ControlButton }) {
         <Icon name="check" size="1.625rem" weight={2.2} class="devtile-key-tick" />
       </span>
       <span class="devtile-key-name truncate">{button.name}</span>
+      {live !== null ? (
+        <span class="devtile-key-sub truncate" data-assumed={live.assumed ? '' : undefined}>
+          {live.text}
+        </span>
+      ) : null}
     </Pressable>
   );
 }

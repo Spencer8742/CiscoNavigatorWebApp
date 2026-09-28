@@ -1,5 +1,7 @@
 import { signal, computed } from '@preact/signals';
-import type { AppleTvState, KeyLightState, TvState } from '@shared/protocol.ts';
+import type { AppleTvState, KeyLightState, RoomosState, TvState } from '@shared/protocol.ts';
+import type { ControlButton } from '@shared/config.ts';
+import { controlsConfig } from '~/config/index.ts';
 
 /**
  * Macro-page state: the Elgato Key Lights, and which button is mid-press.
@@ -69,6 +71,19 @@ export function tvStateOf(id: string): TvState | null {
   return tvsById.value.get(id) ?? null;
 }
 
+/**
+ * What each RoomOS device in `controls.roomos` is presenting, by config id.
+ *
+ * Pushed by the backend from the device's own xAPI feedback, so it follows a
+ * laptop being plugged in or a source chosen on the device's screen.
+ */
+export const roomos = signal<RoomosState[]>([]);
+export const roomosById = computed(() => new Map(roomos.value.map((d) => [d.id, d])));
+
+export function roomosStateOf(id: string): RoomosState | null {
+  return roomosById.value.get(id) ?? null;
+}
+
 /** Resolve what a `light:` item addresses — one light, or all of them. */
 export function keyLightFor(id: string): KeyLightState | null {
   return id === 'all' ? allKeyLights.value : (keyLightsById.value.get(id) ?? null);
@@ -120,4 +135,55 @@ export function clearPressed(id: string): void {
   const next = new Set(pressed.value);
   next.delete(id);
   pressed.value = next;
+}
+
+/**
+ * The live second line for a key, or null for a key with nothing to report.
+ *
+ * Shared by the page grid and a device tile's key row, so a Presentation key
+ * says what is on screen wherever it is drawn.
+ */
+export function liveLabelOf(button: ControlButton): { text: string; assumed: boolean } | null {
+  return tvLabel(button) ?? roomosLabel(button);
+}
+
+/**
+ * The current input, for a key that cycles them. Null for every other key, so
+ * nothing else grows a second line.
+ *
+ * An em dash when nothing at all is known — the set is off, or on something
+ * that is not an input. `assumed` marks an input the panel selected but the
+ * television has not confirmed, which is all there is to go on for a set that
+ * never reports its foreground app.
+ */
+function tvLabel(button: ControlButton): { text: string; assumed: boolean } | null {
+  const action = button.actions.find((a) => a.kind === 'tv' && a.op === 'next');
+  if (!action || action.kind !== 'tv') return null;
+
+  const state = tvStateOf(action.tv);
+  if (!state?.input) return { text: '—', assumed: false };
+
+  // Named the way the room names it, falling back to the socket id.
+  const tv = controlsConfig.value.tvs.find((t) => t.id === action.tv);
+  const named = tv?.inputs.find((i) => i.source === state.input);
+  return { text: named?.name ?? state.input, assumed: !state.confirmed };
+}
+
+/**
+ * What a RoomOS device is presenting, for a key that steps through its
+ * inputs. Never `assumed`: the device reports every change itself, so there
+ * is nothing weaker to fall back on. An em dash when nothing is presented
+ * or the device cannot be reached.
+ */
+function roomosLabel(button: ControlButton): { text: string; assumed: boolean } | null {
+  const action = button.actions.find((a) => a.kind === 'roomos' && a.op === 'next');
+  if (!action || action.kind !== 'roomos') return null;
+
+  const state = roomosStateOf(action.device);
+  if (!state?.reachable || state.connector === null) return { text: '—', assumed: false };
+
+  const dev = controlsConfig.value.roomos.find((d) => d.id === action.device);
+  const named = dev?.inputs.find((i) => i.connector === state.connector)?.name;
+  const type = state.connectors.find((c) => c.id === state.connector)?.type;
+  return { text: named ?? type ?? `Input ${state.connector}`, assumed: false };
 }

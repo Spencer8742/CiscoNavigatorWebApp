@@ -66,3 +66,12 @@ export { WeatherForecasts, normalizeForecast } from '~/ha/weather.ts';
  */
 export { PlexClient } from '~/plex/client.ts';
 export { MediaArt } from '~/http/media-art.ts';
+
+/*
+ * The RoomOS xAPI client and the runner that uses it, for the same reason as
+ * the webOS client: what matters is one conversation with a device — a
+ * presentation that changes on the device's own screen, an instance that
+ * older software will not accept — and the choice of which input comes next.
+ */
+export { RoomosClient } from '~/roomos/xapi.ts';
+export { Controls } from '~/controls/index.ts';

@@ -200,6 +200,17 @@
     Mask="false"/>
 
   <Config
+    Name="RoomOS Password"
+    Target="ROOMOS_PASSWORD"
+    Default=""
+    Mode=""
+    Description="Password for the Cisco devices under controls.roomos in dashboard.yaml (a local Integrator user on the Desk Pro). Lets the Presentation key show which input is actually on screen. Kept here rather than in dashboard.yaml because that file is sent to the panel."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="true"/>
+
+  <Config
     Name="Plex URL"
     Target="PLEX_URL"
     Default=""
