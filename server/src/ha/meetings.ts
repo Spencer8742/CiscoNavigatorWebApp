@@ -53,8 +53,6 @@ export class MeetingRefresher {
   readonly #calls = new Map<string, 'on' | 'off'>();
   /** When each refresh button was last pressed, for the debounce. */
   readonly #pressedAt = new Map<string, number>();
-  /** The booking each refresh button was last pressed for having ended. */
-  readonly #endedFor = new Map<string, string>();
   /** A timer per refresh button, set for when its Join target ends. */
   readonly #endTimers = new Map<string, { key: string; timer: ReturnType<typeof setTimeout> }>();
   #timer: ReturnType<typeof setTimeout> | undefined;
@@ -104,17 +102,21 @@ export class MeetingRefresher {
   /**
    * Refresh when the booking Join would dial has finished.
    *
-   * The integration points `join_next_meeting` at the first booking in the
-   * device's list with a dial-in number, whether or not it is over, and the
-   * device keeps finished bookings until it re-reads its calendar. So the
-   * moment that booking ends is exactly when the list needs re-reading.
+   * The integration (0.6.0+) points `join_next_meeting` at the earliest
+   * booking with a dial-in number that has not ended, so Join moves on by
+   * itself. Re-reading the calendar at that moment as well picks up anything
+   * that changed during the meeting — a booking added, moved or cancelled —
+   * rather than waiting for the next half hour.
    *
-   * Pressed once per ended booking: if the device still lists it after the
-   * refresh, pressing again on every entity event would hammer the codec.
+   * A timer per device, set for its Join target's end and replaced whenever
+   * the target changes. Firing presses once; the target it re-arms for is the
+   * next booking, so a device that keeps listing the finished one is not
+   * pressed again.
    */
   #watchJoinTarget(e: DeviceEntities): void {
     const button = e.refreshMeetings!;
-    const target = e.meetings ? joinTarget(this.#deps.getState(e.meetings)) : null;
+    const at = this.#now();
+    const target = e.meetings ? joinTarget(this.#deps.getState(e.meetings), at) : null;
     const end = target?.end_time ? Date.parse(target.end_time) : NaN;
     const armed = this.#endTimers.get(button);
 
@@ -125,21 +127,15 @@ export class MeetingRefresher {
     }
 
     const key = `${target.start_time ?? ''}|${target.title ?? ''}|${target.end_time}`;
-    const wait = end - this.#now();
-
-    if (wait <= 0) {
-      if (armed) clearTimeout(armed.timer);
-      this.#endTimers.delete(button);
-      if (this.#endedFor.get(button) === key) return;
-      this.#endedFor.set(button, key);
-      this.#refresh(button, 'join target ended');
-      return;
-    }
-
     if (armed?.key === key) return;
     if (armed) clearTimeout(armed.timer);
+
+    const wait = end - at;
     const timer = setTimeout(() => {
       this.#endTimers.delete(button);
+      // A far-off end is reached in steps of MAX_TIMER_MS; only the real end
+      // is worth a press.
+      if (this.#now() >= end) this.#refresh(button, 'join target ended');
       this.check();
     }, Math.min(wait, MAX_TIMER_MS));
     timer.unref?.();
@@ -200,10 +196,22 @@ interface Booking {
   joinable?: boolean;
 }
 
-/** The booking `join_next_meeting` dials: the first joinable one listed. */
-function joinTarget(state: EntityState | null): Booking | null {
+/**
+ * The booking `join_next_meeting` dials: the first joinable one that has not
+ * ended, as the integration chooses it. One with no readable end time counts
+ * as not ended, the same as the integration and the panel.
+ */
+function joinTarget(state: EntityState | null, at: number): Booking | null {
   const raw = state?.a['meetings'];
   if (!Array.isArray(raw)) return null;
-  const found = raw.find((m): m is Booking => !!m && typeof m === 'object' && !!(m as Booking).joinable);
+  const found = raw.find(
+    (m): m is Booking =>
+      !!m && typeof m === 'object' && !!(m as Booking).joinable && !ended(m as Booking, at),
+  );
   return found ?? null;
+}
+
+function ended(m: Booking, at: number): boolean {
+  const end = m.end_time ? Date.parse(m.end_time) : NaN;
+  return Number.isFinite(end) && end <= at;
 }
