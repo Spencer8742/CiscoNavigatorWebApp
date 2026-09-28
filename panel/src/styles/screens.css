@@ -2768,6 +2768,46 @@ html[data-theme='light'] .joinprompt {
   display: flex;
   flex-direction: column;
   gap: var(--s-2);
+  /* Vertical pan is the only gesture here, and at either end of the list a
+     swipe carries on into the page instead of dying in a box a few rows
+     tall — `.scroll` contains it, which is right for a whole screen and
+     wrong for a list nested inside one. */
+  touch-action: pan-y;
+  overscroll-behavior-y: auto;
+}
+
+/*
+ * Beside the controls, the list takes exactly the height the controls give it.
+ *
+ * `contain: size` stops the card sizing the row from its own content — with
+ * a hundred days of bookings it would otherwise stretch the tile down the
+ * page — so the grid row is the controls' height, the card stretches to it,
+ * and the list scrolls within the whole of that rather than inside a
+ * 12–19rem box. A floor keeps a few rows visible when the controls are short.
+ * Stacked layouts (below) keep the cap: there is nothing beside them to
+ * take a height from.
+ */
+@media (min-width: 34.0625rem) {
+  .devtile-body > .devtile-meetings {
+    contain: size;
+    min-height: 16rem;
+  }
+
+  /* Also beats the compact cap further down, which this replaces. */
+  .devtile .devtile-body > .devtile-meetings .devtile-list {
+    max-height: none;
+  }
+}
+
+/* "Tomorrow" / "Wed 30 Sep" above a later day's first booking. */
+.devtile-day {
+  flex: 0 0 auto;
+  padding: var(--s-2) var(--s-1) 0;
+  font-size: 0.75rem;
+  font-weight: 640;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
 }
 
 /* One row, repeated: same edges, same baselines, the time always in the same

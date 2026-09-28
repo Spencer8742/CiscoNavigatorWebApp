@@ -86,6 +86,16 @@ export function formatDate(d: Date, { locale, timezone }: TimeOpts): string {
   }).format(d);
 }
 
+/** "Wed 30 Sep" — a day heading in a list of dates. */
+export function formatDayShort(d: Date, { locale, timezone }: TimeOpts): string {
+  return dtf(locale, {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    timeZone: timezone,
+  }).format(d);
+}
+
 /** "Aug 2024" — for the photo overlay. */
 export function formatPhotoDate(iso: string, { locale, timezone }: TimeOpts): string {
   const d = new Date(iso);

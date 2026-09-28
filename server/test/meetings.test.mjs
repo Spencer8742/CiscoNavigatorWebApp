@@ -89,3 +89,28 @@ test('refreshes once when the booking Join points at ends, so Join moves on', (t
   refresher.stop();
   assert.deepEqual(pressed, ['2026-09-28T10:15:00.000Z', '2026-09-28T10:25:00.000Z']);
 });
+
+test('a finished booking the device still lists is not the Join target; the next one is', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.parse('2026-09-28T13:00:00Z') });
+  const meetingsId = 'sensor.desk_pro_next_meeting';
+  const cfg = { controls: { pages: [{ items: [{
+    type: 'device',
+    entities: { meetings: meetingsId, refreshMeetings: 'button.desk_pro_refresh_meetings' },
+    keys: [],
+  }] }] } };
+  const meetings = [
+    { title: 'Morning', start_time: '2026-09-28T09:00:00Z', end_time: '2026-09-28T09:30:00Z', joinable: true },
+    { title: 'Afternoon', start_time: '2026-09-28T13:30:00Z', end_time: '2026-09-28T14:00:00Z', joinable: true },
+  ];
+  const pressed = [];
+  const refresher = new MeetingRefresher({
+    getConfig: () => cfg,
+    getState: (id) => (id === meetingsId ? { id, s: '2', a: { meetings }, lc: 0, lu: 0 } : null),
+    press: async () => { pressed.push(new Date(Date.now()).toISOString()); },
+  });
+  refresher.check();
+  assert.deepEqual(pressed, [], 'the morning meeting being over is not news');
+  t.mock.timers.tick(60 * 60_000);
+  refresher.stop();
+  assert.deepEqual(pressed, ['2026-09-28T14:00:00.000Z']);
+});

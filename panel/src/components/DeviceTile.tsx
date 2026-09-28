@@ -1,3 +1,4 @@
+import { Fragment } from 'preact';
 import { Icon, hasIcon } from '~/components/Icon.tsx';
 import { Pressable } from '~/components/Pressable.tsx';
 import { Slider } from '~/components/Slider.tsx';
@@ -14,7 +15,13 @@ import {
 } from '~/state/ui.ts';
 import { timeOpts } from '~/config/index.ts';
 import { now } from '~/state/clock.ts';
-import { formatTime, formatMeridiem, type TimeOpts } from '~/lib/format.ts';
+import {
+  formatDate,
+  formatDayShort,
+  formatMeridiem,
+  formatTime,
+  type TimeOpts,
+} from '~/lib/format.ts';
 import type { ControlButton, ControlDevice, DeviceEntities } from '@shared/config.ts';
 import type { EntityState } from '@shared/protocol.ts';
 
@@ -97,9 +104,8 @@ export function DeviceTile({ item, compact }: { item: ControlDevice; compact?: b
  *  - or somebody says not now.
  *
  * The same honesty rule as the row badge applies: `join_next_meeting` takes
- * no argument, so if the device would dial a meeting that has already
- * finished, this offers nothing at all rather than naming one meeting and
- * starting another.
+ * no argument, so this only ever names the booking that button will dial
+ * (see `joinTargetOf`).
  */
 function JoinPrompt({ entities: e }: { entities: DeviceEntities }) {
   const meetings = readMeetings(useState(e.meetings));
@@ -110,8 +116,8 @@ function JoinPrompt({ entities: e }: { entities: DeviceEntities }) {
 
   if (!e.join || inCall?.s === 'on') return null;
 
-  const target = meetings.find((m) => m.joinable);
-  if (!target || isOver(target, at) || !isDue(target, at)) return null;
+  const target = joinTargetOf(meetings, at);
+  if (!target || !isDue(target, at)) return null;
   if (dismissed === keyOf(target)) return null;
 
   return (
@@ -314,26 +320,13 @@ function Meetings({ entities: e }: { entities: DeviceEntities }) {
   const meetings = all.filter((m) => !isOver(m, at));
 
   /*
-   * Which row gets the Join badge.
-   *
-   * `join_next_meeting` is a single button with no argument. The integration
-   * points it at the earliest booking in the DEVICE's list that carries a
-   * number, with no regard for the time, so the panel cannot choose which
-   * meeting it starts. All the panel can do is put the badge on the row that
-   * button will actually dial.
-   *
-   * When that booking has already finished, no badge: moving it to the
-   * meeting that IS happening would not change where it dials. The backend
-   * refreshes the device's list the moment that booking ends (see
-   * server/src/ha/meetings.ts), which moves the button on, so this lasts
-   * only as long as that refresh takes.
+   * Which row gets the Join badge: the booking `join_next_meeting` will
+   * actually dial (see `joinTargetOf`) — and not until it is nearly time. A
+   * Join that has been sitting there since breakfast is furniture; one that
+   * appears five minutes out is a prompt.
    */
-  const deviceTarget = all.find((m) => m.joinable);
-  const stale = deviceTarget !== undefined && isOver(deviceTarget, at);
-  // And not until it is nearly time. A Join that has been sitting there since
-  // breakfast is furniture; one that appears five minutes out is a prompt.
-  const joinRow =
-    deviceTarget && !stale && isDue(deviceTarget, at) ? meetings.indexOf(deviceTarget) : -1;
+  const target = joinTargetOf(all, at);
+  const joinRow = target && isDue(target, at) ? meetings.indexOf(target) : -1;
 
   const t = timeOpts.value;
 
@@ -358,34 +351,37 @@ function Meetings({ entities: e }: { entities: DeviceEntities }) {
       ) : (
         <div class="devtile-list scroll">
           {meetings.map((m, i) => (
-            <div class="devtile-meeting" key={`${m.start_time ?? ''}-${i}`}>
-              <div class="devtile-time tnum">{clockOf(m.start_time, t)}</div>
-              <div class="devtile-meeting-text">
-                <div class="devtile-meeting-title truncate">{m.title}</div>
-                {m.organizer ? (
-                  <div class="devtile-meeting-org truncate">{m.organizer}</div>
+            <Fragment key={`${m.start_time ?? ''}-${i}`}>
+              {dayHeading(meetings, i, at, t)}
+              <div class="devtile-meeting">
+                <div class="devtile-time tnum">{clockOf(m.start_time, t)}</div>
+                <div class="devtile-meeting-text">
+                  <div class="devtile-meeting-title truncate">{m.title}</div>
+                  {m.organizer ? (
+                    <div class="devtile-meeting-org truncate">{m.organizer}</div>
+                  ) : null}
+                </div>
+                {/*
+                  Join only on the booking `join_next_meeting` will dial. The
+                  integration exposes nothing per-booking, so a Join on the
+                  12:00 row would join the 9:00 one — a button that lies about
+                  which meeting it starts is worse than no button.
+                */}
+                {e.join && i === joinRow ? (
+                  <Pressable
+                    class="devtile-join"
+                    onPress={() => {
+                      pressButton(e.join!);
+                      markActivity();
+                    }}
+                    ariaLabel={`Join ${m.title}`}
+                  >
+                    <Icon name="camera" size="1rem" weight={1.8} />
+                    <span>Join</span>
+                  </Pressable>
                 ) : null}
               </div>
-              {/*
-                Join only on the FIRST joinable booking. The integration
-                exposes `join_next_meeting` and nothing per-booking, so a Join
-                on the 12:00 row would join the 9:00 one — a button that lies
-                about which meeting it starts is worse than no button.
-              */}
-              {e.join && i === joinRow ? (
-                <Pressable
-                  class="devtile-join"
-                  onPress={() => {
-                    pressButton(e.join!);
-                    markActivity();
-                  }}
-                  ariaLabel={`Join ${m.title}`}
-                >
-                  <Icon name="camera" size="1rem" weight={1.8} />
-                  <span>Join</span>
-                </Pressable>
-              ) : null}
-            </div>
+            </Fragment>
           ))}
         </div>
       )}
@@ -420,6 +416,42 @@ function isDue(m: Meeting, at: Date): boolean {
   const start = Date.parse(m.start_time);
   if (!Number.isFinite(start)) return true;
   return start - at.getTime() <= JOIN_LEAD_MS;
+}
+
+/**
+ * The booking `join_next_meeting` will dial right now.
+ *
+ * Mirrors the integration (0.6.0+): the earliest booking with a dial-in
+ * number that has not already ended. The device keeps finished bookings in
+ * its list for the rest of the day, so "the first joinable one" on its own
+ * is this morning's meeting — which is what hid Join for the whole afternoon
+ * once the day's first call was over.
+ */
+function joinTargetOf(meetings: Meeting[], at: Date): Meeting | undefined {
+  return meetings.find((m) => m.joinable && !isOver(m, at));
+}
+
+/**
+ * "Tomorrow" / "Wed 30 Sep" above the first booking of each later day.
+ *
+ * The list runs as far ahead as the calendar goes, and a bare "10:00" under
+ * today's bookings reads as today. Today's own bookings need no heading.
+ */
+function dayHeading(meetings: Meeting[], i: number, at: Date, t: TimeOpts) {
+  const day = dayOf(meetings[i]!, t);
+  if (!day || (i > 0 && dayOf(meetings[i - 1]!, t) === day)) return null;
+  if (day === formatDate(at, t)) return null;
+  const tomorrow = formatDate(new Date(at.getTime() + 86_400_000), t);
+  const start = new Date(meetings[i]!.start_time!);
+  return (
+    <div class="devtile-day">{day === tomorrow ? 'Tomorrow' : formatDayShort(start, t)}</div>
+  );
+}
+
+function dayOf(m: Meeting, t: TimeOpts): string | null {
+  if (!m.start_time) return null;
+  const d = new Date(m.start_time);
+  return Number.isNaN(d.getTime()) ? null : formatDate(d, t);
 }
 
 /** Identity for "this exact booking", for remembering a dismissal. */
