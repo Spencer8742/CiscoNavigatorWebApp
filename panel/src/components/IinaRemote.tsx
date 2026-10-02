@@ -1,9 +1,10 @@
-import { useEffect } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { RemoteButton } from '~/components/AppleTvRemote.tsx';
 import { Icon } from '~/components/Icon.tsx';
 import { Pressable } from '~/components/Pressable.tsx';
 import { Progress } from '~/components/Progress.tsx';
 import { Slider } from '~/components/Slider.tsx';
+import { getToken } from '~/net/auth.ts';
 import { iinaCommand } from '~/net/socket.ts';
 import { markActivity } from '~/state/ui.ts';
 import type { IinaCommand, IinaState } from '@shared/protocol.ts';
@@ -27,6 +28,12 @@ export function IinaRemote({ player }: { player: IinaState }) {
   };
   const active = player.active;
   const volume = Math.round(player.volume ?? 100);
+  const token = getToken();
+  // A poster that will not load falls back to the icon rather than a broken
+  // image; a different poster deserves a fresh try.
+  const [artFailed, setArtFailed] = useState(false);
+  useEffect(() => setArtFailed(false), [player.art]);
+  const art = active && player.art && !artFailed ? player.art : null;
 
   return (
     <section class="apple-tv-card">
@@ -44,8 +51,14 @@ export function IinaRemote({ player }: { player: IinaState }) {
 
       <div class="apple-tv-content iina-content" data-remote="closed" onPointerDown={markActivity}>
         <div class="apple-tv-media">
-          <div class="apple-tv-art" data-empty="">
-            <Icon name={active && !player.paused ? 'play' : 'desktop'} size="3rem" />
+          <div class="apple-tv-art" data-empty={art ? undefined : ''}>
+            {art ? (
+              <img
+                src={`${art}${token ? `&t=${encodeURIComponent(token)}` : ''}`}
+                alt=""
+                onError={() => setArtFailed(true)}
+              />
+            ) : <Icon name={active && !player.paused ? 'play' : 'desktop'} size="3rem" />}
           </div>
           <div class="apple-tv-now">
             <span class="apple-tv-app">IINA</span>

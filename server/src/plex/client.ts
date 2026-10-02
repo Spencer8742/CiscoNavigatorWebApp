@@ -456,6 +456,8 @@ export class PlexClient {
   #iinaSync(id: string, part: string, meta: PlexMetadata, mac: SshHostConfig, type: 'video' | 'music'): IinaListener {
     const marker = part.slice(0, part.lastIndexOf('/') + 1);
     const title = meta.grandparentTitle ? `${meta.grandparentTitle} – ${meta.title ?? ''}` : meta.title ?? null;
+    // An episode shows its show's poster, as the Plex page does.
+    const poster = meta.grandparentThumb ?? meta.thumb ?? meta.parentThumb;
     const as = {
       'X-Plex-Client-Identifier': `${this.#clientId}-iina-${mac.id}`,
       'X-Plex-Product': 'IINA',
@@ -513,6 +515,9 @@ export class PlexClient {
         }
       },
       titleFor: (status) => (mine(status) ? title : null),
+      // Registered on every reading rather than once: the art registry
+      // evicts oldest-first, and a film outlasts a lot of browsing.
+      artFor: (status) => (mine(status) ? this.#art(poster, 'poster') : null),
       end: finish,
     };
   }

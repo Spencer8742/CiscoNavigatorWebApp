@@ -96,7 +96,7 @@ before(async () => {
         ] } });
       case '/library/metadata/10':
         return json(res, { MediaContainer: { Metadata: [{ ratingKey: '10', type: 'movie', title: 'A Film', viewOffset: 120_000,
-          Media: [{ Part: [{ key: '/library/parts/901/1700000000/file.mkv' }] }] }] } });
+          thumb: '/library/metadata/10/thumb/9', Media: [{ Part: [{ key: '/library/parts/901/1700000000/file.mkv' }] }] }] } });
       case '/library/metadata/60':
         return json(res, { MediaContainer: { Metadata: [{ ratingKey: '60', type: 'season', title: 'Season 1' }] } });
       case '/library/metadata/61':
@@ -346,6 +346,7 @@ describe('IINA watch state reaches Plex', () => {
     assert.equal(listeners[0].host, 'mac_studio');
     const { listener } = listeners[0];
     assert.equal(listener.titleFor(status()), 'A Film');
+    assert.match(listener.artFor(status()), /^\/img\/art\?k=[0-9a-f]{16}$/, 'the poster, proxied, never the server');
 
     listener.status(status());
     await settle();
@@ -398,6 +399,7 @@ describe('IINA watch state reaches Plex', () => {
     await settle();
     assert.deepEqual(seen.reports.map((r) => [r.query.state, r.query.time]), [['playing', '300000'], ['stopped', '300000']]);
     assert.equal(listener.titleFor(status({ path: '/Users/me/holiday.mov' })), null);
+    assert.equal(listener.artFor(status({ path: '/Users/me/holiday.mov' })), null);
   });
 });
 
