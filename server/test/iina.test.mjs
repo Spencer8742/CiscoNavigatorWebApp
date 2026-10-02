@@ -76,11 +76,12 @@ describe('the status loop', () => {
 
   test('a reading is shown, with a listener allowed to name it', () => {
     const { iina, streams } = rig();
-    iina.watch('mac_studio', { status: () => {}, titleFor: () => 'A Film', end: () => {} });
+    iina.watch('mac_studio', { status: () => {}, titleFor: () => 'A Film', artFor: () => '/img/art?k=abc', end: () => {} });
     streams[0].onLine(reply());
     const [state] = iina.snapshot();
     assert.equal(state.active, true);
     assert.equal(state.title, 'A Film');
+    assert.equal(state.art, '/img/art?k=abc');
     assert.equal(state.position, 61.5);
     assert.equal(state.volume, 80);
     assert.equal(state.paused, false);
@@ -91,6 +92,7 @@ describe('the status loop', () => {
     iina.watch('mac_studio');
     streams[0].onLine(reply({ title: '' }));
     assert.equal(iina.snapshot()[0].title, 'file.mkv');
+    assert.equal(iina.snapshot()[0].art, null);
   });
 
   test('a new listener ends the old one; the loop ending ends the new one', async () => {

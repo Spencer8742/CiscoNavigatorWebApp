@@ -736,6 +736,11 @@ export interface IinaState {
   active: boolean;
   /** What IINA says is playing — its media title, or the file name. */
   title: string | null;
+  /**
+   * Poster for what is playing, as an authenticated path on this backend —
+   * known when Plex sent it there, null for anything else IINA opened.
+   */
+  art: string | null;
   paused: boolean;
   /** Seconds, measured at `positionAt`, like the Apple TV's `elapsed`. */
   position: number | null;

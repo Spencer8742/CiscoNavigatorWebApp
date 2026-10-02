@@ -61,6 +61,8 @@ export interface IinaListener {
    * Plex is called `file.mkv` as far as mpv knows; Plex knows the film.
    */
   titleFor?(status: IinaStatus): string | null;
+  /** Artwork for it, as an authenticated path on this backend. */
+  artFor?(status: IinaStatus): string | null;
   /** The stream ended, or another listener took over. Called once. */
   end(): void;
 }
@@ -184,6 +186,7 @@ export class Iina {
     this.#update(mac, {
       active: true,
       title: watch.listener?.titleFor?.(status) ?? status.title ?? fileName(status.path),
+      art: watch.listener?.artFor?.(status) ?? null,
       paused: status.paused,
       position: status.position,
       positionAt: Date.now(),
@@ -257,6 +260,7 @@ export class Iina {
       name: mac.name,
       active: false,
       title: null,
+      art: null,
       paused: false,
       position: null,
       positionAt: null,
