@@ -821,6 +821,14 @@ export interface SshHostConfig {
   /** Bare address, optionally with `:port`. */
   host: string;
   username: string;
+  /** What the panel calls it, where it is named. Defaults to the id. */
+  name: string;
+  /**
+   * A Mac with IINA on it, offered as a place to play Plex. The backend opens
+   * the file in IINA over this same SSH connection, so nothing about Plex's
+   * own apps has to cooperate.
+   */
+  iina: boolean;
 }
 
 /** One launchable app deliberately exposed as a shortcut on the wall panel. */

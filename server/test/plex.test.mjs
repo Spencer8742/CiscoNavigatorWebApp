@@ -9,11 +9,11 @@ import { fileURLToPath, URL } from 'node:url';
  * player the server or plex.tv knows about.
  *
  * Three fakes stand in for the three parties: the server, plex.tv and a
- * player listening on its Companion port. The Apple TV bridge is a stub that
- * records what it was asked to do.
+ * player listening on its Companion port. The Apple TV bridge and the SSH
+ * runner are stubs that record what they were asked to do.
  */
 
-const { PlexClient, MediaArt } = await import(fileURLToPath(new URL('../dist/testkit.js', import.meta.url)));
+const { PlexClient, MediaArt, iinaCommand } = await import(fileURLToPath(new URL('../dist/testkit.js', import.meta.url)));
 
 const TOKEN = 'plex-secret-token';
 const MACHINE = 'server-machine-id';
@@ -83,9 +83,19 @@ before(async () => {
           { ratingKey: '10', type: 'movie', title: 'A Film', year: 1999, duration: 5_400_000, thumb: '/library/metadata/10/thumb/9', viewCount: 1 },
         ] } });
       case '/library/metadata/10':
-        return json(res, { MediaContainer: { Metadata: [{ ratingKey: '10', type: 'movie', title: 'A Film', viewOffset: 120_000 }] } });
+        return json(res, { MediaContainer: { Metadata: [{ ratingKey: '10', type: 'movie', title: 'A Film', viewOffset: 120_000,
+          Media: [{ Part: [{ key: '/library/parts/901/1700000000/file.mkv' }] }] }] } });
+      case '/library/metadata/60':
+        return json(res, { MediaContainer: { Metadata: [{ ratingKey: '60', type: 'season', title: 'Season 1' }] } });
+      case '/library/metadata/61':
+        return json(res, { MediaContainer: { Metadata: [{ ratingKey: '61', type: 'movie', title: 'Odd',
+          Media: [{ Part: [{ key: '/library/parts/1/../../clients' }] }] }] } });
+      case '/security/token':
+        assert.equal(url.searchParams.get('type'), 'delegation');
+        return json(res, { MediaContainer: { token: 'transient-abc' } });
       case '/library/metadata/50':
-        return json(res, { MediaContainer: { Metadata: [{ ratingKey: '50', type: 'episode', title: 'Pilot', viewOffset: 600_000 }] } });
+        return json(res, { MediaContainer: { Metadata: [{ ratingKey: '50', type: 'episode', title: 'Pilot', viewOffset: 600_000,
+          grandparentTitle: "Bob's Show", Media: [{ Part: [{ key: '/library/parts/902/1700000000/file.mp4' }] }] }] } });
       case '/playQueues':
         assert.equal(req.method, 'POST');
         seen.queues.push(Object.fromEntries(url.searchParams));
@@ -119,13 +129,17 @@ after(() => {
   player.close();
 });
 
-function client({ appleTvs = [], power = 'on', calls = [] } = {}) {
+const MAC = { id: 'mac_studio', host: '10.0.0.5', username: 'spencer', name: 'Mac Studio', iina: true };
+
+function client({ appleTvs = [], power = 'on', calls = [], ssh = [], sshAnswer = null } = {}) {
   return new PlexClient({ url: pmsUrl, token: TOKEN, enabled: true }, {
     art: new MediaArt(),
     appleTvs: () => appleTvs,
     appleTvStates: () => appleTvs.map((tv) => ({ id: tv.id, power })),
     appleTvCommand: async (device, op) => { calls.push(['command', device, op]); return null; },
     openApp: async (device, bundle) => { calls.push(['open', device, bundle]); return null; },
+    sshHosts: () => ssh,
+    runSsh: async (host, command) => { calls.push(['ssh', host, command]); return sshAnswer; },
     plexTv: `http://127.0.0.1:${plexTv.address().port}`,
     playerPort,
     readyMs: 3_000,
@@ -224,5 +238,84 @@ describe('playing', () => {
       client().handle({ kind: 'play', id: '10', target: 'plex:nobody', resume: true }),
       /no longer available/,
     );
+  });
+});
+
+describe('playing on a Mac in IINA', () => {
+  test('a Mac marked iina is listed after the Apple TVs; one that is not, is not', async () => {
+    resources = [];
+    const other = { ...MAC, id: 'laptop', name: 'Laptop', iina: false };
+    const result = await client({ ssh: [MAC, other], appleTvs: [{ id: 'living', name: 'Living Room', host: '10.9.9.9', shortcuts: [] }] })
+      .handle({ kind: 'targets' });
+    assert.deepEqual(result.targets.map((t) => t.id), ['atv:living', 'mac:mac_studio', 'plex:shield-id']);
+    assert.equal(result.targets[1].product, 'IINA on Mac');
+    assert.equal(result.targets[1].name, 'Mac Studio');
+  });
+
+  test('the file is opened in IINA over SSH, resuming, with a transient token', async () => {
+    const calls = [];
+    const result = await client({ ssh: [MAC], calls }).handle({ kind: 'play', id: '10', target: 'mac:mac_studio', resume: true });
+    assert.deepEqual(result, { kind: 'played', target: 'mac:mac_studio' });
+    assert.equal(calls.length, 1);
+    const [, host, command] = calls[0];
+    assert.equal(host, 'mac_studio');
+    const link = command.match(/^caffeinate -u -t 1; open '(iina:\/\/open\?[^']+)'$/)?.[1];
+    assert.ok(link, command);
+    const query = new URL(link).searchParams;
+    const media = new URL(query.get('url'));
+    assert.equal(media.origin, pmsUrl);
+    assert.equal(media.pathname, '/library/parts/901/1700000000/file.mkv');
+    assert.equal(media.searchParams.get('X-Plex-Token'), 'transient-abc');
+    assert.ok(!command.includes(TOKEN), 'the long-lived token must not reach the Mac');
+    assert.equal(query.get('mpv_start'), '120');
+    assert.equal(query.get('mpv_force-media-title'), 'A Film');
+  });
+
+  test('start over leaves the start out, and an episode is titled with its show', async () => {
+    const calls = [];
+    await client({ ssh: [MAC], calls }).handle({ kind: 'play', id: '50', target: 'mac:mac_studio', resume: false });
+    const query = new URL(calls[0][2].match(/open '([^']+)'/)[1]).searchParams;
+    assert.equal(query.get('mpv_start'), null);
+    assert.equal(query.get('mpv_force-media-title'), "Bob's Show - Pilot");
+  });
+
+  test('a season is refused with what to pick instead', async () => {
+    await assert.rejects(
+      client({ ssh: [MAC] }).handle({ kind: 'play', id: '60', target: 'mac:mac_studio', resume: true }),
+      /one file at a time\. Choose an episode/,
+    );
+  });
+
+  test('a part key that is not one is refused before anything runs', async () => {
+    const calls = [];
+    await assert.rejects(
+      client({ ssh: [MAC], calls }).handle({ kind: 'play', id: '61', target: 'mac:mac_studio', resume: true }),
+      /no playable file/,
+    );
+    assert.deepEqual(calls, []);
+  });
+
+  test('a Mac that is not marked iina is refused', async () => {
+    const calls = [];
+    await assert.rejects(
+      client({ ssh: [{ ...MAC, iina: false }], calls }).handle({ kind: 'play', id: '10', target: 'mac:mac_studio', resume: true }),
+      /not set up to play Plex/,
+    );
+    assert.deepEqual(calls, []);
+  });
+
+  test('open failing says to check IINA and the login', async () => {
+    await assert.rejects(
+      client({ ssh: [MAC], sshAnswer: 'mac_studio: command exited 1' })
+        .handle({ kind: 'play', id: '10', target: 'mac:mac_studio', resume: true }),
+      /could not open IINA/,
+    );
+  });
+
+  test('nothing in a title can leave the quoted argument', () => {
+    const command = iinaCommand("http://pms/library/parts/1/2/file.mkv?X-Plex-Token=t", "It's a '; rm -rf ~; echo (x)! *", 5);
+    const quoted = command.slice(command.indexOf("'"));
+    assert.match(quoted, /^'[^']*'$/);
+    assert.ok(!/[\s;$`\\]/.test(quoted), quoted);
   });
 });

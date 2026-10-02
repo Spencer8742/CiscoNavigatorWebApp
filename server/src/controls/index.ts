@@ -103,6 +103,21 @@ export class Controls {
     this.reload();
   }
 
+  /**
+   * Run a command on a host in `controls.ssh`. Null on success, otherwise a
+   * reason for the panel. The command is the caller's: a key's fixed `run:`,
+   * or one Plex builds from nothing but a validated item.
+   */
+  async runSsh(hostId: string, command: string): Promise<string | null> {
+    const cfg = this.#deps.getConfig().controls.ssh.find((h) => h.id === hostId);
+    if (!cfg) {
+      log.warn(`Refused SSH host "${hostId}": not in controls.ssh`);
+      return 'Unknown host';
+    }
+    const credential = await this.#deps.sshCredential(cfg.id);
+    return this.#ssh.run({ ...cfg, ...credential }, command);
+  }
+
   /* ── Configuration ─────────────────────────────────────────────────────*/
 
   /**
@@ -526,15 +541,8 @@ export class Controls {
         return dev.xcommand(action.command, action.params);
       }
 
-      case 'ssh': {
-        const cfg = this.#deps.getConfig().controls.ssh.find((h) => h.id === action.host);
-        if (!cfg) {
-          log.warn(`Refused SSH host "${action.host}": not in controls.ssh`);
-          return 'Unknown host';
-        }
-        const credential = await this.#deps.sshCredential(cfg.id);
-        return this.#ssh.run({ ...cfg, ...credential }, action.run);
-      }
+      case 'ssh':
+        return this.runSsh(action.host, action.run);
 
       case 'appletv':
         return this.#deps.appleTvCommand(action.device, action.op);

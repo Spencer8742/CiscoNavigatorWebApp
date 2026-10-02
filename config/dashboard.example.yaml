@@ -616,10 +616,18 @@ controls:
   # ssh-known-hosts.json beside this file; a host that later presents a
   # different key is refused before any credential is sent. Reinstalled the
   # Mac? Delete its line from that file.
+  #
+  # `iina: true` also offers the host as a place to play Plex: the Plex tab
+  # lists it, and choosing it opens the file in IINA on that Mac (via an
+  # iina:// link, over this same login). It needs IINA installed and someone
+  # logged in to the Mac, and the Mac must be able to reach PLEX_URL. `name`
+  # is what the Plex tab calls it.
   ssh: []
   #  - id: mac_studio
+  #    name: Mac Studio
   #    host: 192.168.1.200
   #    username: spencer
+  #    iina: true
   #
   #   - { name: Wake Mac, icon: power, ssh: mac_studio, run: caffeinate -u -t 1 }
 

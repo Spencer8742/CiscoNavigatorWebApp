@@ -398,6 +398,15 @@ it should play. A film with a saved position offers *Resume* or *Start over*.
   cast to and control it, and sign in to the same Plex account the token
   belongs to. If Plex opens but nothing plays, that setting is the first
   thing to check — the panel says so too.
+- **Macs with IINA.** A host in `controls.ssh` with `iina: true` is listed
+  after the Apple TVs. Choosing it logs in over SSH and opens the original
+  file in IINA, straight from the server: no transcoding, and no reliance on
+  a Plex app offering remote control, which Plex has been removing (the tvOS
+  app no longer does). It needs Remote Login on the Mac, IINA installed, and
+  someone logged in at the Mac. The link carries a short-lived token from
+  your server, not `PLEX_TOKEN`. IINA does not report back to Plex, so
+  playing there does not update watched state or resume points. One file at
+  a time: pick an episode or track rather than a season or album.
 - **Other Plex players** that are running on the LAN (a Shield, a smart TV
   app, Plex HTPC) are listed below the Apple TVs, as found by your server
   and by plex.tv.

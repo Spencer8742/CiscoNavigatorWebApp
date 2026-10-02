@@ -426,6 +426,10 @@ async function main(): Promise<void> {
     appleTvStates: () => appleTv.snapshot,
     appleTvCommand: (device, op) => appleTv.command(device, op),
     openApp: (device, bundleId) => appleTv.openApp(device, bundleId),
+    // A Mac plays Plex in IINA over the same SSH connection its keys use.
+    // `controls` is built below; this only runs when something is played.
+    sshHosts: () => config.current.controls.ssh,
+    runSsh: (host, command) => controls.runSsh(host, command),
   });
 
   hub = new Hub(server, {

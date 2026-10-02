@@ -352,8 +352,9 @@ function PlayOn({ item, preferred, onClose }: { item: PlexItem; preferred: strin
           ) : null}
           {targets?.length === 0 ? (
             <p class="browse-note">
-              Nothing to play on. Add an Apple TV under <code>controls.appleTvs</code>, or open Plex on a
-              player on this network.
+              Nothing to play on. Add an Apple TV under <code>controls.appleTvs</code>, mark a Mac
+              under <code>controls.ssh</code> with <code>iina: true</code>, or open Plex on a player on
+              this network.
             </p>
           ) : null}
           {targets?.map((target, index) => (
