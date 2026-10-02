@@ -2095,6 +2095,19 @@
 }
 .iina-volume .slider { flex: 1 1 auto; min-width: 0; }
 
+/* Buttons and pickers, with the volumes in the space beside them. Wraps
+   rather than squeezing: below ~18rem a slider is too short to aim at, so a
+   narrow card puts the volumes back underneath. */
+.iina-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  column-gap: clamp(var(--s-5), 4vw, var(--s-8));
+}
+.iina-buttons { flex: 0 0 auto; min-width: 0; max-width: 100%; }
+.iina-volumes { flex: 1 1 18rem; min-width: 0; max-width: 34rem; }
+.iina-volumes .iina-volume { max-width: none; }
+
 /* Skip Intro / Skip Credits, and the next episode beside it. Big targets:
    they are pressed from the sofa, mid-sentence, at the moment they appear. */
 .iina-skip-row {

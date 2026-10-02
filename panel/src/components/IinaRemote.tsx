@@ -109,102 +109,109 @@ export function IinaRemote({ player }: { player: IinaState }) {
               </div>
             ) : null}
 
-            {active ? (
-            <div class="apple-tv-transport">
-              <RemoteButton icon="rewind" label="Back 10 seconds" onPress={() => send('seek_back')} />
-              <RemoteButton
-                icon={active && !player.paused ? 'pause' : 'play'}
-                label={active && !player.paused ? 'Pause' : 'Play'}
-                primary
-                onPress={() => send('play_pause')}
-              />
-              <RemoteButton icon="forward" label="Forward 30 seconds" onPress={() => send('seek_forward')} />
-              <RemoteButton icon="stop" label="Stop" onPress={() => send('stop')} />
-              <RemoteButton
-                icon={player.fullscreen ? 'collapse' : 'expand'}
-                label={player.fullscreen ? 'Leave full screen' : 'Full screen'}
-                onPress={() => send('fullscreen')}
-              />
-            </div>
-            ) : null}
+            {/* Buttons and pickers on the left, both volumes beside them;
+                the row wraps, so a narrow card stacks them as before. */}
+            <div class="iina-controls">
+              <div class="iina-buttons">
+                {active ? (
+                <div class="apple-tv-transport">
+                  <RemoteButton icon="rewind" label="Back 10 seconds" onPress={() => send('seek_back')} />
+                  <RemoteButton
+                    icon={active && !player.paused ? 'pause' : 'play'}
+                    label={active && !player.paused ? 'Pause' : 'Play'}
+                    primary
+                    onPress={() => send('play_pause')}
+                  />
+                  <RemoteButton icon="forward" label="Forward 30 seconds" onPress={() => send('seek_forward')} />
+                  <RemoteButton icon="stop" label="Stop" onPress={() => send('stop')} />
+                  <RemoteButton
+                    icon={player.fullscreen ? 'collapse' : 'expand'}
+                    label={player.fullscreen ? 'Leave full screen' : 'Full screen'}
+                    onPress={() => send('fullscreen')}
+                  />
+                </div>
+                ) : null}
 
-            {active ? (
-              <div class="iina-pickers">
-                {subs.length ? (
-                  <Pressable class="iina-pick" onPress={() => setPicker('sub')} ariaLabel="Subtitles">
-                    <span class="iina-pick-label">Subtitles</span>
-                    <span class="truncate">{chosen(subs) ?? 'Off'}</span>
-                  </Pressable>
-                ) : null}
-                {audio.length > 1 ? (
-                  <Pressable class="iina-pick" onPress={() => setPicker('audio')} ariaLabel="Audio track">
-                    <span class="iina-pick-label">Audio</span>
-                    <span class="truncate">{chosen(audio) ?? 'Off'}</span>
-                  </Pressable>
-                ) : null}
-                <Pressable class="iina-pick" onPress={() => setPicker('speed')} ariaLabel="Playback speed">
-                  <span class="iina-pick-label">Speed</span>
-                  <span>{speedLabel(player.speed)}</span>
-                </Pressable>
-                {player.screens.length ? (
-                  <Pressable class="iina-pick" onPress={() => setPicker('screen')} ariaLabel="Send to a display">
-                    <span class="iina-pick-label">Display</span>
-                    <span>Move…</span>
-                  </Pressable>
+                {active ? (
+                  <div class="iina-pickers">
+                    {subs.length ? (
+                      <Pressable class="iina-pick" onPress={() => setPicker('sub')} ariaLabel="Subtitles">
+                        <span class="iina-pick-label">Subtitles</span>
+                        <span class="truncate">{chosen(subs) ?? 'Off'}</span>
+                      </Pressable>
+                    ) : null}
+                    {audio.length > 1 ? (
+                      <Pressable class="iina-pick" onPress={() => setPicker('audio')} ariaLabel="Audio track">
+                        <span class="iina-pick-label">Audio</span>
+                        <span class="truncate">{chosen(audio) ?? 'Off'}</span>
+                      </Pressable>
+                    ) : null}
+                    <Pressable class="iina-pick" onPress={() => setPicker('speed')} ariaLabel="Playback speed">
+                      <span class="iina-pick-label">Speed</span>
+                      <span>{speedLabel(player.speed)}</span>
+                    </Pressable>
+                    {player.screens.length ? (
+                      <Pressable class="iina-pick" onPress={() => setPicker('screen')} ariaLabel="Send to a display">
+                        <span class="iina-pick-label">Display</span>
+                        <span>Move…</span>
+                      </Pressable>
+                    ) : null}
+                  </div>
                 ) : null}
               </div>
-            ) : null}
-
-            {active ? (
-            <div class="iina-volume">
-              <Pressable
-                class="apple-tv-key"
-                onPress={() => send('mute')}
-                ariaLabel={player.muted ? 'Unmute IINA' : 'Mute IINA'}
-                ariaPressed={player.muted}
-              >
-                <Icon name={player.muted ? 'mute' : 'volume'} size="1.35rem" />
-              </Pressable>
-              <Slider
-                value={volume}
-                min={0}
-                max={100}
-                step={1}
-                icon={<span class="iina-volume-label">IINA</span>}
-                readout={player.muted ? 'Muted' : `${volume}%`}
-                ariaLabel={`${player.name} IINA volume`}
-                // Each change is a login on the Mac, so only where the finger
-                // stops is sent, not every step on the way.
-                onChange={(value, final) => {
-                  if (final) send('volume', value);
-                }}
-              />
-            </div>
-            ) : null}
-            {player.systemVolume !== null ? (
-              <div class="iina-volume">
-                <Pressable
-                  class="apple-tv-key"
-                  onPress={() => send('system_mute')}
-                  ariaLabel={player.systemMuted ? `Unmute ${player.name}` : `Mute ${player.name}`}
-                  ariaPressed={player.systemMuted}
-                >
-                  <Icon name={player.systemMuted ? 'mute' : 'speaker'} size="1.35rem" />
-                </Pressable>
-                <Slider
-                  value={Math.round(player.systemVolume)}
-                  min={0}
-                  max={100}
-                  step={1}
-                  icon={<span class="iina-volume-label">Mac</span>}
-                  readout={player.systemMuted ? 'Muted' : `${Math.round(player.systemVolume)}%`}
-                  ariaLabel={`${player.name} volume`}
-                  onChange={(value, final) => {
-                    if (final) send('system_volume', value);
-                  }}
-                />
+              <div class="iina-volumes">
+                {active ? (
+                <div class="iina-volume">
+                  <Pressable
+                    class="apple-tv-key"
+                    onPress={() => send('mute')}
+                    ariaLabel={player.muted ? 'Unmute IINA' : 'Mute IINA'}
+                    ariaPressed={player.muted}
+                  >
+                    <Icon name={player.muted ? 'mute' : 'volume'} size="1.35rem" />
+                  </Pressable>
+                  <Slider
+                    value={volume}
+                    min={0}
+                    max={100}
+                    step={1}
+                    icon={<span class="iina-volume-label">IINA</span>}
+                    readout={player.muted ? 'Muted' : `${volume}%`}
+                    ariaLabel={`${player.name} IINA volume`}
+                    // Each change is a login on the Mac, so only where the finger
+                    // stops is sent, not every step on the way.
+                    onChange={(value, final) => {
+                      if (final) send('volume', value);
+                    }}
+                  />
+                </div>
+                ) : null}
+                {player.systemVolume !== null ? (
+                  <div class="iina-volume">
+                    <Pressable
+                      class="apple-tv-key"
+                      onPress={() => send('system_mute')}
+                      ariaLabel={player.systemMuted ? `Unmute ${player.name}` : `Mute ${player.name}`}
+                      ariaPressed={player.systemMuted}
+                    >
+                      <Icon name={player.systemMuted ? 'mute' : 'speaker'} size="1.35rem" />
+                    </Pressable>
+                    <Slider
+                      value={Math.round(player.systemVolume)}
+                      min={0}
+                      max={100}
+                      step={1}
+                      icon={<span class="iina-volume-label">Mac</span>}
+                      readout={player.systemMuted ? 'Muted' : `${Math.round(player.systemVolume)}%`}
+                      ariaLabel={`${player.name} volume`}
+                      onChange={(value, final) => {
+                        if (final) send('system_volume', value);
+                      }}
+                    />
+                  </div>
+                ) : null}
               </div>
-            ) : null}
+            </div>
           </div>
         </div>
         {!active ? <ContinueWatching mac={player.id} /> : null}
