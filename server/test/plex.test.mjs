@@ -371,8 +371,12 @@ describe('IINA watch state reaches Plex', () => {
     assert.equal(listeners.length, 1);
     assert.equal(listeners[0].host, 'mac_studio');
     const { listener } = listeners[0];
-    assert.equal(listener.titleFor(status()), 'A Film');
-    assert.match(listener.artFor(status()), /^\/img\/art\?k=[0-9a-f]{16}$/, 'the poster, proxied, never the server');
+    const about = listener.describe(status());
+    assert.equal(about.title, 'A Film');
+    assert.match(about.art, /^\/img\/art\?k=[0-9a-f]{16}$/, 'the poster, proxied, never the server');
+    // A film with no markers and no next episode has nothing to skip or offer.
+    assert.equal(about.skip, null);
+    assert.equal(listener.describe(status({ position: 5390 })).next, null);
 
     listener.status(status());
     await settle();
@@ -424,8 +428,85 @@ describe('IINA watch state reaches Plex', () => {
     listener.status(status({ position: 400 }));
     await settle();
     assert.deepEqual(seen.reports.map((r) => [r.query.state, r.query.time]), [['playing', '300000'], ['stopped', '300000']]);
-    assert.equal(listener.titleFor(status({ path: '/Users/me/holiday.mov' })), null);
-    assert.equal(listener.artFor(status({ path: '/Users/me/holiday.mov' })), null);
+    assert.equal(listener.describe(status({ path: '/Users/me/holiday.mov' })), null);
+  });
+});
+
+describe('an episode in IINA', () => {
+  const EP = 'http://127.0.0.1/library/parts/902/1700000000/file.mp4?X-Plex-Token=transient-abc';
+  const status = (over = {}) => ({
+    position: 45, duration: 1800, paused: false, volume: 100, muted: false, eof: false, fullscreen: false, speed: 1,
+    path: EP, title: 'file.mp4', ...over,
+  });
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 80));
+  const MAC = { id: 'mac_studio', host: '10.0.0.5', username: 'spencer', name: 'Mac Studio', iina: true, screens: [] };
+
+  async function playPilot() {
+    const listeners = [];
+    const mpv = [];
+    const calls = [];
+    seen.metaQueries.length = 0;
+    await client({ ssh: [MAC], listeners, mpv, calls }).handle({ kind: 'play', id: '50', target: 'mac:mac_studio', resume: true });
+    await settle();
+    return { listener: listeners[0].listener, listeners, mpv, calls };
+  }
+
+  test('markers are asked for, and become Skip Intro and Skip Credits while on screen', async () => {
+    const { listener } = await playPilot();
+    assert.equal(seen.metaQueries[0].includeMarkers, '1');
+    assert.deepEqual(listener.describe(status({ position: 45 })).skip, { kind: 'intro', to: 90 });
+    assert.equal(listener.describe(status({ position: 89.5 })).skip, null, 'nothing left to skip in the last second');
+    assert.equal(listener.describe(status({ position: 550 })).skip, null, 'a commercial marker is not offered');
+    assert.deepEqual(listener.describe(status({ position: 1750 })).skip, { kind: 'credits', to: 1790 });
+  });
+
+  test('the next episode comes from a continuous queue and is offered from the credits', async () => {
+    const { listener } = await playPilot();
+    assert.equal(listener.describe(status({ position: 600 })).next, null);
+    const next = listener.describe(status({ position: 1750 })).next;
+    assert.equal(next.id, '51');
+    assert.equal(next.title, 'S1 E2 · Second');
+    assert.match(next.art, /^\/img\/art\?k=[0-9a-f]{16}$/);
+  });
+
+  test("Plex's subtitle files are added once the file is open, and only those", async () => {
+    const { listener, mpv } = await playPilot();
+    assert.equal(mpv.length, 0, 'not before IINA has the file');
+    listener.status(status());
+    listener.status(status({ position: 50 }));
+    assert.equal(mpv.length, 1);
+    const [cmd, url, flag, title, lang] = mpv[0].args;
+    assert.equal(cmd, 'sub-add');
+    assert.equal(new URL(url).pathname, '/library/streams/77');
+    assert.equal(new URL(url).searchParams.get('X-Plex-Token'), 'transient-abc');
+    assert.deepEqual([flag, title, lang], ['auto', "Bob's English (SRT)", 'eng']);
+  });
+
+  test('IINA closing the file at its end plays the next episode', async () => {
+    const { listener, listeners, calls } = await playPilot();
+    listener.status(status({ position: 1795 }));
+    listener.status(status({ path: '', position: null, duration: null }));
+    await settle();
+    const opened = calls.filter(([what]) => what === 'ssh').map(([, , command]) => command);
+    assert.equal(opened.length, 2);
+    assert.match(decodeURIComponent(opened[1]), /\/library\/parts\/903\//);
+    assert.equal(listeners.length, 2, 'the next episode is followed in turn');
+  });
+
+  test('a file replaced mid-episode does not jump to the next one', async () => {
+    const { listener, calls } = await playPilot();
+    listener.status(status({ position: 700 }));
+    listener.status(status({ path: '/Users/me/holiday.mov', position: 3 }));
+    await settle();
+    assert.equal(calls.filter(([what]) => what === 'ssh').length, 1);
+  });
+
+  test('Play next from the panel goes straight there', async () => {
+    const { listener, calls } = await playPilot();
+    listener.status(status({ position: 300 }));
+    assert.equal(await listener.playNext(), null);
+    const opened = calls.filter(([what]) => what === 'ssh').map(([, , command]) => command);
+    assert.match(decodeURIComponent(opened.at(-1)), /\/library\/parts\/903\//);
   });
 });
 

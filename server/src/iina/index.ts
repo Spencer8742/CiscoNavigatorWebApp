@@ -87,13 +87,10 @@ export interface IinaDescription {
 /** Someone who wants every reading while a stream runs — Plex, for sync. */
 export interface IinaListener {
   status(status: IinaStatus): void;
-  /**
-   * A better name for what is playing than mpv has. A file streamed from
-   * Plex is called `file.mkv` as far as mpv knows; Plex knows the film.
-   */
-  titleFor?(status: IinaStatus): string | null;
-  /** Artwork for it, as an authenticated path on this backend. */
-  artFor?(status: IinaStatus): string | null;
+  /** Null for a reading that is not about the listener's file. */
+  describe?(status: IinaStatus): IinaDescription | null;
+  /** Play whatever comes next. Null on success. */
+  playNext?(): Promise<string | null>;
   /** The stream ended, or another listener took over. Called once. */
   end(): void;
 }
@@ -337,8 +334,10 @@ export class Iina {
     const about = watch.listener?.describe?.(status) ?? null;
     this.#update(mac, {
       active: true,
-      title: watch.listener?.titleFor?.(status) ?? status.title ?? fileName(status.path),
-      art: watch.listener?.artFor?.(status) ?? null,
+      title: about?.title ?? status.title ?? fileName(status.path),
+      art: about?.art ?? null,
+      skip: about?.skip ?? null,
+      next: about?.next ?? null,
       paused: status.paused,
       position: status.position,
       positionAt: Date.now(),

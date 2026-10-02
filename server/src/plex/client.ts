@@ -487,6 +487,13 @@ export class PlexClient {
     const title = meta.grandparentTitle ? `${meta.grandparentTitle} – ${meta.title ?? ''}` : meta.title ?? null;
     // An episode shows its show's poster, as the Plex page does.
     const poster = meta.grandparentThumb ?? meta.thumb ?? meta.parentThumb;
+    const type = kind === 'track' ? 'music' : 'video';
+    const markers = (meta.Marker ?? []).filter(
+      (m): m is { type: 'intro' | 'credits'; startTimeOffset: number; endTimeOffset: number } =>
+        (m.type === 'intro' || m.type === 'credits') &&
+        typeof m.startTimeOffset === 'number' && typeof m.endTimeOffset === 'number' &&
+        m.endTimeOffset > m.startTimeOffset,
+    );
     const as = {
       'X-Plex-Client-Identifier': `${this.#clientId}-iina-${mac.id}`,
       'X-Plex-Product': 'IINA',
@@ -614,10 +621,7 @@ export class PlexClient {
           next: next && ending(status) ? next : null,
         };
       },
-      titleFor: (status) => (mine(status) ? title : null),
-      // Registered on every reading rather than once: the art registry
-      // evicts oldest-first, and a film outlasts a lot of browsing.
-      artFor: (status) => (mine(status) ? this.#art(poster, 'poster') : null),
+      playNext,
       end: finish,
     };
   }
