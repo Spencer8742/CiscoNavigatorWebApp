@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { logger } from '~/lib/log.ts';
 import type { MediaArt } from '~/http/media-art.ts';
-import type { AppleTvConfig } from '@shared/config.ts';
+import type { AppleTvConfig, SshHostConfig } from '@shared/config.ts';
 import type { AppleTvState, PlexItem, PlexKind, PlexRequest, PlexResult, PlexTarget } from '@shared/protocol.ts';
 import { PLEX_PAGE } from '@shared/protocol.ts';
 
@@ -37,6 +37,22 @@ const log = logger('plex');
  *  - the server's `/clients` list, which is what the server heard over GDM
  *  - plex.tv's resource list, which is how current Plex apps announce
  *    themselves, and the only one that sees a player on another VLAN
+ *
+ * ## Playing on a Mac, in IINA
+ *
+ * Remote control is something each Plex app chooses to offer, and Plex has
+ * been withdrawing it. A Mac in `controls.ssh` marked `iina: true` does not
+ * depend on that: the backend logs in over SSH and opens the file itself, as
+ * an `iina://` link handed to `open`. IINA plays the original file straight
+ * from the server — no transcoding, any container mpv reads.
+ *
+ * The command is built here from nothing but the item's part key, which must
+ * look like one, and a title that is percent-encoded; the panel only ever
+ * names an item and a Mac. The link carries a transient token from the
+ * server rather than PLEX_TOKEN, so what lands in IINA's history expires.
+ *
+ * What it gives up is Plex's bookkeeping: IINA does not tell Plex how far it
+ * got, so watched state and resume points are not updated by playing there.
  */
 
 const TIMEOUT_MS = 8_000;
@@ -44,6 +60,10 @@ const PROBE_TIMEOUT_MS = 2_500;
 /** How long an Apple TV gets to open Plex and announce itself as a player. */
 const APPLE_TV_READY_MS = 25_000;
 const POLL_MS = 1_500;
+/** A Plex part key: the original file, as the server serves it. */
+const PART_RE = /^\/library\/parts\/\d{1,12}(\/\d{1,12})?\/file(\.[A-Za-z0-9]{1,8})?$/;
+/** What IINA is handed: one file at a time. */
+const MAC_PLAYABLE = new Set<PlexKind>(['movie', 'episode', 'clip', 'track']);
 /** The Plex Companion port every Plex player listens on. */
 const PLAYER_PORT = 32500;
 const PLEX_TV = 'https://plex.tv';
@@ -73,6 +93,10 @@ export interface PlexDeps {
   /** Ask the bridge to do something to an Apple TV. Null on success. */
   appleTvCommand: (device: string, op: 'power_on') => Promise<string | null>;
   openApp: (device: string, bundleId: string) => Promise<string | null>;
+  /** Hosts in `controls.ssh`, current as of now. Those marked `iina` are Plex targets. */
+  sshHosts?: () => SshHostConfig[];
+  /** Run a command on one of them. Null on success. */
+  runSsh?: (host: string, command: string) => Promise<string | null>;
   /** Overridable for tests: where plex.tv lives. */
   plexTv?: string;
   /** Overridable for tests: the Companion port players listen on. */
@@ -111,6 +135,7 @@ interface PlexMetadata {
   leafCount?: number;
   childCount?: number;
   playQueueItemID?: number;
+  Media?: { Part?: { key?: string }[] }[];
 }
 
 interface PlexDirectory {
@@ -129,6 +154,8 @@ interface MediaContainer {
   machineIdentifier?: string;
   playQueueID?: number;
   playQueueSelectedItemID?: number;
+  /** From `/security/token`. */
+  token?: string;
   Metadata?: PlexMetadata[];
   Directory?: PlexDirectory[];
   Server?: {
@@ -314,6 +341,9 @@ export class PlexClient {
       product: 'Apple TV',
       appleTv: tv.id,
     }));
+    for (const mac of this.#macs()) {
+      out.push({ id: `mac:${mac.id}`, name: mac.name, product: 'IINA on Mac', appleTv: null });
+    }
     const hosts = new Set(appleTvs.map((tv) => tv.host));
     for (const player of await this.#players()) {
       if (hosts.has(player.host)) continue;
@@ -323,6 +353,7 @@ export class PlexClient {
   }
 
   async play(id: string, target: string, resume: boolean): Promise<void> {
+    if (target.startsWith('mac:')) return this.#playOnMac(id, target.slice(4), resume);
     const [meta, player] = await Promise.all([
       this.#metadata(id),
       this.#resolveTarget(target),
@@ -363,6 +394,56 @@ export class PlexClient {
     };
     await this.#command(player, target, params);
     log.info(`Playing "${meta.title ?? id}" on ${player.name}`);
+  }
+
+  /**
+   * Open the item's file in IINA on a Mac, over SSH.
+   *
+   * `caffeinate -u` first, so a Mac with its display asleep shows the film
+   * rather than playing it to a dark screen. `open` exits non-zero when no
+   * app takes `iina://` links, which is the one failure worth naming.
+   */
+  async #playOnMac(id: string, macId: string, resume: boolean): Promise<void> {
+    const mac = this.#macs().find((host) => host.id === macId);
+    if (!mac || !this.#deps.runSsh) throw new Error('That Mac is not set up to play Plex. Mark it iina: true under controls.ssh.');
+    const meta = await this.#metadata(id);
+    const kind = kindOf(meta.type);
+    if (!MAC_PLAYABLE.has(kind)) {
+      const one = kind === 'season' || kind === 'show' ? 'an episode' : kind === 'album' || kind === 'artist' ? 'a track' : 'a single item';
+      throw new Error(`IINA plays one file at a time. Choose ${one}.`);
+    }
+    const part = meta.Media?.[0]?.Part?.[0]?.key;
+    if (!part || !PART_RE.test(part)) throw new Error(`Plex has no playable file for ${meta.title ?? 'that'}`);
+
+    const media = new URL(part, this.#env.url);
+    media.searchParams.set('X-Plex-Token', await this.#transientToken());
+    const start = resume && typeof meta.viewOffset === 'number' ? Math.floor(meta.viewOffset / 1000) : 0;
+    const title = meta.grandparentTitle ? `${meta.grandparentTitle} - ${meta.title ?? ''}` : meta.title ?? '';
+    const problem = await this.#deps.runSsh(mac.id, iinaCommand(media.href, title, start));
+    if (problem) {
+      throw new Error(/exited 1$/.test(problem)
+        ? `${mac.name} could not open IINA. Is it installed, and is someone logged in to the Mac?`
+        : `Could not reach ${mac.name}: ${problem}`);
+    }
+    log.info(`Playing "${meta.title ?? id}" in IINA on ${mac.name}`);
+  }
+
+  /**
+   * A token that stops working on its own, for links that leave this backend
+   * as plain text. Older servers without `/security/token` get the real one.
+   */
+  async #transientToken(): Promise<string> {
+    try {
+      const body = await this.#get('/security/token', { type: 'delegation', scope: 'all' });
+      if (body.token) return body.token;
+    } catch (error) {
+      log.debug(`No transient token from Plex: ${messageOf(error)}`);
+    }
+    return this.#env.token;
+  }
+
+  #macs(): SshHostConfig[] {
+    return (this.#deps.sshHosts?.() ?? []).filter((host) => host.iina);
   }
 
   /**
@@ -653,6 +734,27 @@ function subtitleOf(kind: PlexKind, meta: PlexMetadata): string | null {
 }
 
 /** IPv6 literals need brackets in a URL. */
+/**
+ * The shell command that opens a file in IINA.
+ *
+ * Every value is percent-encoded — including the `!'()*` that
+ * encodeURIComponent leaves alone — so the link is plain URL characters and
+ * a single-quoted argument cannot be broken out of. Checked again anyway,
+ * because this string reaches a shell.
+ */
+export function iinaCommand(media: string, title: string, startSeconds: number): string {
+  const query = [`url=${encodeAll(media)}`];
+  if (startSeconds > 0) query.push(`mpv_start=${Math.floor(startSeconds)}`);
+  if (title) query.push(`mpv_force-media-title=${encodeAll(title)}`);
+  const link = `iina://open?${query.join('&')}`;
+  if (!/^[A-Za-z0-9%._~:/?&=-]+$/.test(link)) throw new Error('Refusing an unsafe link');
+  return `caffeinate -u -t 1; open '${link}'`;
+}
+
+function encodeAll(value: string): string {
+  return encodeURIComponent(value).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
 function hostPart(host: string): string {
   return host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
 }

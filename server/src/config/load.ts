@@ -692,7 +692,13 @@ function sshHostList(v: unknown): SshHostConfig[] {
         );
       }
     }
-    out.push({ id, host, username });
+    out.push({
+      id,
+      host,
+      username,
+      name: str(raw['name'], id, `${path}.name`),
+      iina: bool(raw['iina'], false, `${path}.iina`),
+    });
   });
   return out;
 }

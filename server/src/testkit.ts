@@ -64,7 +64,7 @@ export { WeatherForecasts, normalizeForecast } from '~/ha/weather.ts';
  * short conversation between three parties (the server, plex.tv and a
  * player), and every interesting case is a property of that conversation.
  */
-export { PlexClient } from '~/plex/client.ts';
+export { PlexClient, iinaCommand } from '~/plex/client.ts';
 export { MediaArt } from '~/http/media-art.ts';
 
 /*
