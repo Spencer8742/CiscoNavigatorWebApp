@@ -111,25 +111,15 @@ describe('the status loop', () => {
 
   test('a reading is shown, with a listener describing it', () => {
     const { iina, streams } = rig();
-    const next = { id: '51', title: 'S1 E2 · Next', art: null };
-    iina.watch('mac_studio', {
-      status: () => {},
-      describe: () => ({ title: 'A Film', art: '/img/art?k=abc', skip: { kind: 'intro', to: 90 }, next }),
-      end: () => {},
-    });
-    streams[0].onLine(reply({ fs: 'yes', speed: '1.25' }));
-    streams[0].onLine(TRACKS);
-    streams[0].onLine('{"system":"30,false"}');
+    iina.watch('mac_studio', { status: () => {}, titleFor: () => 'A Film', artFor: () => '/img/art?k=abc', end: () => {} });
+    streams[0].onLine(reply());
     const [state] = iina.snapshot();
     assert.equal(state.active, true);
     assert.equal(state.title, 'A Film');
     assert.equal(state.art, '/img/art?k=abc');
-    assert.deepEqual(state.skip, { kind: 'intro', to: 90 });
-    assert.deepEqual(state.next, next);
-    assert.equal(state.fullscreen, true);
-    assert.equal(state.speed, 1.25);
-    assert.equal(state.tracks.length, 4);
-    assert.equal(state.systemVolume, 30);
+    assert.equal(state.position, 61.5);
+    assert.equal(state.volume, 80);
+    assert.equal(state.paused, false);
   });
 
   test('without a listener the file name stands in for a title', () => {
