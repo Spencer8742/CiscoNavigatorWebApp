@@ -268,15 +268,14 @@ describe('playing on a Mac in IINA', () => {
     assert.equal(media.searchParams.get('X-Plex-Token'), 'transient-abc');
     assert.ok(!command.includes(TOKEN), 'the long-lived token must not reach the Mac');
     assert.equal(query.get('mpv_start'), '120');
-    assert.equal(query.get('mpv_force-media-title'), 'A Film');
   });
 
-  test('start over leaves the start out, and an episode is titled with its show', async () => {
+  test('start over leaves the start out', async () => {
     const calls = [];
     await client({ ssh: [MAC], calls }).handle({ kind: 'play', id: '50', target: 'mac:mac_studio', resume: false });
     const query = new URL(calls[0][2].match(/open '([^']+)'/)[1]).searchParams;
     assert.equal(query.get('mpv_start'), null);
-    assert.equal(query.get('mpv_force-media-title'), "Bob's Show - Pilot");
+    assert.equal(new URL(query.get('url')).pathname, '/library/parts/902/1700000000/file.mp4');
   });
 
   test('a season is refused with what to pick instead', async () => {
@@ -312,8 +311,8 @@ describe('playing on a Mac in IINA', () => {
     );
   });
 
-  test('nothing in a title can leave the quoted argument', () => {
-    const command = iinaCommand("http://pms/library/parts/1/2/file.mkv?X-Plex-Token=t", "It's a '; rm -rf ~; echo (x)! *", 5);
+  test('nothing in the media link can leave the quoted argument', () => {
+    const command = iinaCommand("http://pms/library/parts/1/2/file.mkv?X-Plex-Token=it's'; rm -rf ~; echo (x)! *", 5);
     const quoted = command.slice(command.indexOf("'"));
     assert.match(quoted, /^'[^']*'$/);
     assert.ok(!/[\s;$`\\]/.test(quoted), quoted);
