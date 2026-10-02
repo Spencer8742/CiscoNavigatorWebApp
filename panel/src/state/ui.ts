@@ -203,7 +203,12 @@ export const prefs = signal<PanelPrefs>({ ...DEFAULT_PREFS });
 export const revealed = signal(false);
 
 export const visibleRoutes = computed<readonly Route[]>(() => {
-  const pages = PANEL_PAGES.filter((page) => prefs.value.visiblePages.includes(page));
+  // Plex is a destination only when the backend has a server to browse.
+  // Configured, not reachable: a Plex that is down says so on its page.
+  const plexEnabled = health.value?.plex === true;
+  const pages = PANEL_PAGES.filter(
+    (page) => prefs.value.visiblePages.includes(page) && (page !== 'plex' || plexEnabled),
+  );
   const routes: Route[] =
     prefs.value.showSettings || revealed.value ? [...pages, 'settings'] : [...pages];
 

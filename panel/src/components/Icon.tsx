@@ -100,6 +100,13 @@ const ICONS: Record<string, PathSpec> = {
       'M8 20h8',
     ],
   },
+  /* A chevron in a rounded tile — reads as Plex without copying its mark. */
+  plex: {
+    d: [
+      'M5 3.5h14A1.5 1.5 0 0 1 20.5 5v14a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 19V5A1.5 1.5 0 0 1 5 3.5z',
+      'M9.5 7.5h2.8l3.2 4.5-3.2 4.5H9.5l3.2-4.5z',
+    ],
+  },
   /* Four corners pushing outward — the standard "go full screen" mark. Its
      pair, `collapse`, is the same corners pulled back in, so the two read as
      one control in two states rather than as two different buttons. */

@@ -6,6 +6,7 @@ import { Home } from '~/screens/Home.tsx';
 import { Rooms } from '~/screens/Rooms.tsx';
 import { Controls } from '~/screens/Controls.tsx';
 import { AppleTv } from '~/screens/AppleTv.tsx';
+import { Plex } from '~/screens/Plex.tsx';
 import { Media } from '~/screens/Media.tsx';
 import { TimerSheet } from '~/components/TimerSheet.tsx';
 import { TimerAlerts } from '~/components/TimerAlerts.tsx';
@@ -189,6 +190,8 @@ function Screen() {
       return <Controls />;
     case 'apple-tv':
       return <AppleTv />;
+    case 'plex':
+      return <Plex />;
     case 'media':
       return <Media />;
     case 'photos':

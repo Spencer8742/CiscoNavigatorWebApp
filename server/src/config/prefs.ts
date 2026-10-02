@@ -15,7 +15,7 @@ import {
 } from '@shared/protocol.ts';
 
 const log = logger('prefs');
-const PREFS_SCHEMA = 2;
+const PREFS_SCHEMA = 3;
 
 /**
  * The handful of settings a panel can change by tapping.
@@ -355,11 +355,13 @@ function readScope(
 
   let visiblePages = sanitizeVisiblePages(stored['visiblePages']);
   if (visiblePages && version < PREFS_SCHEMA) {
-    // Apple TV became a first-class page in schema 2. Existing panels
-    // should see it once; later user choices are stored with version 2
-    // and are respected, including deliberately hiding it.
+    // Apple TV became a first-class page in schema 2, and Plex in schema 3.
+    // Existing panels should see each once; later user choices are stored
+    // with the current version and are respected, including deliberately
+    // hiding them.
+    const added = new Set<PanelPage>(version < 2 ? ['apple-tv', 'plex'] : ['plex']);
     visiblePages = PANEL_PAGES.filter(
-      (page) => page === 'apple-tv' || visiblePages!.includes(page),
+      (page) => added.has(page) || visiblePages!.includes(page),
     );
     changed = true;
   }
