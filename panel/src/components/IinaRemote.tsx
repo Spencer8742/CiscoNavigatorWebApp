@@ -7,9 +7,15 @@ import { Progress } from '~/components/Progress.tsx';
 import { OptionRow, Sheet, SheetSection } from '~/components/Sheet.tsx';
 import { Slider } from '~/components/Slider.tsx';
 import { getToken } from '~/net/auth.ts';
-import { iinaCommand } from '~/net/socket.ts';
-import { markActivity } from '~/state/ui.ts';
-import type { IinaCommand, IinaState } from '@shared/protocol.ts';
+import { iinaCommand, plex } from '~/net/socket.ts';
+import { health, markActivity, showToast } from '~/state/ui.ts';
+import type { IinaCommand, IinaState, IinaTrack, PlexItem } from '@shared/protocol.ts';
+
+const SPEEDS = [0.75, 1, 1.25, 1.5, 2];
+/** How many Continue Watching posters the idle card offers. */
+const CONTINUE_MAX = 6;
+
+type Picker = 'sub' | 'audio' | 'speed' | 'screen' | null;
 
 /**
  * IINA on a Mac, as a card on the Apple TV screen.
@@ -38,6 +44,10 @@ export function IinaRemote({ player }: { player: IinaState }) {
   const [artFailed, setArtFailed] = useState(false);
   useEffect(() => setArtFailed(false), [player.art]);
   const art = active && player.art && !artFailed ? player.art : null;
+
+  const subs = player.tracks.filter((track) => track.type === 'sub');
+  const audio = player.tracks.filter((track) => track.type === 'audio');
+  const chosen = (tracks: IinaTrack[]) => tracks.find((track) => track.selected)?.label;
 
   return (
     <section class="apple-tv-card">
