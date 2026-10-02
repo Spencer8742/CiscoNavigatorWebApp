@@ -35,6 +35,7 @@ import { AppleTvBridge } from '~/apple-tv/index.ts';
 import { PrefsStore } from '~/config/prefs.ts';
 import { ImmichClient } from '~/immich/client.ts';
 import { PlexClient } from '~/plex/client.ts';
+import { Iina } from '~/iina/index.ts';
 import { ImmichImages } from '~/immich/images.ts';
 import { Playlist } from '~/immich/playlist.ts';
 import { MUSIC_VERBS } from '@shared/protocol.ts';
@@ -420,6 +421,16 @@ async function main(): Promise<void> {
     (states) => hub?.broadcastAppleTvs(states),
   );
 
+  // IINA on the Macs in controls.ssh marked `iina: true`, over the same SSH
+  // connections their keys use. `controls` is built below; none of this runs
+  // until something is played or pressed.
+  const iina = new Iina({
+    sshHosts: () => config.current.controls.ssh,
+    run: (host, command) => controls.runSsh(host, command),
+    stream: (host, command, onLine, signal) => controls.streamSsh(host, command, onLine, signal),
+    onChange: (players) => hub?.broadcastIina(players),
+  });
+
   const plex = new PlexClient(env.plex, {
     art: mediaArt,
     appleTvs: () => config.current.controls.appleTvs,
@@ -430,6 +441,7 @@ async function main(): Promise<void> {
     // `controls` is built below; this only runs when something is played.
     sshHosts: () => config.current.controls.ssh,
     runSsh: (host, command) => controls.runSsh(host, command),
+    iinaWatch: (host, listener) => iina.watch(host, listener),
   });
 
   hub = new Hub(server, {
@@ -540,6 +552,8 @@ async function main(): Promise<void> {
     onAppleTvSwipe: (device, gesture) => appleTv.swipe(device, gesture),
     onAppleTvApp: (device, app) => appleTv.launchApp(device, app),
     onAppleTvPair: (device, op, pin) => appleTv.pair(device, op, pin),
+    getIina: () => iina.snapshot(),
+    onIina: (mac, op, value) => iina.command(mac, op, value),
     onControl: (button) => controls.press(button),
     onKeyLight: (light, op, value) => controls.keyLight(light, op, value),
     onSource: (item, value) => controls.selectSource(item, value),

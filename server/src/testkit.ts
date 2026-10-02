@@ -65,6 +65,7 @@ export { WeatherForecasts, normalizeForecast } from '~/ha/weather.ts';
  * player), and every interesting case is a property of that conversation.
  */
 export { PlexClient, iinaCommand } from '~/plex/client.ts';
+export { Iina, mpvCommand, parseStatus, SOCKET as IINA_SOCKET } from '~/iina/index.ts';
 export { MediaArt } from '~/http/media-art.ts';
 
 /*

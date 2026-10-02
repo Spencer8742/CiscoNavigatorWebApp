@@ -2,7 +2,7 @@ import { Backoff } from '@shared/backoff.ts';
 import { authHeaders, socketUrl } from '~/net/auth.ts';
 import { applyPatch, applySnapshot } from '~/state/entities.ts';
 import { setPlayers, sources } from '~/state/players.ts';
-import { appleTvs, clearPressed, keyLights, markPressed, roomos, tvs } from '~/state/controls.ts';
+import { appleTvs, clearPressed, iinaPlayers, keyLights, markPressed, roomos, tvs } from '~/state/controls.ts';
 import { setConfig } from '~/config/index.ts';
 import { connectionProblem, health, prefs, ready, showToast, socketState } from '~/state/ui.ts';
 import { diagnose } from '~/net/diagnose.ts';
@@ -201,6 +201,7 @@ function handle(msg: ServerMessage): void {
       tvs.value = msg.tvs;
       roomos.value = msg.roomos ?? [];
       appleTvs.value = msg.appleTvs;
+      iinaPlayers.value = msg.iina ?? [];
       sources.value = msg.sources;
       socketState.value = 'connected';
       ready.value = true;
@@ -240,6 +241,10 @@ function handle(msg: ServerMessage): void {
 
     case 'apple-tvs':
       appleTvs.value = msg.appleTvs;
+      break;
+
+    case 'iina':
+      iinaPlayers.value = msg.players;
       break;
 
     case 'config':
@@ -509,6 +514,10 @@ export function setRoomosVolume(
 
 export function appleTvCommand(appleTv: string, op: import('@shared/protocol.ts').AppleTvCommand): boolean {
   return send({ t: 'apple-tv', id: nextId(), appleTv, op });
+}
+
+export function iinaCommand(mac: string, op: import('@shared/protocol.ts').IinaCommand, value?: number): boolean {
+  return send({ t: 'iina', id: nextId(), mac, op, ...(value === undefined ? {} : { value }) });
 }
 
 export function appleTvSwipe(appleTv: string, gesture: import('@shared/protocol.ts').AppleTvSwipe): boolean {

@@ -382,7 +382,8 @@ saved in Sonos.
 
 Set `PLEX_URL` and `PLEX_TOKEN` and the Apple TV screen gets a **Remote /
 Plex** switch in its header. The Plex view shows Continue Watching, Recently
-Added and your movie, TV and music libraries; tap something, then pick where
+Added and your movie and TV libraries (music is left to the Sonos screens);
+tap something, then pick where
 it should play. A film with a saved position offers *Resume* or *Start over*.
 
 - `PLEX_URL` must be an address the **players** can reach, such as
@@ -408,9 +409,26 @@ it should play. A film with a saved position offers *Resume* or *Start over*.
   Network): without it IINA opens, shows its Open URL window with the Plex
   address in it, and plays nothing. Launched over SSH it may never get to ask,
   so open any LAN URL in IINA by hand once (File › Open URL) and allow it.
-  The link carries a short-lived token from your server, not `PLEX_TOKEN`. IINA does not report back to Plex, so
-  playing there does not update watched state or resume points. One file at
-  a time: pick an episode or track rather than a season or album.
+  The link carries a short-lived token from your server, not `PLEX_TOKEN`.
+  One file at a time: pick an episode rather than a season.
+- **IINA's mpv socket — for watch state and the controls.** Turn on IINA ›
+  Settings › Advanced › *Enable advanced settings*, and under *Additional
+  mpv options* add `input-ipc-server` with the value
+  `/tmp/iina-navigator.sock`. Restart IINA once. With that set:
+  - **Watch state syncs.** The backend reads IINA's position every few
+    seconds over one SSH connection and reports it to your server as a Plex
+    player would: resume points follow what you watched, the film shows
+    under Now Playing on the Plex dashboard as *IINA* on your Mac, and at
+    90% it is marked watched.
+  - **The Apple TV page gets a card for the Mac**, beside the Apple TVs:
+    what is playing and where, a seek bar, back 10 s / play-pause /
+    forward 30 s / stop, mute, and a volume slider. The volume is IINA's,
+    not the Mac's.
+
+  Without the setting, playback still works; Plex is simply not told, and
+  the controls say the socket is not set up. Nothing keeps running on the
+  Mac afterwards: the status loop ends on its own a couple of minutes after
+  IINA stops answering.
 - **Other Plex players** that are running on the LAN (a Shield, a smart TV
   app, Plex HTPC) are listed below the Apple TVs, as found by your server
   and by plex.tv.

@@ -725,6 +725,33 @@ export type AppleTvCommand =
   | 'skip_forward' | 'skip_backward' | 'volume_up' | 'volume_down'
   | 'power_on' | 'power_off' | 'screensaver';
 
+/**
+ * IINA on a Mac in `controls.ssh` marked `iina: true`, as read over its mpv
+ * IPC socket. Shown beside the Apple TVs; `active` is false when nothing is
+ * being watched, and then every other field is stale or null.
+ */
+export interface IinaState {
+  id: string;
+  name: string;
+  active: boolean;
+  /** What IINA says is playing — its media title, or the file name. */
+  title: string | null;
+  paused: boolean;
+  /** Seconds, measured at `positionAt`, like the Apple TV's `elapsed`. */
+  position: number | null;
+  positionAt: number | null;
+  duration: number | null;
+  /** IINA's own player volume, 0–100; not the Mac's. */
+  volume: number | null;
+  muted: boolean;
+  /** Why the last command or status read failed, when one did. */
+  error: string | null;
+}
+
+export type IinaCommand =
+  | 'status' | 'play_pause' | 'seek_back' | 'seek_forward' | 'seek' | 'stop'
+  | 'volume_up' | 'volume_down' | 'volume' | 'mute';
+
 export interface AppleTvSwipe {
   startX: number;
   startY: number;
@@ -843,6 +870,8 @@ export type ServerMessage =
       tvs: TvState[];
       roomos: RoomosState[];
       appleTvs: AppleTvState[];
+      /** IINA on each Mac marked `iina: true`. */
+      iina: IinaState[];
       /** Music services this household has. Empty until they are discovered. */
       sources: MusicSource[];
     }
@@ -876,6 +905,7 @@ export type ServerMessage =
   | { t: 'tvs'; tvs: TvState[] }
   | { t: 'roomos'; devices: RoomosState[] }
   | { t: 'apple-tvs'; appleTvs: AppleTvState[] }
+  | { t: 'iina'; players: IinaState[] }
   /** Config file changed on disk and revalidated. */
   | { t: 'config'; config: DashboardConfig }
   /** Backend link health changed. */
@@ -940,6 +970,8 @@ export type ClientMessage =
   | ({ t: 'apple-tv-swipe'; id: number; appleTv: string } & AppleTvSwipe)
   | { t: 'apple-tv-app'; id: number; appleTv: string; app: string }
   | { t: 'apple-tv-pair'; id: number; appleTv: string; op: 'begin' | 'pin' | 'cancel'; pin?: string }
+  /** Drive IINA on a Mac. `value` is seconds for `seek`, 0–100 for `volume`. */
+  | { t: 'iina'; id: number; mac: string; op: IinaCommand; value?: number }
   /** Ask for the next N slideshow photos. */
   | { t: 'photos'; id: number; count: number }
   /**

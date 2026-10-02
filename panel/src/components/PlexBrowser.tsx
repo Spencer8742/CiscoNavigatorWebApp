@@ -129,7 +129,7 @@ export function PlexBrowser({ preferred }: { preferred: string | null }) {
                     ))}
                   </div>
                 ) : (
-                  <p class="browse-note">This Plex server has no movie, TV or music libraries.</p>
+                  <p class="browse-note">This Plex server has no movie or TV libraries.</p>
                 )}
               </div>
             ) : (
@@ -283,8 +283,7 @@ function PlayOn({ item, preferred, onClose }: { item: PlexItem; preferred: strin
     plex({ kind: 'targets' })
       .then((r) => {
         if (stale || r.kind !== 'targets') return;
-        const preferredId = preferred ? `atv:${preferred}` : null;
-        setTargets([...r.targets].sort((a, b) => Number(b.id === preferredId) - Number(a.id === preferredId)));
+        setTargets([...r.targets].sort((a, b) => Number(b.id === preferred) - Number(a.id === preferred)));
       })
       .catch((err: unknown) => {
         if (!stale) setError(err instanceof Error ? err.message : 'Could not find players');
@@ -360,7 +359,7 @@ function PlayOn({ item, preferred, onClose }: { item: PlexItem; preferred: strin
           {targets?.map((target, index) => (
             <Pressable
               key={target.id}
-              class={index === 0 && preferred && target.appleTv === preferred ? 'play-option is-primary' : 'play-option'}
+              class={index === 0 && preferred && target.id === preferred ? 'play-option is-primary' : 'play-option'}
               onPress={() => play(target)}
               disabled={busy !== null && busy !== target.id}
               ariaLabel={`Play on ${target.name}`}

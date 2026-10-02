@@ -43,7 +43,26 @@ export class SshRunner {
   }
 
   /** Resolves to an error for the panel, or null when the command exited 0. */
-  async run(target: SshTarget, command: string): Promise<string | null> {
+  run(target: SshTarget, command: string): Promise<string | null> {
+    return this.#session(target, command, (client) => exec(client, command));
+  }
+
+  /**
+   * Run a long-lived command and hand back each line it prints.
+   *
+   * For a loop on the far side that reports as it goes — one connection for
+   * as long as it runs, rather than one per question. No timeout: it ends
+   * when the command does, or when `signal` aborts.
+   */
+  stream(target: SshTarget, command: string, onLine: (line: string) => void, signal: AbortSignal): Promise<string | null> {
+    return this.#session(target, command, (client) => execLines(client, command, onLine, signal));
+  }
+
+  async #session(
+    target: SshTarget,
+    command: string,
+    body: (client: Client) => Promise<number>,
+  ): Promise<string | null> {
     if (!target.privateKey && !target.password) {
       return `No SSH credential for ${target.id} — set SSH_KEY_FILE_${target.id.toUpperCase()}`;
     }
@@ -77,7 +96,7 @@ export class SshRunner {
         log.info(`${target.id}: pinned host key ${seen}`);
       }
 
-      const code = await exec(client, command);
+      const code = await body(client);
       if (code !== 0) {
         log.warn(`${target.id}: \`${command}\` exited ${code}`);
         return `${target.id}: command exited ${code}`;
@@ -124,6 +143,43 @@ export class SshRunner {
 
 function fingerprint(key: Buffer): string {
   return 'SHA256:' + createHash('sha256').update(key).digest('base64').replace(/=+$/, '');
+}
+
+function execLines(client: Client, command: string, onLine: (line: string) => void, signal: AbortSignal): Promise<number> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      resolve(0);
+      return;
+    }
+    client.exec(command, (err, stream) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      let pending = '';
+      const stop = (): void => {
+        stream.close();
+      };
+      signal.addEventListener('abort', stop, { once: true });
+      stream.on('data', (chunk: Buffer) => {
+        pending += chunk.toString('utf8');
+        let newline = pending.indexOf('\n');
+        while (newline >= 0) {
+          const line = pending.slice(0, newline).trim();
+          pending = pending.slice(newline + 1);
+          if (line) onLine(line);
+          newline = pending.indexOf('\n');
+        }
+        // A line that never ends is not a report; do not let it grow forever.
+        if (pending.length > 64 * 1024) pending = '';
+      });
+      stream.stderr.on('data', () => {});
+      stream.on('close', (code: number | null) => {
+        signal.removeEventListener('abort', stop);
+        resolve(signal.aborted ? 0 : code ?? 0);
+      });
+    });
+  });
 }
 
 function exec(client: Client, command: string): Promise<number> {
