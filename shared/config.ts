@@ -829,6 +829,17 @@ export interface SshHostConfig {
    * own apps has to cooperate.
    */
   iina: boolean;
+  /**
+   * Displays on this Mac IINA can be sent to: a name for the panel and the
+   * top-left corner of the display in macOS's global coordinates.
+   */
+  screens: SshScreenConfig[];
+}
+
+export interface SshScreenConfig {
+  name: string;
+  x: number;
+  y: number;
 }
 
 /** One launchable app deliberately exposed as a shortcut on the wall panel. */

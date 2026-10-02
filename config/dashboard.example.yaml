@@ -627,12 +627,19 @@ controls:
   # For Plex watch state and the IINA card on the Apple TV page, add the mpv
   # option input-ipc-server = /tmp/iina-navigator.sock in IINA > Settings >
   # Advanced (enable advanced settings first). See docs/DEPLOYMENT.md.
+  #
+  # `screens` lists displays IINA can be sent to from the panel: a name and
+  # the display's top-left corner in macOS coordinates (docs/DEPLOYMENT.md
+  # says how to find them). Needs Accessibility for sshd-keygen-wrapper.
   ssh: []
   #  - id: mac_studio
   #    name: Mac Studio
   #    host: 192.168.1.200
   #    username: spencer
   #    iina: true
+  #    screens:
+  #      - { name: Studio Display, x: 0, y: 0 }
+  #      - { name: LG TV, x: 2560, y: 0 }
   #
   #   - { name: Wake Mac, icon: power, ssh: mac_studio, run: caffeinate -u -t 1 }
 

@@ -442,6 +442,7 @@ async function main(): Promise<void> {
     sshHosts: () => config.current.controls.ssh,
     runSsh: (host, command) => controls.runSsh(host, command),
     iinaWatch: (host, listener) => iina.watch(host, listener),
+    iinaMpv: (host, args) => iina.mpv(host, args),
   });
 
   hub = new Hub(server, {

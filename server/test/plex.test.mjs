@@ -33,7 +33,7 @@ function json(res, body, status = 200) {
 let pms;
 let plexTv;
 let player;
-const seen = { queues: [], commands: [], relayed: [], reports: [] };
+const seen = { queues: [], commands: [], relayed: [], reports: [], metaQueries: [] };
 let pmsUrl;
 let playerPort;
 /** What plex.tv lists. Changed per test. */
@@ -106,11 +106,36 @@ before(async () => {
         assert.equal(url.searchParams.get('type'), 'delegation');
         return json(res, { MediaContainer: { token: 'transient-abc' } });
       case '/library/metadata/50':
+        seen.metaQueries.push(Object.fromEntries(url.searchParams));
         return json(res, { MediaContainer: { Metadata: [{ ratingKey: '50', type: 'episode', title: 'Pilot', viewOffset: 600_000,
-          grandparentTitle: "Bob's Show", Media: [{ Part: [{ key: '/library/parts/902/1700000000/file.mp4' }] }] }] } });
+          grandparentTitle: "Bob's Show",
+          Marker: [
+            { type: 'intro', startTimeOffset: 30_000, endTimeOffset: 90_000 },
+            { type: 'credits', startTimeOffset: 1_700_000, endTimeOffset: 1_790_000 },
+            { type: 'commercial', startTimeOffset: 500_000, endTimeOffset: 600_000 },
+          ],
+          Media: [{ Part: [{ key: '/library/parts/902/1700000000/file.mp4', Stream: [
+            { streamType: 2, key: '/library/streams/70' },
+            { streamType: 3, displayTitle: 'English (embedded)' },
+            { streamType: 3, key: '/library/streams/77', displayTitle: "Bob's English (SRT)", languageCode: 'eng' },
+            { streamType: 3, key: '/elsewhere/78' },
+          ] }] }] }] } });
+      case '/library/metadata/51':
+        return json(res, { MediaContainer: { Metadata: [{ ratingKey: '51', type: 'episode', title: 'Second', grandparentTitle: "Bob's Show",
+          Media: [{ Part: [{ key: '/library/parts/903/1700000000/file.mp4' }] }] }] } });
       case '/playQueues':
         assert.equal(req.method, 'POST');
         seen.queues.push(Object.fromEntries(url.searchParams));
+        // A continuous queue from the pilot runs on into the next episode.
+        if (url.searchParams.get('continuous') === '1' && url.searchParams.get('uri').endsWith('/50')) {
+          return json(res, { MediaContainer: {
+            playQueueID: 78, playQueueSelectedItemID: 1,
+            Metadata: [
+              { ratingKey: '50', playQueueItemID: 1 },
+              { ratingKey: '51', title: 'Second', parentIndex: 1, index: 2, grandparentThumb: '/library/metadata/40/thumb/1', playQueueItemID: 2 },
+            ],
+          } });
+        }
         return json(res, { MediaContainer: {
           playQueueID: 77, playQueueSelectedItemID: 2,
           Metadata: [{ ratingKey: '49', playQueueItemID: 1 }, { ratingKey: url.searchParams.get('uri').split('/').pop(), playQueueItemID: 2 }],
@@ -143,7 +168,7 @@ after(() => {
 
 const MAC = { id: 'mac_studio', host: '10.0.0.5', username: 'spencer', name: 'Mac Studio', iina: true };
 
-function client({ appleTvs = [], power = 'on', calls = [], ssh = [], sshAnswer = null, listeners = [] } = {}) {
+function client({ appleTvs = [], power = 'on', calls = [], ssh = [], sshAnswer = null, listeners = [], mpv = [] } = {}) {
   return new PlexClient({ url: pmsUrl, token: TOKEN, enabled: true }, {
     art: new MediaArt(),
     appleTvs: () => appleTvs,
@@ -153,6 +178,7 @@ function client({ appleTvs = [], power = 'on', calls = [], ssh = [], sshAnswer =
     sshHosts: () => ssh,
     runSsh: async (host, command) => { calls.push(['ssh', host, command]); return sshAnswer; },
     iinaWatch: (host, listener) => listeners.push({ host, listener }),
+    iinaMpv: async (host, args) => { mpv.push({ host, args }); return null; },
     plexTv: `http://127.0.0.1:${plexTv.address().port}`,
     playerPort,
     readyMs: 3_000,
@@ -345,8 +371,12 @@ describe('IINA watch state reaches Plex', () => {
     assert.equal(listeners.length, 1);
     assert.equal(listeners[0].host, 'mac_studio');
     const { listener } = listeners[0];
-    assert.equal(listener.titleFor(status()), 'A Film');
-    assert.match(listener.artFor(status()), /^\/img\/art\?k=[0-9a-f]{16}$/, 'the poster, proxied, never the server');
+    const about = listener.describe(status());
+    assert.equal(about.title, 'A Film');
+    assert.match(about.art, /^\/img\/art\?k=[0-9a-f]{16}$/, 'the poster, proxied, never the server');
+    // A film with no markers and no next episode has nothing to skip or offer.
+    assert.equal(about.skip, null);
+    assert.equal(listener.describe(status({ position: 5390 })).next, null);
 
     listener.status(status());
     await settle();
@@ -398,8 +428,85 @@ describe('IINA watch state reaches Plex', () => {
     listener.status(status({ position: 400 }));
     await settle();
     assert.deepEqual(seen.reports.map((r) => [r.query.state, r.query.time]), [['playing', '300000'], ['stopped', '300000']]);
-    assert.equal(listener.titleFor(status({ path: '/Users/me/holiday.mov' })), null);
-    assert.equal(listener.artFor(status({ path: '/Users/me/holiday.mov' })), null);
+    assert.equal(listener.describe(status({ path: '/Users/me/holiday.mov' })), null);
+  });
+});
+
+describe('an episode in IINA', () => {
+  const EP = 'http://127.0.0.1/library/parts/902/1700000000/file.mp4?X-Plex-Token=transient-abc';
+  const status = (over = {}) => ({
+    position: 45, duration: 1800, paused: false, volume: 100, muted: false, eof: false, fullscreen: false, speed: 1,
+    path: EP, title: 'file.mp4', ...over,
+  });
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 80));
+  const MAC = { id: 'mac_studio', host: '10.0.0.5', username: 'spencer', name: 'Mac Studio', iina: true, screens: [] };
+
+  async function playPilot() {
+    const listeners = [];
+    const mpv = [];
+    const calls = [];
+    seen.metaQueries.length = 0;
+    await client({ ssh: [MAC], listeners, mpv, calls }).handle({ kind: 'play', id: '50', target: 'mac:mac_studio', resume: true });
+    await settle();
+    return { listener: listeners[0].listener, listeners, mpv, calls };
+  }
+
+  test('markers are asked for, and become Skip Intro and Skip Credits while on screen', async () => {
+    const { listener } = await playPilot();
+    assert.equal(seen.metaQueries[0].includeMarkers, '1');
+    assert.deepEqual(listener.describe(status({ position: 45 })).skip, { kind: 'intro', to: 90 });
+    assert.equal(listener.describe(status({ position: 89.5 })).skip, null, 'nothing left to skip in the last second');
+    assert.equal(listener.describe(status({ position: 550 })).skip, null, 'a commercial marker is not offered');
+    assert.deepEqual(listener.describe(status({ position: 1750 })).skip, { kind: 'credits', to: 1790 });
+  });
+
+  test('the next episode comes from a continuous queue and is offered from the credits', async () => {
+    const { listener } = await playPilot();
+    assert.equal(listener.describe(status({ position: 600 })).next, null);
+    const next = listener.describe(status({ position: 1750 })).next;
+    assert.equal(next.id, '51');
+    assert.equal(next.title, 'S1 E2 · Second');
+    assert.match(next.art, /^\/img\/art\?k=[0-9a-f]{16}$/);
+  });
+
+  test("Plex's subtitle files are added once the file is open, and only those", async () => {
+    const { listener, mpv } = await playPilot();
+    assert.equal(mpv.length, 0, 'not before IINA has the file');
+    listener.status(status());
+    listener.status(status({ position: 50 }));
+    assert.equal(mpv.length, 1);
+    const [cmd, url, flag, title, lang] = mpv[0].args;
+    assert.equal(cmd, 'sub-add');
+    assert.equal(new URL(url).pathname, '/library/streams/77');
+    assert.equal(new URL(url).searchParams.get('X-Plex-Token'), 'transient-abc');
+    assert.deepEqual([flag, title, lang], ['auto', "Bob's English (SRT)", 'eng']);
+  });
+
+  test('IINA closing the file at its end plays the next episode', async () => {
+    const { listener, listeners, calls } = await playPilot();
+    listener.status(status({ position: 1795 }));
+    listener.status(status({ path: '', position: null, duration: null }));
+    await settle();
+    const opened = calls.filter(([what]) => what === 'ssh').map(([, , command]) => command);
+    assert.equal(opened.length, 2);
+    assert.match(decodeURIComponent(opened[1]), /\/library\/parts\/903\//);
+    assert.equal(listeners.length, 2, 'the next episode is followed in turn');
+  });
+
+  test('a file replaced mid-episode does not jump to the next one', async () => {
+    const { listener, calls } = await playPilot();
+    listener.status(status({ position: 700 }));
+    listener.status(status({ path: '/Users/me/holiday.mov', position: 3 }));
+    await settle();
+    assert.equal(calls.filter(([what]) => what === 'ssh').length, 1);
+  });
+
+  test('Play next from the panel goes straight there', async () => {
+    const { listener, calls } = await playPilot();
+    listener.status(status({ position: 300 }));
+    assert.equal(await listener.playNext(), null);
+    const opened = calls.filter(([what]) => what === 'ssh').map(([, , command]) => command);
+    assert.match(decodeURIComponent(opened.at(-1)), /\/library\/parts\/903\//);
   });
 });
 
