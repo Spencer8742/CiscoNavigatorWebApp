@@ -620,8 +620,9 @@ controls:
   # `iina: true` also offers the host as a place to play Plex: the Plex tab
   # lists it, and choosing it opens the file in IINA on that Mac (via an
   # iina:// link, over this same login). It needs IINA installed and someone
-  # logged in to the Mac, and the Mac must be able to reach PLEX_URL. `name`
-  # is what the Plex tab calls it.
+  # logged in to the Mac, and the Mac must be able to reach PLEX_URL. On
+  # macOS 15+, allow IINA under Privacy & Security > Local Network, or it
+  # opens and plays nothing. `name` is what the Plex tab calls it.
   ssh: []
   #  - id: mac_studio
   #    name: Mac Studio

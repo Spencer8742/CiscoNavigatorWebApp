@@ -418,8 +418,7 @@ export class PlexClient {
     const media = new URL(part, this.#env.url);
     media.searchParams.set('X-Plex-Token', await this.#transientToken());
     const start = resume && typeof meta.viewOffset === 'number' ? Math.floor(meta.viewOffset / 1000) : 0;
-    const title = meta.grandparentTitle ? `${meta.grandparentTitle} - ${meta.title ?? ''}` : meta.title ?? '';
-    const problem = await this.#deps.runSsh(mac.id, iinaCommand(media.href, title, start));
+    const problem = await this.#deps.runSsh(mac.id, iinaCommand(media.href, start));
     if (problem) {
       throw new Error(/exited 1$/.test(problem)
         ? `${mac.name} could not open IINA. Is it installed, and is someone logged in to the Mac?`
@@ -733,19 +732,20 @@ function subtitleOf(kind: PlexKind, meta: PlexMetadata): string | null {
   return parts.length ? parts.join(' · ') : null;
 }
 
-/** IPv6 literals need brackets in a URL. */
 /**
  * The shell command that opens a file in IINA.
+ *
+ * No title is sent: IINA only accepts the mpv options on its own safe list
+ * from a link, and `force-media-title` is not one of them.
  *
  * Every value is percent-encoded — including the `!'()*` that
  * encodeURIComponent leaves alone — so the link is plain URL characters and
  * a single-quoted argument cannot be broken out of. Checked again anyway,
  * because this string reaches a shell.
  */
-export function iinaCommand(media: string, title: string, startSeconds: number): string {
+export function iinaCommand(media: string, startSeconds: number): string {
   const query = [`url=${encodeAll(media)}`];
   if (startSeconds > 0) query.push(`mpv_start=${Math.floor(startSeconds)}`);
-  if (title) query.push(`mpv_force-media-title=${encodeAll(title)}`);
   const link = `iina://open?${query.join('&')}`;
   if (!/^[A-Za-z0-9%._~:/?&=-]+$/.test(link)) throw new Error('Refusing an unsafe link');
   return `caffeinate -u -t 1; open '${link}'`;
@@ -755,6 +755,7 @@ function encodeAll(value: string): string {
   return encodeURIComponent(value).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
 }
 
+/** IPv6 literals need brackets in a URL. */
 function hostPart(host: string): string {
   return host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
 }

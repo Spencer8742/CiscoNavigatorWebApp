@@ -403,8 +403,12 @@ it should play. A film with a saved position offers *Resume* or *Start over*.
   file in IINA, straight from the server: no transcoding, and no reliance on
   a Plex app offering remote control, which Plex has been removing (the tvOS
   app no longer does). It needs Remote Login on the Mac, IINA installed, and
-  someone logged in at the Mac. The link carries a short-lived token from
-  your server, not `PLEX_TOKEN`. IINA does not report back to Plex, so
+  someone logged in at the Mac. On macOS 15 and later IINA also needs
+  **Local Network** access (System Settings › Privacy & Security › Local
+  Network): without it IINA opens, shows its Open URL window with the Plex
+  address in it, and plays nothing. Launched over SSH it may never get to ask,
+  so open any LAN URL in IINA by hand once (File › Open URL) and allow it.
+  The link carries a short-lived token from your server, not `PLEX_TOKEN`. IINA does not report back to Plex, so
   playing there does not update watched state or resume points. One file at
   a time: pick an episode or track rather than a season or album.
 - **Other Plex players** that are running on the LAN (a Shield, a smart TV
