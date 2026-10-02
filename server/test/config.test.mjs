@@ -12,7 +12,15 @@ test('an SSH host can be offered to Plex as an IINA Mac, and is not by default',
 version: 1
 controls:
   ssh:
-    - { id: mac_studio, host: 192.168.1.200, username: spencer, name: Mac Studio, iina: true }
+    - id: mac_studio
+      host: 192.168.1.200
+      username: spencer
+      name: Mac Studio
+      iina: true
+      screens:
+        - { name: Studio Display, x: 0, y: 0 }
+        - { name: LG TV, x: 2560, y: -200 }
+        - { name: No position }
     - { id: build_box, host: 192.168.1.201, username: ci }
 `, 'utf8');
 
@@ -20,8 +28,12 @@ controls:
   try {
     assert.equal(await config.load(), true);
     assert.deepEqual(config.current.controls.ssh, [
-      { id: 'mac_studio', host: '192.168.1.200', username: 'spencer', name: 'Mac Studio', iina: true },
-      { id: 'build_box', host: '192.168.1.201', username: 'ci', name: 'build_box', iina: false },
+      {
+        id: 'mac_studio', host: '192.168.1.200', username: 'spencer', name: 'Mac Studio', iina: true,
+        // A display without a position cannot be moved to, so it is dropped.
+        screens: [{ name: 'Studio Display', x: 0, y: 0 }, { name: 'LG TV', x: 2560, y: -200 }],
+      },
+      { id: 'build_box', host: '192.168.1.201', username: 'ci', name: 'build_box', iina: false, screens: [] },
     ]);
   } finally {
     config.close();

@@ -749,13 +749,56 @@ export interface IinaState {
   /** IINA's own player volume, 0–100; not the Mac's. */
   volume: number | null;
   muted: boolean;
+  fullscreen: boolean;
+  /** Playback speed, 1 being normal. */
+  speed: number;
+  /** Audio and subtitle tracks in what is playing, with which is selected. */
+  tracks: IinaTrack[];
+  /** The Mac's own output volume, 0–100; null when the output has none (HDMI). */
+  systemVolume: number | null;
+  systemMuted: boolean;
+  /** Displays from `controls.ssh[].screens` IINA can be sent to, by name. */
+  screens: string[];
+  /** An intro or credits Plex marked, while it is on screen. */
+  skip: IinaSkip | null;
+  /** The episode after this one, offered near the end and played after it. */
+  next: IinaNext | null;
   /** Why the last command or status read failed, when one did. */
   error: string | null;
 }
 
+export interface IinaTrack {
+  /** mpv's track id, which `sid` / `aid` select by. */
+  id: number;
+  type: 'audio' | 'sub';
+  label: string;
+  selected: boolean;
+}
+
+export interface IinaSkip {
+  kind: 'intro' | 'credits';
+  /** Where the marker ends, in seconds — what Skip seeks to. */
+  to: number;
+}
+
+export interface IinaNext {
+  /** Plex ratingKey. */
+  id: string;
+  title: string;
+  art: string | null;
+}
+
+/**
+ * `value` carries the number an op needs: seconds for `seek`, 0–100 for the
+ * volumes, a rate for `speed`, a track id for `sid` / `aid` (-1 for none),
+ * an index into `screens` for `screen`.
+ */
 export type IinaCommand =
   | 'status' | 'play_pause' | 'seek_back' | 'seek_forward' | 'seek' | 'stop'
-  | 'volume_up' | 'volume_down' | 'volume' | 'mute';
+  | 'volume_up' | 'volume_down' | 'volume' | 'mute'
+  | 'fullscreen' | 'speed' | 'sid' | 'aid' | 'screen'
+  | 'system_volume' | 'system_mute'
+  | 'skip' | 'next';
 
 export interface AppleTvSwipe {
   startX: number;

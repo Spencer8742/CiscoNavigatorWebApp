@@ -2095,6 +2095,93 @@
 }
 .iina-volume .slider { flex: 1 1 auto; min-width: 0; }
 
+/* Skip Intro / Skip Credits, and the next episode beside it. Big targets:
+   they are pressed from the sofa, mid-sentence, at the moment they appear. */
+.iina-skip-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: var(--s-3);
+  margin-top: var(--s-4);
+}
+.iina-skip {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: var(--touch);
+  padding: 0 var(--s-5);
+  border-radius: var(--r-full);
+  background: var(--accent);
+  color: var(--on-accent, #fff);
+  font-weight: 650;
+}
+.iina-next {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-height: var(--touch);
+  max-width: 24rem;
+  padding: var(--s-2) var(--s-4) var(--s-2) var(--s-2);
+  border-radius: var(--r-lg);
+  border: 1px solid var(--accent-dim);
+  background: var(--accent-soft);
+  color: var(--text);
+  min-width: 0;
+}
+.iina-next .browse-cover { width: 2.6rem; height: 3.9rem; }
+.iina-next-text { display: flex; flex-direction: column; min-width: 0; text-align: left; }
+.iina-next-label { color: var(--accent); font-size: 0.75rem; font-weight: 650; text-transform: uppercase; letter-spacing: 0.06em; }
+
+/* Subtitles, audio, speed and display: what is chosen now, tap to change. */
+.iina-pickers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  margin-top: var(--s-4);
+}
+.iina-pick {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  min-height: var(--touch);
+  max-width: 14rem;
+  padding: var(--s-1) var(--s-4);
+  border-radius: var(--r-lg);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-2);
+  color: var(--text);
+  min-width: 0;
+}
+.iina-pick-label { color: var(--text-dim); font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+.iina-volume-label { color: var(--text-dim); font-size: 0.8rem; font-weight: 600; }
+
+/* Continue Watching on an idle card: posters in a wrapping row. */
+.iina-continue { margin-top: var(--s-5); min-width: 0; }
+.iina-continue-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr));
+  gap: var(--s-3);
+  margin-top: var(--s-3);
+}
+.iina-continue-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  min-width: 0;
+  text-align: left;
+}
+.iina-continue-item .browse-cover {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 2 / 3;
+  border-radius: var(--r-md);
+}
+.iina-continue-title { font-size: 0.875rem; font-weight: 600; }
+.iina-continue-sub { color: var(--text-dim); font-size: 0.78rem; }
+.iina-continue-spinner { position: absolute; top: var(--s-3); right: var(--s-3); }
+
 .apple-tv-switcher {
   flex: 0 0 auto;
   display: flex;

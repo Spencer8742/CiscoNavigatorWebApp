@@ -351,7 +351,7 @@ controls:
       assert.equal(byId('bad_command'), undefined);
       assert.equal(byId('bad_atv'), undefined);
       // The ssh host keeps no password — the config is sent to the panel.
-      assert.deepEqual(config.current.controls.ssh, [{ id: 'mac_studio', host: '127.0.0.1', username: 'me', name: 'mac_studio', iina: false }]);
+      assert.deepEqual(config.current.controls.ssh, [{ id: 'mac_studio', host: '127.0.0.1', username: 'me', name: 'mac_studio', iina: false, screens: [] }]);
       assert.equal(JSON.stringify(config.current).includes('nope'), false);
     } finally {
       controls.stop();

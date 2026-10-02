@@ -33,7 +33,7 @@ function json(res, body, status = 200) {
 let pms;
 let plexTv;
 let player;
-const seen = { queues: [], commands: [], relayed: [], reports: [] };
+const seen = { queues: [], commands: [], relayed: [], reports: [], metaQueries: [] };
 let pmsUrl;
 let playerPort;
 /** What plex.tv lists. Changed per test. */
@@ -106,11 +106,36 @@ before(async () => {
         assert.equal(url.searchParams.get('type'), 'delegation');
         return json(res, { MediaContainer: { token: 'transient-abc' } });
       case '/library/metadata/50':
+        seen.metaQueries.push(Object.fromEntries(url.searchParams));
         return json(res, { MediaContainer: { Metadata: [{ ratingKey: '50', type: 'episode', title: 'Pilot', viewOffset: 600_000,
-          grandparentTitle: "Bob's Show", Media: [{ Part: [{ key: '/library/parts/902/1700000000/file.mp4' }] }] }] } });
+          grandparentTitle: "Bob's Show",
+          Marker: [
+            { type: 'intro', startTimeOffset: 30_000, endTimeOffset: 90_000 },
+            { type: 'credits', startTimeOffset: 1_700_000, endTimeOffset: 1_790_000 },
+            { type: 'commercial', startTimeOffset: 500_000, endTimeOffset: 600_000 },
+          ],
+          Media: [{ Part: [{ key: '/library/parts/902/1700000000/file.mp4', Stream: [
+            { streamType: 2, key: '/library/streams/70' },
+            { streamType: 3, displayTitle: 'English (embedded)' },
+            { streamType: 3, key: '/library/streams/77', displayTitle: "Bob's English (SRT)", languageCode: 'eng' },
+            { streamType: 3, key: '/elsewhere/78' },
+          ] }] }] }] } });
+      case '/library/metadata/51':
+        return json(res, { MediaContainer: { Metadata: [{ ratingKey: '51', type: 'episode', title: 'Second', grandparentTitle: "Bob's Show",
+          Media: [{ Part: [{ key: '/library/parts/903/1700000000/file.mp4' }] }] }] } });
       case '/playQueues':
         assert.equal(req.method, 'POST');
         seen.queues.push(Object.fromEntries(url.searchParams));
+        // A continuous queue from the pilot runs on into the next episode.
+        if (url.searchParams.get('continuous') === '1' && url.searchParams.get('uri').endsWith('/50')) {
+          return json(res, { MediaContainer: {
+            playQueueID: 78, playQueueSelectedItemID: 1,
+            Metadata: [
+              { ratingKey: '50', playQueueItemID: 1 },
+              { ratingKey: '51', title: 'Second', parentIndex: 1, index: 2, grandparentThumb: '/library/metadata/40/thumb/1', playQueueItemID: 2 },
+            ],
+          } });
+        }
         return json(res, { MediaContainer: {
           playQueueID: 77, playQueueSelectedItemID: 2,
           Metadata: [{ ratingKey: '49', playQueueItemID: 1 }, { ratingKey: url.searchParams.get('uri').split('/').pop(), playQueueItemID: 2 }],
@@ -143,7 +168,7 @@ after(() => {
 
 const MAC = { id: 'mac_studio', host: '10.0.0.5', username: 'spencer', name: 'Mac Studio', iina: true };
 
-function client({ appleTvs = [], power = 'on', calls = [], ssh = [], sshAnswer = null, listeners = [] } = {}) {
+function client({ appleTvs = [], power = 'on', calls = [], ssh = [], sshAnswer = null, listeners = [], mpv = [] } = {}) {
   return new PlexClient({ url: pmsUrl, token: TOKEN, enabled: true }, {
     art: new MediaArt(),
     appleTvs: () => appleTvs,
@@ -153,6 +178,7 @@ function client({ appleTvs = [], power = 'on', calls = [], ssh = [], sshAnswer =
     sshHosts: () => ssh,
     runSsh: async (host, command) => { calls.push(['ssh', host, command]); return sshAnswer; },
     iinaWatch: (host, listener) => listeners.push({ host, listener }),
+    iinaMpv: async (host, args) => { mpv.push({ host, args }); return null; },
     plexTv: `http://127.0.0.1:${plexTv.address().port}`,
     playerPort,
     readyMs: 3_000,

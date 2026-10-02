@@ -25,6 +25,7 @@ import type {
   TvConfig,
   RoomosConfig,
   SshHostConfig,
+  SshScreenConfig,
   AppleTvKeyOp,
   RoomosInputRef,
   ControlPage,
@@ -698,7 +699,30 @@ function sshHostList(v: unknown): SshHostConfig[] {
       username,
       name: str(raw['name'], id, `${path}.name`),
       iina: bool(raw['iina'], false, `${path}.iina`),
+      screens: screenList(raw['screens'], `${path}.screens`),
     });
+  });
+  return out;
+}
+
+/** `- { name: TV, x: 2560, y: 0 }` — a display's top-left corner in macOS coordinates. */
+function screenList(v: unknown, path: string): SshScreenConfig[] {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v)) {
+    warn(path, 'list', v);
+    return [];
+  }
+  const out: SshScreenConfig[] = [];
+  v.forEach((item, i) => {
+    const raw = obj(item);
+    const name = str(raw['name'], '', `${path}[${i}].name`);
+    const x = raw['x'];
+    const y = raw['y'];
+    if (!name || typeof x !== 'number' || typeof y !== 'number' || !Number.isInteger(x) || !Number.isInteger(y)) {
+      warn(`${path}[${i}]`, 'a name and whole-number x and y, like { name: TV, x: 2560, y: 0 }', item);
+      return;
+    }
+    out.push({ name, x, y });
   });
   return out;
 }

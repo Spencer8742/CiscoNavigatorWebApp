@@ -421,9 +421,37 @@ it should play. A film with a saved position offers *Resume* or *Start over*.
     under Now Playing on the Plex dashboard as *IINA* on your Mac, and at
     90% it is marked watched.
   - **The Apple TV page gets a card for the Mac**, beside the Apple TVs:
-    what is playing and where, a seek bar, back 10 s / play-pause /
-    forward 30 s / stop, mute, and a volume slider. The volume is IINA's,
-    not the Mac's.
+    the poster and title, a seek bar, back 10 s / play-pause / forward
+    30 s / stop / fullscreen, and two volumes — IINA's own, and the Mac's
+    output (hidden when the output has none, as over HDMI).
+  - **Skip Intro / Skip Credits** appear while Plex's intro and credits
+    markers are on screen (Plex detects them; turn it on under Settings >
+    Library if your server does not).
+  - **Up Next.** For an episode, the next one is offered from the credits
+    (or the last two minutes) and plays on its own when IINA closes the
+    finished file.
+  - **Subtitles, audio and speed** pickers on the card. Subtitles Plex
+    keeps beside the file are added to IINA, which cannot otherwise see
+    them in a stream.
+  - **Continue Watching** posters on the card while nothing plays.
+  - **Display.** IINA ignores mpv's screen options, so to send it to
+    another display the backend moves IINA's window there with System
+    Events and goes fullscreen. List the displays under the Mac in
+    `controls.ssh` with the top-left corner of each in macOS's
+    coordinates:
+
+    ```yaml
+    screens:
+      - { name: Studio Display, x: 0, y: 0 }
+      - { name: LG TV, x: 2560, y: 0 }
+    ```
+
+    To find them, run this on the Mac (in Terminal, not over SSH):
+    `osascript -l JavaScript -e 'ObjC.import("AppKit"); $.NSScreen.screens.js.map(s => { const f = s.frame; return [s.localizedName.js, f.origin.x, $.NSScreen.screens.js[0].frame.size.height - f.origin.y - f.size.height] })'`
+    — each line is a name, x and y. macOS must allow the SSH login to
+    control the window: add `/usr/libexec/sshd-keygen-wrapper` under
+    Privacy & Security > Accessibility (the panel says so if it is
+    missing).
 
   Without the setting, playback still works; Plex is simply not told, and
   the controls say the socket is not set up. Nothing keeps running on the

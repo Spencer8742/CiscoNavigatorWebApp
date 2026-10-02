@@ -3,6 +3,7 @@ import { logger } from '~/lib/log.ts';
 import type { MediaArt } from '~/http/media-art.ts';
 import type { AppleTvConfig, SshHostConfig } from '@shared/config.ts';
 import type { IinaListener, IinaStatus } from '~/iina/index.ts';
+import type { IinaNext } from '@shared/protocol.ts';
 import type { AppleTvState, PlexItem, PlexKind, PlexRequest, PlexResult, PlexTarget } from '@shared/protocol.ts';
 import { PLEX_PAGE } from '@shared/protocol.ts';
 
@@ -74,6 +75,12 @@ const POLL_MS = 1_500;
 const PART_RE = /^\/library\/parts\/\d{1,12}(\/\d{1,12})?\/file(\.[A-Za-z0-9]{1,8})?$/;
 /** What IINA is handed: one file at a time. */
 const MAC_PLAYABLE = new Set<PlexKind>(['movie', 'episode', 'clip', 'track']);
+/** A Plex sidecar stream: a subtitle file kept beside the media. */
+const STREAM_RE = /^\/library\/streams\/\d{1,12}$/;
+/** Without a credits marker, how near the end the next episode is offered. */
+const NEXT_OFFER_S = 120;
+/** A file closed this near its end was watched to the end. */
+const ENDED_WITHIN_S = 15;
 /** How often a position is reported while it plays. Pauses report at once. */
 const REPORT_MS = 15_000;
 /** Plex's own default for "watched". */
@@ -113,6 +120,8 @@ export interface PlexDeps {
   runSsh?: (host: string, command: string) => Promise<string | null>;
   /** Follow IINA on a Mac after something is opened there, for watch state. */
   iinaWatch?: (host: string, listener: IinaListener) => void;
+  /** Send mpv in IINA one command — to add Plex's subtitle files. */
+  iinaMpv?: (host: string, args: (string | number | boolean)[]) => Promise<string | null>;
   /** Overridable for tests: where plex.tv lives. */
   plexTv?: string;
   /** Overridable for tests: the Companion port players listen on. */
@@ -151,7 +160,15 @@ interface PlexMetadata {
   leafCount?: number;
   childCount?: number;
   playQueueItemID?: number;
-  Media?: { Part?: { key?: string }[] }[];
+  Media?: {
+    Part?: {
+      key?: string;
+      /** streamType 3 is subtitles; a `key` means a file beside the media. */
+      Stream?: { streamType?: number; key?: string; displayTitle?: string; title?: string; languageCode?: string }[];
+    }[];
+  }[];
+  /** Intro and credits, when asked for with includeMarkers. Offsets in ms. */
+  Marker?: { type?: string; startTimeOffset?: number; endTimeOffset?: number }[];
 }
 
 interface PlexDirectory {
@@ -423,7 +440,8 @@ export class PlexClient {
   async #playOnMac(id: string, macId: string, resume: boolean): Promise<void> {
     const mac = this.#macs().find((host) => host.id === macId);
     if (!mac || !this.#deps.runSsh) throw new Error('That Mac is not set up to play Plex. Mark it iina: true under controls.ssh.');
-    const meta = await this.#metadata(id);
+    // Markers are the intro and credits Plex found, for Skip.
+    const meta = await this.#metadata(id, { includeMarkers: '1' });
     const kind = kindOf(meta.type);
     if (!MAC_PLAYABLE.has(kind)) {
       const one = kind === 'season' || kind === 'show' ? 'an episode' : kind === 'album' || kind === 'artist' ? 'a track' : 'a single item';
@@ -432,8 +450,9 @@ export class PlexClient {
     const part = meta.Media?.[0]?.Part?.[0]?.key;
     if (!part || !PART_RE.test(part)) throw new Error(`Plex has no playable file for ${meta.title ?? 'that'}`);
 
+    const token = await this.#transientToken();
     const media = new URL(part, this.#env.url);
-    media.searchParams.set('X-Plex-Token', await this.#transientToken());
+    media.searchParams.set('X-Plex-Token', token);
     const start = resume && typeof meta.viewOffset === 'number' ? Math.floor(meta.viewOffset / 1000) : 0;
     const problem = await this.#deps.runSsh(mac.id, iinaCommand(media.href, start));
     if (problem) {
@@ -442,18 +461,28 @@ export class PlexClient {
         : `Could not reach ${mac.name}: ${problem}`);
     }
     log.info(`Playing "${meta.title ?? id}" in IINA on ${mac.name}`);
-    this.#deps.iinaWatch?.(mac.id, this.#iinaSync(id, part, meta, mac, kind === 'track' ? 'music' : 'video'));
+    this.#deps.iinaWatch?.(mac.id, this.#iinaSync(id, part, meta, mac, kind, token));
   }
 
   /**
-   * Report what IINA plays back to Plex, for one item.
+   * Follow what IINA plays, for one item: report it back to Plex, and add
+   * what Plex knows that IINA does not.
    *
    * It is recognised by its part path in what mpv opened, so something else
    * opened in the same IINA afterwards ends this item's reporting rather
    * than being reported as it. Reports are fire-and-forget: a server that
    * misses one hears the position again a few seconds later.
+   *
+   * On top of the reports:
+   *  - Plex's intro and credits markers become a Skip button while each is
+   *    on screen.
+   *  - An episode looks up the one after it (a continuous play queue, the
+   *    way Plex's own apps find it), offers it from the credits — or the
+   *    last two minutes, without markers — and plays it when this one ends.
+   *  - Subtitles Plex keeps beside the file, which IINA cannot see in a
+   *    stream, are added to it once the file is open.
    */
-  #iinaSync(id: string, part: string, meta: PlexMetadata, mac: SshHostConfig, type: 'video' | 'music'): IinaListener {
+  #iinaSync(id: string, part: string, meta: PlexMetadata, mac: SshHostConfig, kind: PlexKind, token: string): IinaListener {
     const marker = part.slice(0, part.lastIndexOf('/') + 1);
     const title = meta.grandparentTitle ? `${meta.grandparentTitle} – ${meta.title ?? ''}` : meta.title ?? null;
     // An episode shows its show's poster, as the Plex page does.
@@ -468,9 +497,17 @@ export class PlexClient {
     let seen = false;
     let done = false;
     let watched = false;
+    let advanced = false;
+    let subtitles = false;
     let last: IinaStatus | null = null;
     let lastState = '';
     let lastSent = 0;
+    let next: IinaNext | null = null;
+    if (kind === 'episode') {
+      this.#nextEpisode(id)
+        .then((found) => { next = found; })
+        .catch((error: unknown) => log.debug(`No next episode for ${id}: ${messageOf(error)}`));
+    }
 
     const timeline = (state: 'playing' | 'paused' | 'stopped', status: IinaStatus): void => {
       if (status.position === null) return;
@@ -491,16 +528,61 @@ export class PlexClient {
       if (seen && last) timeline('stopped', last);
     };
     const mine = (status: IinaStatus): boolean => status.path.includes(marker);
+    const playNext = async (): Promise<string | null> => {
+      if (!next) return 'There is no next episode';
+      advanced = true;
+      try {
+        await this.#playOnMac(next.id, mac.id, true);
+        return null;
+      } catch (error) {
+        return messageOf(error);
+      }
+    };
+    /** The marker on screen now. A second from its end it has nothing left to skip. */
+    const markerAt = (position: number | null): { type: 'intro' | 'credits'; endTimeOffset: number } | null => {
+      if (position === null) return null;
+      const ms = position * 1000;
+      return markers.find((m) => ms >= m.startTimeOffset && ms < m.endTimeOffset - 1000) ?? null;
+    };
+    /** Close enough to the end to offer what comes next. */
+    const ending = (status: IinaStatus): boolean => {
+      if (status.position === null) return false;
+      const credits = markers.find((m) => m.type === 'credits');
+      if (credits) return status.position * 1000 >= credits.startTimeOffset;
+      return Boolean(status.duration && status.position >= status.duration - NEXT_OFFER_S);
+    };
+    const addSubtitles = (): void => {
+      const mpv = this.#deps.iinaMpv;
+      if (!mpv) return;
+      for (const stream of meta.Media?.[0]?.Part?.[0]?.Stream ?? []) {
+        if (stream.streamType !== 3 || typeof stream.key !== 'string' || !STREAM_RE.test(stream.key)) continue;
+        const url = new URL(stream.key, this.#env.url);
+        url.searchParams.set('X-Plex-Token', token);
+        const name = stream.displayTitle ?? stream.title ?? 'Plex subtitles';
+        void mpv(mac.id, ['sub-add', url.href, 'auto', name, stream.languageCode ?? '']).then((problem) => {
+          if (problem) log.debug(`Could not add Plex subtitles "${name}": ${problem}`);
+        });
+      }
+    };
 
     return {
       status: (status) => {
         if (done) return;
         if (!mine(status)) {
+          // IINA closes the file at its end: if that is where it was, this
+          // was watched to the end rather than replaced.
+          const ended = seen && last?.position !== null && last?.duration
+            ? (last.position ?? 0) >= last.duration - ENDED_WITHIN_S : false;
           if (seen) finish();
+          if (ended && next && !advanced) void playNext();
           return;
         }
         seen = true;
         last = status;
+        if (!subtitles) {
+          subtitles = true;
+          addSubtitles();
+        }
         const state = status.paused ? 'paused' : 'playing';
         const now = Date.now();
         if (state !== lastState || now - lastSent >= REPORT_MS) {
@@ -513,6 +595,24 @@ export class PlexClient {
           void this.#report('/:/scrobble', { key: id, identifier: 'com.plexapp.plugins.library' }, as);
           log.info(`Marked "${meta.title ?? id}" watched in Plex (IINA on ${mac.name})`);
         }
+        // IINA set to keep the last frame holds at the end instead of
+        // closing the file; that is an end too.
+        if (status.eof && next && !advanced) {
+          finish();
+          void playNext();
+        }
+      },
+      describe: (status) => {
+        if (!mine(status)) return null;
+        const on = markerAt(status.position);
+        return {
+          title,
+          // Registered on every reading rather than once: the art registry
+          // evicts oldest-first, and a film outlasts a lot of browsing.
+          art: this.#art(poster, 'poster'),
+          skip: on ? { kind: on.type, to: on.endTimeOffset / 1000 } : null,
+          next: next && ending(status) ? next : null,
+        };
       },
       titleFor: (status) => (mine(status) ? title : null),
       // Registered on every reading rather than once: the art registry
@@ -520,6 +620,26 @@ export class PlexClient {
       artFor: (status) => (mine(status) ? this.#art(poster, 'poster') : null),
       end: finish,
     };
+  }
+
+  /** The episode after this one, as Plex's own continuous play queue has it. */
+  async #nextEpisode(id: string): Promise<IinaNext | null> {
+    await this.#identity();
+    const queue = await this.#post('/playQueues', {
+      type: 'video',
+      uri: `server://${this.#machineId}/com.plexapp.plugins.library/library/metadata/${id}`,
+      shuffle: '0',
+      repeat: '0',
+      continuous: '1',
+    });
+    const items = queue.Metadata ?? [];
+    const at = items.findIndex((item) => item.playQueueItemID === queue.playQueueSelectedItemID);
+    const after = items[(at >= 0 ? at : items.findIndex((item) => item.ratingKey === id)) + 1];
+    if (!after || typeof after.ratingKey !== 'string' || !ID_RE.test(after.ratingKey) || after.ratingKey === id) return null;
+    const label = typeof after.parentIndex === 'number' && typeof after.index === 'number'
+      ? `S${after.parentIndex} E${after.index} · ${after.title ?? ''}`
+      : after.title ?? 'Next episode';
+    return { id: after.ratingKey, title: label, art: this.#art(after.grandparentThumb ?? after.thumb, 'poster') };
   }
 
   /** A report to the server whose answer does not matter beyond its status. */
@@ -739,8 +859,8 @@ export class PlexClient {
     this.#serverName = body.friendlyName || 'Plex';
   }
 
-  async #metadata(id: string): Promise<PlexMetadata> {
-    const body = await this.#get(`/library/metadata/${id}`);
+  async #metadata(id: string, query: Record<string, string> = {}): Promise<PlexMetadata> {
+    const body = await this.#get(`/library/metadata/${id}`, query);
     const meta = body.Metadata?.[0];
     if (!meta) throw new Error('That is no longer in Plex');
     return meta;
