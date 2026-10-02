@@ -10,6 +10,8 @@ import type {
   AppleTvCommand,
   AppleTvSwipe,
   AppleTvState,
+  IinaCommand,
+  IinaState,
   AssistResult,
   BrowseRequest,
   BrowseResult,
@@ -92,6 +94,8 @@ export interface HubDeps {
   onAppleTvSwipe?: (device: string, gesture: AppleTvSwipe) => Promise<string | null>;
   onAppleTvApp?: (device: string, app: string) => Promise<string | null>;
   onAppleTvPair?: (device: string, op: 'begin' | 'pin' | 'cancel', pin?: string) => Promise<string | null>;
+  getIina: () => IinaState[];
+  onIina?: (mac: string, op: IinaCommand, value?: number) => Promise<string | null>;
   /** Music services the household has, sent in `hello`. */
   getSources: () => MusicSource[];
   /**
@@ -235,6 +239,7 @@ export class Hub {
       tvs: this.#deps.getTvs(),
       roomos: this.#deps.getRoomos(),
       appleTvs: this.#deps.getAppleTvs(),
+      iina: this.#deps.getIina(),
       sources: this.#deps.getSources(),
     });
   }
@@ -306,6 +311,13 @@ export class Hub {
         if (!this.#deps.onAppleTv) return;
         const problem = await this.#deps.onAppleTv(msg.appleTv, msg.op);
         if (problem) this.#send(panel, { t: 'error', ref: msg.id, code: 'apple_tv_failed', message: problem });
+        break;
+      }
+
+      case 'iina': {
+        if (!this.#deps.onIina) return;
+        const problem = await this.#deps.onIina(msg.mac, msg.op, msg.value);
+        if (problem) this.#send(panel, { t: 'error', ref: msg.id, code: 'iina_failed', message: problem });
         break;
       }
 
@@ -544,6 +556,10 @@ export class Hub {
 
   broadcastAppleTvs(appleTvs: AppleTvState[]): void {
     this.broadcast({ t: 'apple-tvs', appleTvs });
+  }
+
+  broadcastIina(players: IinaState[]): void {
+    this.broadcast({ t: 'iina', players });
   }
 
   #send(panel: Panel, msg: ServerMessage): void {

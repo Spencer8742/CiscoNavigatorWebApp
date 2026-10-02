@@ -296,7 +296,7 @@ function Pairing({ tv, pin, setPin }: {
   );
 }
 
-function RemoteButton({ icon, label, onPress, primary = false, class: cls = '' }: {
+export function RemoteButton({ icon, label, onPress, primary = false, class: cls = '' }: {
   icon: string;
   label: string;
   onPress: () => void;

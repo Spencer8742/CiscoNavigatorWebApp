@@ -2078,6 +2078,21 @@
 .apple-tv-pair button { min-height: var(--touch-min); padding: 0 var(--s-4); border-radius: var(--r-full); background: var(--surface-3); }
 .apple-tv-error { margin: var(--s-3) 0 0; color: var(--danger); font-size: 0.82rem; }
 
+/*
+ * IINA has no artwork to show and no remote to unfold, so its card is the
+ * now-playing column with a small square, and a volume row under the keys.
+ */
+.apple-tv-content.iina-content { grid-template-columns: minmax(0, 1fr); min-height: 0; }
+.apple-tv-content.iina-content .apple-tv-media { grid-template-columns: minmax(7rem, 12rem) minmax(0, 1fr); }
+.iina-volume {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin-top: var(--s-4);
+  max-width: 28rem;
+}
+.iina-volume .slider { flex: 1 1 auto; min-width: 0; }
+
 .apple-tv-switcher {
   flex: 0 0 auto;
   display: flex;

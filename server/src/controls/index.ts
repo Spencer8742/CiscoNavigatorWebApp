@@ -118,6 +118,19 @@ export class Controls {
     return this.#ssh.run({ ...cfg, ...credential }, command);
   }
 
+  /** `runSsh`, for a command that keeps reporting: see `SshRunner.stream`. */
+  async streamSsh(
+    hostId: string,
+    command: string,
+    onLine: (line: string) => void,
+    signal: AbortSignal,
+  ): Promise<string | null> {
+    const cfg = this.#deps.getConfig().controls.ssh.find((h) => h.id === hostId);
+    if (!cfg) return 'Unknown host';
+    const credential = await this.#deps.sshCredential(cfg.id);
+    return this.#ssh.stream({ ...cfg, ...credential }, command, onLine, signal);
+  }
+
   /* ── Configuration ─────────────────────────────────────────────────────*/
 
   /**

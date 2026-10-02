@@ -39,6 +39,20 @@ async function startServer(key) {
         session.on('exec', (acceptExec, _reject, info) => {
           const stream = acceptExec();
           ran.push(info.command);
+          if (info.command === 'lines') {
+            // One line split across two writes, then two more in one.
+            stream.write('one\ntw');
+            setTimeout(() => {
+              stream.write('o\nthree\n');
+              stream.exit(0);
+              stream.end();
+            }, 20);
+            return;
+          }
+          if (info.command === 'forever') {
+            stream.write('tick\n');
+            return;
+          }
           stream.exit(info.command === 'false' ? 1 : 0);
           stream.end();
         });
@@ -115,4 +129,24 @@ test('no credential at all names the variable to set', async () => {
   const runner = new SshRunner(join(dir, 'known-none.json'));
   const result = await runner.run({ id: 'mac_studio', host: '127.0.0.1', username: 'me' }, 'true');
   assert.match(result, /SSH_KEY_FILE_MAC_STUDIO/);
+});
+
+test('a stream hands back whole lines, however they arrive', async () => {
+  const runner = new SshRunner(join(dir, 'known-stream.json'));
+  const lines = [];
+  const result = await runner.stream(target(), 'lines', (line) => lines.push(line), new AbortController().signal);
+  assert.equal(result, null);
+  assert.deepEqual(lines, ['one', 'two', 'three']);
+});
+
+test('a stream that never ends stops when it is aborted', async () => {
+  const runner = new SshRunner(join(dir, 'known-forever.json'));
+  const abort = new AbortController();
+  const lines = [];
+  const done = runner.stream(target(), 'forever', (line) => {
+    lines.push(line);
+    abort.abort();
+  }, abort.signal);
+  assert.equal(await done, null);
+  assert.deepEqual(lines, ['tick']);
 });

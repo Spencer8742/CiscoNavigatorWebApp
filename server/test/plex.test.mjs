@@ -33,7 +33,7 @@ function json(res, body, status = 200) {
 let pms;
 let plexTv;
 let player;
-const seen = { queues: [], commands: [], relayed: [] };
+const seen = { queues: [], commands: [], relayed: [], reports: [] };
 let pmsUrl;
 let playerPort;
 /** What plex.tv lists. Changed per test. */
@@ -69,6 +69,7 @@ before(async () => {
           { key: '1', title: 'Films', type: 'movie' },
           { key: '2', title: 'TV', type: 'show' },
           { key: '3', title: 'Holiday Photos', type: 'photo' },
+          { key: '4', title: 'Music', type: 'artist' },
         ] } });
       case '/library/onDeck':
         return json(res, { MediaContainer: { Metadata: [
@@ -76,7 +77,18 @@ before(async () => {
             duration: 1_800_000, viewOffset: 600_000, grandparentThumb: '/library/metadata/40/thumb/1' },
         ] } });
       case '/library/recentlyAdded':
-        return json(res, { MediaContainer: { Metadata: [] } });
+        // Only music was added lately, and music is not offered.
+        return json(res, { MediaContainer: { Metadata: [{ ratingKey: '70', type: 'album', title: 'An Album' }] } });
+      case '/:/timeline':
+      case '/:/scrobble':
+        seen.reports.push({
+          path: url.pathname,
+          query: Object.fromEntries(url.searchParams),
+          client: req.headers['x-plex-client-identifier'],
+          device: req.headers['x-plex-device-name'],
+        });
+        res.writeHead(200);
+        return res.end();
       case '/library/sections/1/all':
         assert.equal(url.searchParams.get('X-Plex-Container-Start'), '0');
         return json(res, { MediaContainer: { totalSize: 61, Metadata: [
@@ -131,7 +143,7 @@ after(() => {
 
 const MAC = { id: 'mac_studio', host: '10.0.0.5', username: 'spencer', name: 'Mac Studio', iina: true };
 
-function client({ appleTvs = [], power = 'on', calls = [], ssh = [], sshAnswer = null } = {}) {
+function client({ appleTvs = [], power = 'on', calls = [], ssh = [], sshAnswer = null, listeners = [] } = {}) {
   return new PlexClient({ url: pmsUrl, token: TOKEN, enabled: true }, {
     art: new MediaArt(),
     appleTvs: () => appleTvs,
@@ -140,6 +152,7 @@ function client({ appleTvs = [], power = 'on', calls = [], ssh = [], sshAnswer =
     openApp: async (device, bundle) => { calls.push(['open', device, bundle]); return null; },
     sshHosts: () => ssh,
     runSsh: async (host, command) => { calls.push(['ssh', host, command]); return sshAnswer; },
+    iinaWatch: (host, listener) => listeners.push({ host, listener }),
     plexTv: `http://127.0.0.1:${plexTv.address().port}`,
     playerPort,
     readyMs: 3_000,
@@ -157,7 +170,8 @@ describe('browsing', () => {
     assert.equal(deck.subtitle, 'Some Show · S1 E1');
     assert.equal(deck.resume, 600);
     assert.match(deck.art, /^\/img\/art\?k=[0-9a-f]{16}$/);
-    // Photos cannot be played on a TV from here, so the library is not offered.
+    // Photos cannot be played on a TV from here, and music is not wanted on
+    // this page, so neither library is offered — nor a recently added album.
     assert.deepEqual(result.sections[1].items.map((i) => i.title), ['Films', 'TV']);
     assert.ok(!JSON.stringify(result).includes(TOKEN), 'the Plex token must never reach the panel');
   });
@@ -318,3 +332,72 @@ describe('playing on a Mac in IINA', () => {
     assert.ok(!/[\s;$`\\]/.test(quoted), quoted);
   });
 });
+
+describe('IINA watch state reaches Plex', () => {
+  const PATH = `${'http://127.0.0.1'}/library/parts/901/1700000000/file.mkv?X-Plex-Token=transient-abc`;
+  const status = (over = {}) => ({ position: 120, duration: 5400, paused: false, volume: 100, muted: false, path: PATH, title: 'file.mkv', ...over });
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 50));
+
+  test('the Mac is followed after playing, and its position is reported as a timeline', async () => {
+    seen.reports.length = 0;
+    const listeners = [];
+    await client({ ssh: [MAC], listeners }).handle({ kind: 'play', id: '10', target: 'mac:mac_studio', resume: true });
+    assert.equal(listeners.length, 1);
+    assert.equal(listeners[0].host, 'mac_studio');
+    const { listener } = listeners[0];
+    assert.equal(listener.titleFor(status()), 'A Film');
+
+    listener.status(status());
+    await settle();
+    assert.equal(seen.reports.length, 1);
+    const [report] = seen.reports;
+    assert.equal(report.path, '/:/timeline');
+    assert.equal(report.query.ratingKey, '10');
+    assert.equal(report.query.key, '/library/metadata/10');
+    assert.equal(report.query.state, 'playing');
+    assert.equal(report.query.time, '120000');
+    assert.equal(report.query.duration, '5400000');
+    assert.match(report.client, /-iina-mac_studio$/);
+    assert.equal(report.device, 'Mac Studio');
+
+    // The same state again within the interval is not sent again; a pause is.
+    listener.status(status({ position: 125 }));
+    listener.status(status({ position: 126, paused: true }));
+    await settle();
+    assert.deepEqual(seen.reports.map((r) => r.query.state), ['playing', 'paused']);
+  });
+
+  test('90% watched is scrobbled once, and stopping reports where it stopped', async () => {
+    seen.reports.length = 0;
+    const listeners = [];
+    await client({ ssh: [MAC], listeners }).handle({ kind: 'play', id: '10', target: 'mac:mac_studio', resume: true });
+    const { listener } = listeners[0];
+    listener.status(status({ position: 4900 }));
+    listener.status(status({ position: 4905 }));
+    listener.end();
+    listener.end();
+    await settle();
+    const scrobbles = seen.reports.filter((r) => r.path === '/:/scrobble');
+    assert.equal(scrobbles.length, 1);
+    assert.equal(scrobbles[0].query.key, '10');
+    const timelines = seen.reports.filter((r) => r.path === '/:/timeline');
+    assert.deepEqual(timelines.map((r) => r.query.state), ['playing', 'stopped']);
+    assert.equal(timelines.at(-1).query.time, '4905000');
+  });
+
+  test('something else opened in IINA ends the report rather than being reported', async () => {
+    seen.reports.length = 0;
+    const listeners = [];
+    await client({ ssh: [MAC], listeners }).handle({ kind: 'play', id: '10', target: 'mac:mac_studio', resume: true });
+    const { listener } = listeners[0];
+    // Before the file is open, IINA may still show the last one: ignored.
+    listener.status(status({ path: 'http://127.0.0.1/library/parts/5/1/file.mp4' }));
+    listener.status(status({ position: 300 }));
+    listener.status(status({ position: 9999, path: '/Users/me/holiday.mov' }));
+    listener.status(status({ position: 400 }));
+    await settle();
+    assert.deepEqual(seen.reports.map((r) => [r.query.state, r.query.time]), [['playing', '300000'], ['stopped', '300000']]);
+    assert.equal(listener.titleFor(status({ path: '/Users/me/holiday.mov' })), null);
+  });
+});
+

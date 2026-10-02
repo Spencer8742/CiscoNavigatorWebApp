@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { logger } from '~/lib/log.ts';
 import type { MediaArt } from '~/http/media-art.ts';
 import type { AppleTvConfig, SshHostConfig } from '@shared/config.ts';
+import type { IinaListener, IinaStatus } from '~/iina/index.ts';
 import type { AppleTvState, PlexItem, PlexKind, PlexRequest, PlexResult, PlexTarget } from '@shared/protocol.ts';
 import { PLEX_PAGE } from '@shared/protocol.ts';
 
@@ -51,8 +52,17 @@ const log = logger('plex');
  * names an item and a Mac. The link carries a transient token from the
  * server rather than PLEX_TOKEN, so what lands in IINA's history expires.
  *
- * What it gives up is Plex's bookkeeping: IINA does not tell Plex how far it
- * got, so watched state and resume points are not updated by playing there.
+ * IINA does not tell Plex how far it got, so the backend does. After opening
+ * the file it follows IINA's mpv socket (see `~/iina`) and reports the
+ * position to the server's `/:/timeline` as any Plex player would — so resume
+ * points move and the item shows under Now Playing — and scrobbles it as
+ * watched once 90% has been seen, Plex's own threshold. That needs IINA's
+ * `input-ipc-server` set; without it playback still works and Plex simply is
+ * not told.
+ *
+ * ## Music
+ *
+ * Not offered. The page is for watching; music lives on the Sonos screens.
  */
 
 const TIMEOUT_MS = 8_000;
@@ -64,6 +74,10 @@ const POLL_MS = 1_500;
 const PART_RE = /^\/library\/parts\/\d{1,12}(\/\d{1,12})?\/file(\.[A-Za-z0-9]{1,8})?$/;
 /** What IINA is handed: one file at a time. */
 const MAC_PLAYABLE = new Set<PlexKind>(['movie', 'episode', 'clip', 'track']);
+/** How often a position is reported while it plays. Pauses report at once. */
+const REPORT_MS = 15_000;
+/** Plex's own default for "watched". */
+const WATCHED_AT = 0.9;
 /** The Plex Companion port every Plex player listens on. */
 const PLAYER_PORT = 32500;
 const PLEX_TV = 'https://plex.tv';
@@ -73,7 +87,7 @@ const PLEX_BUNDLE = 'com.plexapp.plex';
 const ID_RE = /^\d{1,12}$/;
 const MACHINE_RE = /^[A-Za-z0-9_.:-]{1,128}$/;
 
-const LIBRARY_TYPES = new Set(['movie', 'show', 'artist']);
+const LIBRARY_TYPES = new Set(['movie', 'show']);
 const PLAYABLE = new Set<PlexKind>(['movie', 'episode', 'clip', 'track', 'season', 'album']);
 const BROWSABLE = new Set<PlexKind>(['library', 'show', 'season', 'artist', 'album', 'folder']);
 const AUDIO = new Set<PlexKind>(['artist', 'album', 'track']);
@@ -97,6 +111,8 @@ export interface PlexDeps {
   sshHosts?: () => SshHostConfig[];
   /** Run a command on one of them. Null on success. */
   runSsh?: (host: string, command: string) => Promise<string | null>;
+  /** Follow IINA on a Mac after something is opened there, for watch state. */
+  iinaWatch?: (host: string, listener: IinaListener) => void;
   /** Overridable for tests: where plex.tv lives. */
   plexTv?: string;
   /** Overridable for tests: the Companion port players listen on. */
@@ -236,9 +252,10 @@ export class PlexClient {
     if (identity.status === 'rejected') log.debug('Plex identity failed:', identity.reason);
 
     const out: { title: string; items: PlexItem[] }[] = [];
-    const deck = onDeck.status === 'fulfilled' ? this.#items(onDeck.value.Metadata) : [];
+    const video = (item: PlexItem): boolean => !AUDIO.has(item.kind);
+    const deck = onDeck.status === 'fulfilled' ? this.#items(onDeck.value.Metadata).filter(video) : [];
     if (deck.length) out.push({ title: 'Continue Watching', items: deck });
-    const added = recent.status === 'fulfilled' ? this.#items(recent.value.Metadata) : [];
+    const added = recent.status === 'fulfilled' ? this.#items(recent.value.Metadata).filter(video) : [];
     if (added.length) out.push({ title: 'Recently Added', items: added });
     const libraries = (sections.value.Directory ?? [])
       .filter((dir) => typeof dir.key === 'string' && ID_RE.test(dir.key) && LIBRARY_TYPES.has(dir.type ?? ''))
@@ -259,7 +276,7 @@ export class PlexClient {
   }
 
   #library(dir: PlexDirectory): PlexItem {
-    const label = dir.type === 'movie' ? 'Movies' : dir.type === 'show' ? 'TV Shows' : 'Music';
+    const label = dir.type === 'movie' ? 'Movies' : 'TV Shows';
     return {
       id: dir.key as string,
       kind: 'library',
@@ -425,6 +442,91 @@ export class PlexClient {
         : `Could not reach ${mac.name}: ${problem}`);
     }
     log.info(`Playing "${meta.title ?? id}" in IINA on ${mac.name}`);
+    this.#deps.iinaWatch?.(mac.id, this.#iinaSync(id, part, meta, mac, kind === 'track' ? 'music' : 'video'));
+  }
+
+  /**
+   * Report what IINA plays back to Plex, for one item.
+   *
+   * It is recognised by its part path in what mpv opened, so something else
+   * opened in the same IINA afterwards ends this item's reporting rather
+   * than being reported as it. Reports are fire-and-forget: a server that
+   * misses one hears the position again a few seconds later.
+   */
+  #iinaSync(id: string, part: string, meta: PlexMetadata, mac: SshHostConfig, type: 'video' | 'music'): IinaListener {
+    const marker = part.slice(0, part.lastIndexOf('/') + 1);
+    const title = meta.grandparentTitle ? `${meta.grandparentTitle} – ${meta.title ?? ''}` : meta.title ?? null;
+    const as = {
+      'X-Plex-Client-Identifier': `${this.#clientId}-iina-${mac.id}`,
+      'X-Plex-Product': 'IINA',
+      'X-Plex-Device-Name': mac.name,
+      'X-Plex-Platform': 'macOS',
+      'X-Plex-Provides': 'player',
+    };
+    let seen = false;
+    let done = false;
+    let watched = false;
+    let last: IinaStatus | null = null;
+    let lastState = '';
+    let lastSent = 0;
+
+    const timeline = (state: 'playing' | 'paused' | 'stopped', status: IinaStatus): void => {
+      if (status.position === null) return;
+      const query: Record<string, string> = {
+        ratingKey: id,
+        key: `/library/metadata/${id}`,
+        identifier: 'com.plexapp.plugins.library',
+        type,
+        state,
+        time: String(Math.round(status.position * 1000)),
+      };
+      if (status.duration) query['duration'] = String(Math.round(status.duration * 1000));
+      void this.#report('/:/timeline', query, as);
+    };
+    const finish = (): void => {
+      if (done) return;
+      done = true;
+      if (seen && last) timeline('stopped', last);
+    };
+    const mine = (status: IinaStatus): boolean => status.path.includes(marker);
+
+    return {
+      status: (status) => {
+        if (done) return;
+        if (!mine(status)) {
+          if (seen) finish();
+          return;
+        }
+        seen = true;
+        last = status;
+        const state = status.paused ? 'paused' : 'playing';
+        const now = Date.now();
+        if (state !== lastState || now - lastSent >= REPORT_MS) {
+          lastState = state;
+          lastSent = now;
+          timeline(state, status);
+        }
+        if (!watched && status.position !== null && status.duration && status.position / status.duration >= WATCHED_AT) {
+          watched = true;
+          void this.#report('/:/scrobble', { key: id, identifier: 'com.plexapp.plugins.library' }, as);
+          log.info(`Marked "${meta.title ?? id}" watched in Plex (IINA on ${mac.name})`);
+        }
+      },
+      titleFor: (status) => (mine(status) ? title : null),
+      end: finish,
+    };
+  }
+
+  /** A report to the server whose answer does not matter beyond its status. */
+  async #report(path: string, query: Record<string, string>, as: Record<string, string>): Promise<void> {
+    const url = new URL(path, this.#env.url);
+    for (const [k, v] of Object.entries(query)) url.searchParams.set(k, v);
+    try {
+      const res = await fetchWithTimeout(url.href, { headers: { ...this.#headers(), ...as } }, TIMEOUT_MS);
+      if (!res.ok) log.debug(`Plex answered ${path} with HTTP ${res.status}`);
+    } catch (error) {
+      log.debug(`Could not report ${path} to Plex: ${messageOf(error)}`);
+    }
   }
 
   /**

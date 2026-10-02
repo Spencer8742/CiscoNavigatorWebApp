@@ -623,6 +623,10 @@ controls:
   # logged in to the Mac, and the Mac must be able to reach PLEX_URL. On
   # macOS 15+, allow IINA under Privacy & Security > Local Network, or it
   # opens and plays nothing. `name` is what the Plex tab calls it.
+  #
+  # For Plex watch state and the IINA card on the Apple TV page, add the mpv
+  # option input-ipc-server = /tmp/iina-navigator.sock in IINA > Settings >
+  # Advanced (enable advanced settings first). See docs/DEPLOYMENT.md.
   ssh: []
   #  - id: mac_studio
   #    name: Mac Studio

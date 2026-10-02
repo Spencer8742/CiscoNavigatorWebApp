@@ -1,5 +1,5 @@
 import { signal, computed } from '@preact/signals';
-import type { AppleTvState, KeyLightState, RoomosState, TvState } from '@shared/protocol.ts';
+import type { AppleTvState, IinaState, KeyLightState, RoomosState, TvState } from '@shared/protocol.ts';
 import type { ControlButton } from '@shared/config.ts';
 import { controlsConfig } from '~/config/index.ts';
 
@@ -63,9 +63,13 @@ export const allKeyLights = computed<KeyLightState | null>(() => {
 export const tvs = signal<TvState[]>([]);
 export const appleTvs = signal<AppleTvState[]>([]);
 
+/** IINA on each Mac marked `iina: true`, shown beside the Apple TVs. */
+export const iinaPlayers = signal<IinaState[]>([]);
+
 /**
- * The Apple TV last picked on the Apple TV screen, by id. Plex offers it first
- * under "Play on", since it is the one the person was just looking at.
+ * The Apple TV last picked on the Apple TV screen, by id — or `iina:<id>` for
+ * a Mac picked there. Plex offers it first under "Play on", since it is the
+ * one the person was just looking at.
  */
 export const selectedAppleTv = signal<string | null>(null);
 export const appleTvsById = computed(() => new Map(appleTvs.value.map((tv) => [tv.id, tv])));
