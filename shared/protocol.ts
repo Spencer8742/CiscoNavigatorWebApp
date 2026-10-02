@@ -99,9 +99,9 @@ export interface BackendHealth {
    */
   immichError: string | null;
   /**
-   * PLEX_URL and PLEX_TOKEN are set, so the Apple TV screen has a Plex tab.
+   * PLEX_URL and PLEX_TOKEN are set, so the panel has a Plex page.
    * Configured rather than reachable: a Plex server that is down should say
-   * so inside that tab, not make the tab disappear.
+   * so on that page, not make the page disappear.
    */
   plex: boolean;
   /** ISO timestamp of the backend's last successful HA message. */
@@ -1089,7 +1089,7 @@ export type ClientMessage =
  * real keyboard exists — the RoomOS soft keyboard has no numeric, date or
  * colour modes (docs/ROOMOS.md §6). These are things you pick by tapping.
  */
-export const PANEL_PAGES = ['home', 'rooms', 'controls', 'apple-tv', 'media', 'photos'] as const;
+export const PANEL_PAGES = ['home', 'rooms', 'controls', 'apple-tv', 'plex', 'media', 'photos'] as const;
 export type PanelPage = (typeof PANEL_PAGES)[number];
 
 export interface PanelPrefs {

@@ -209,7 +209,7 @@ export function Settings() {
           <h2 class="section-title">Visible pages</h2>
         </div>
         <div class="settings-page-grid" role="group" aria-label="Visible pages">
-          {PANEL_PAGES.map((page) => (
+          {PANEL_PAGES.filter((page) => page !== 'plex' || h?.plex === true).map((page) => (
             <PageToggle key={page} page={page} />
           ))}
         </div>
@@ -386,6 +386,7 @@ const PAGE_LABELS: Record<PanelPage, string> = {
   rooms: 'Rooms',
   controls: 'Controls',
   'apple-tv': 'Apple TV',
+  plex: 'Plex',
   media: 'Media',
   photos: 'Photos',
 };

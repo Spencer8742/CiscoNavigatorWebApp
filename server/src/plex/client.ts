@@ -267,7 +267,10 @@ export class PlexClient {
       kind,
       title: meta.title ?? 'Untitled',
       subtitle: subtitleOf(kind, meta),
-      art: this.#art(kind === 'episode' ? (meta.grandparentThumb ?? meta.thumb) : (meta.thumb ?? meta.parentThumb)),
+      art: this.#art(
+        kind === 'episode' ? (meta.grandparentThumb ?? meta.thumb) : (meta.thumb ?? meta.parentThumb),
+        AUDIO.has(kind) ? 'square' : 'poster',
+      ),
       browsable: BROWSABLE.has(kind),
       playable: PLAYABLE.has(kind),
       duration: single && typeof meta.duration === 'number' ? Math.round(meta.duration / 1000) : null,
@@ -276,12 +279,17 @@ export class PlexClient {
     };
   }
 
-  /** A thumbnail path on the server, resized by the server, behind an opaque key. */
-  #art(path: string | undefined): string | null {
+  /**
+   * A thumbnail path on the server, resized by the server, behind an opaque key.
+   *
+   * Films, shows and episodes come back at poster proportions (2:3) and large
+   * enough to fill a poster card; music and libraries stay square.
+   */
+  #art(path: string | undefined, shape: 'poster' | 'square' = 'square'): string | null {
     if (typeof path !== 'string' || !path.startsWith('/')) return null;
     const url = new URL('/photo/:/transcode', this.#env.url);
-    url.searchParams.set('width', '240');
-    url.searchParams.set('height', '240');
+    url.searchParams.set('width', shape === 'poster' ? '320' : '240');
+    url.searchParams.set('height', shape === 'poster' ? '480' : '240');
     url.searchParams.set('minSize', '1');
     url.searchParams.set('upscale', '1');
     url.searchParams.set('url', path);

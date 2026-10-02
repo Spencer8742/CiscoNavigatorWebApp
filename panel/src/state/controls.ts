@@ -62,6 +62,12 @@ export const allKeyLights = computed<KeyLightState | null>(() => {
  */
 export const tvs = signal<TvState[]>([]);
 export const appleTvs = signal<AppleTvState[]>([]);
+
+/**
+ * The Apple TV last picked on the Apple TV screen, by id. Plex offers it first
+ * under "Play on", since it is the one the person was just looking at.
+ */
+export const selectedAppleTv = signal<string | null>(null);
 export const appleTvsById = computed(() => new Map(appleTvs.value.map((tv) => [tv.id, tv])));
 
 export const tvsById = computed(() => new Map(tvs.value.map((t) => [t.id, t])));

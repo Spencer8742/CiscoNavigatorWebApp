@@ -145,7 +145,16 @@ export function PlexBrowser({ preferred }: { preferred: string | null }) {
           )
         ) : result?.kind === 'list' ? (
           result.items.length ? (
-            result.items.map((item) => <Row key={item.id} item={item} onOpen={open} onPick={pick} />)
+            // Films, shows, seasons and albums get a poster wall, the way
+            // Plex itself shows a library. Episodes and songs stay rows: one
+            // show's poster repeated down a season says nothing.
+            result.items.every((item) => item.kind !== 'episode' && SHAPE[item.kind] !== null) ? (
+              <div class="plex-grid">
+                {result.items.map((item) => <Card key={item.id} item={item} onOpen={open} onPick={pick} />)}
+              </div>
+            ) : (
+              result.items.map((item) => <Row key={item.id} item={item} onOpen={open} onPick={pick} />)
+            )
           ) : (
             <div class="browse-state">
               <Icon name="tv" size="2rem" weight={1.6} />
@@ -217,19 +226,27 @@ function Row({ item, onOpen, onPick }: RowProps) {
   );
 }
 
-/** A card on the Continue Watching and Recently Added shelves. */
+/**
+ * A poster: on the Continue Watching and Recently Added shelves, and in an
+ * opened library. Video is 2:3 like a one-sheet, music is a square sleeve.
+ */
 function Card({ item, onOpen, onPick }: RowProps) {
   const progress = item.resume && item.duration ? Math.min(1, item.resume / item.duration) : 0;
   return (
     <Pressable
-      class="plex-card"
+      class={SHAPE[item.kind] === 'poster' ? 'plex-card is-poster' : 'plex-card'}
       onPress={() => (item.playable && !item.browsable ? onPick(item) : onOpen(item))}
       ariaLabel={item.title}
     >
-      <Artwork src={item.art} icon={KIND_ICON[item.kind]} />
-      {progress > 0 ? (
-        <span class="plex-progress"><span style={{ transform: `scaleX(${progress})` }} /></span>
-      ) : null}
+      <span class="plex-poster">
+        <Artwork src={item.art} icon={KIND_ICON[item.kind]} />
+        {item.watched && !progress ? (
+          <span class="plex-poster-badge"><Icon name="check" size="0.9rem" weight={2.6} /></span>
+        ) : null}
+        {progress > 0 ? (
+          <span class="plex-progress"><span style={{ transform: `scaleX(${progress})` }} /></span>
+        ) : null}
+      </span>
       <span class="plex-card-title truncate">{item.kind === 'episode' && item.subtitle ? item.subtitle.split(' · ')[0] : item.title}</span>
       <span class="plex-card-sub truncate">
         {item.kind === 'episode' ? item.title : (item.subtitle ?? '')}
@@ -384,6 +401,20 @@ const KIND_LABEL: Record<PlexKind, string> = {
   track: 'Song',
   clip: 'Video',
   folder: 'Folder',
+};
+
+/** How a kind is drawn as a card, or null when it is only ever a row. */
+const SHAPE: Record<PlexKind, 'poster' | 'square' | null> = {
+  library: null,
+  movie: 'poster',
+  show: 'poster',
+  season: 'poster',
+  episode: 'poster',
+  artist: 'square',
+  album: 'square',
+  track: null,
+  clip: 'poster',
+  folder: null,
 };
 
 const KIND_ICON: Record<PlexKind, string> = {
