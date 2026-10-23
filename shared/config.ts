@@ -830,6 +830,11 @@ export interface SshHostConfig {
    */
   iina: boolean;
   /**
+   * A Mac with Infuse on it, offered as a place to play Plex the same way —
+   * for files IINA does not play well. Plex is not told how far it got.
+   */
+  infuse: boolean;
+  /**
    * Displays on this Mac IINA can be sent to: a name for the panel and the
    * top-left corner of the display in macOS's global coordinates.
    */

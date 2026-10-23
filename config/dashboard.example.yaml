@@ -624,6 +624,12 @@ controls:
   # macOS 15+, allow IINA under Privacy & Security > Local Network, or it
   # opens and plays nothing. `name` is what the Plex tab calls it.
   #
+  # `infuse: true` does the same with Infuse (an infuse:// link), which plays
+  # some files IINA does not. It resumes where Plex left off and brings
+  # Plex's subtitle file, but Plex is not told how far it got, and there is
+  # no Infuse card. Allow Infuse Local Network access the same way. A Mac
+  # can have both; the Plex tab lists Infuse first.
+  #
   # For Plex watch state and the IINA card on the Apple TV page, add the mpv
   # option input-ipc-server = /tmp/iina-navigator.sock in IINA > Settings >
   # Advanced (enable advanced settings first). See docs/DEPLOYMENT.md.
@@ -637,6 +643,7 @@ controls:
   #    host: 192.168.1.200
   #    username: spencer
   #    iina: true
+  #    infuse: true
   #    screens:
   #      - { name: Studio Display, x: 0, y: 0 }
   #      - { name: LG TV, x: 2560, y: 0 }

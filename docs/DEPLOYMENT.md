@@ -411,6 +411,15 @@ it should play. A film with a saved position offers *Resume* or *Start over*.
   so open any LAN URL in IINA by hand once (File › Open URL) and allow it.
   The link carries a short-lived token from your server, not `PLEX_TOKEN`.
   One file at a time: pick an episode rather than a season.
+- **Macs with Infuse.** `infuse: true` on the same host lists *Infuse on
+  Mac* as well, before IINA. It opens the original file in Infuse with an
+  `infuse://x-callback-url/play` link — for files with audio or video IINA
+  does not handle well. It starts from the Plex resume point (Infuse 8.4.7
+  or later reads it), passes a `Show S01E02.mkv`-style name so Infuse can
+  find its own artwork, and adds the first subtitle file Plex keeps beside
+  the media. Infuse cannot be followed from outside, so Plex is not told the
+  position or that it was watched, and the IINA card and its controls do not
+  apply. Infuse needs Local Network access on macOS 15+, as IINA does.
 - **IINA's mpv socket — for watch state and the controls.** Turn on IINA ›
   Settings › Advanced › *Enable advanced settings*, and under *Additional
   mpv options* add `input-ipc-server` with the value
