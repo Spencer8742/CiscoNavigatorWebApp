@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ConfigStore } from '../dist/testkit.js';
 
-test('an SSH host can be offered to Plex as an IINA Mac, and is not by default', async () => {
+test('an SSH host can be offered to Plex as an IINA or Infuse Mac, and is not by default', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'navigator-config-'));
   const path = join(dir, 'dashboard.yaml');
   await writeFile(path, `
@@ -17,6 +17,7 @@ controls:
       username: spencer
       name: Mac Studio
       iina: true
+      infuse: true
       screens:
         - { name: Studio Display, x: 0, y: 0 }
         - { name: LG TV, x: 2560, y: -200 }
@@ -29,11 +30,11 @@ controls:
     assert.equal(await config.load(), true);
     assert.deepEqual(config.current.controls.ssh, [
       {
-        id: 'mac_studio', host: '192.168.1.200', username: 'spencer', name: 'Mac Studio', iina: true,
+        id: 'mac_studio', host: '192.168.1.200', username: 'spencer', name: 'Mac Studio', iina: true, infuse: true,
         // A display without a position cannot be moved to, so it is dropped.
         screens: [{ name: 'Studio Display', x: 0, y: 0 }, { name: 'LG TV', x: 2560, y: -200 }],
       },
-      { id: 'build_box', host: '192.168.1.201', username: 'ci', name: 'build_box', iina: false, screens: [] },
+      { id: 'build_box', host: '192.168.1.201', username: 'ci', name: 'build_box', iina: false, infuse: false, screens: [] },
     ]);
   } finally {
     config.close();

@@ -13,7 +13,7 @@ import { fileURLToPath, URL } from 'node:url';
  * runner are stubs that record what they were asked to do.
  */
 
-const { PlexClient, MediaArt, iinaCommand } = await import(fileURLToPath(new URL('../dist/testkit.js', import.meta.url)));
+const { PlexClient, MediaArt, iinaCommand, infuseCommand } = await import(fileURLToPath(new URL('../dist/testkit.js', import.meta.url)));
 
 const TOKEN = 'plex-secret-token';
 const MACHINE = 'server-machine-id';
@@ -353,6 +353,79 @@ describe('playing on a Mac in IINA', () => {
 
   test('nothing in the media link can leave the quoted argument', () => {
     const command = iinaCommand("http://pms/library/parts/1/2/file.mkv?X-Plex-Token=it's'; rm -rf ~; echo (x)! *", 5);
+    const quoted = command.slice(command.indexOf("'"));
+    assert.match(quoted, /^'[^']*'$/);
+    assert.ok(!/[\s;$`\\]/.test(quoted), quoted);
+  });
+});
+
+describe('playing on a Mac in Infuse', () => {
+  const INFUSE = { ...MAC, iina: false, infuse: true };
+  const linkOf = (command) => {
+    const link = command.match(/^caffeinate -u -t 1; open '(infuse:\/\/x-callback-url\/play\?[^']+)'$/)?.[1];
+    assert.ok(link, command);
+    return new URL(link).searchParams;
+  };
+
+  test('a Mac marked infuse is listed before IINA on the same Mac', async () => {
+    resources = [];
+    const result = await client({ ssh: [{ ...MAC, infuse: true }] }).handle({ kind: 'targets' });
+    assert.deepEqual(result.targets.map((t) => t.id), ['infuse:mac_studio', 'mac:mac_studio', 'plex:shield-id']);
+    assert.equal(result.targets[0].product, 'Infuse on Mac');
+  });
+
+  test('the file is opened in Infuse, resuming, named, with a transient token', async () => {
+    const calls = [];
+    const listeners = [];
+    const result = await client({ ssh: [INFUSE], calls, listeners }).handle({ kind: 'play', id: '10', target: 'infuse:mac_studio', resume: true });
+    assert.deepEqual(result, { kind: 'played', target: 'infuse:mac_studio' });
+    const [, host, command] = calls[0];
+    assert.equal(host, 'mac_studio');
+    const query = linkOf(command);
+    const media = new URL(query.get('url'));
+    assert.equal(media.pathname, '/library/parts/901/1700000000/file.mkv');
+    assert.equal(media.searchParams.get('X-Plex-Token'), 'transient-abc');
+    assert.ok(!command.includes(TOKEN), 'the long-lived token must not reach the Mac');
+    assert.equal(query.get('position'), '120');
+    assert.equal(query.get('filename'), 'A Film.mkv');
+    assert.equal(query.get('sub'), null);
+    assert.deepEqual(listeners, [], 'Infuse is not followed');
+  });
+
+  test("Plex's subtitle file goes with it; start over leaves the position out", async () => {
+    const calls = [];
+    await client({ ssh: [INFUSE], calls }).handle({ kind: 'play', id: '50', target: 'infuse:mac_studio', resume: false });
+    const query = linkOf(calls[0][2]);
+    assert.equal(query.get('position'), null);
+    const sub = new URL(query.get('sub'));
+    assert.equal(sub.pathname, '/library/streams/77');
+    assert.equal(sub.searchParams.get('X-Plex-Token'), 'transient-abc');
+  });
+
+  test('a season is refused, and so is a Mac not marked infuse', async () => {
+    await assert.rejects(
+      client({ ssh: [INFUSE] }).handle({ kind: 'play', id: '60', target: 'infuse:mac_studio', resume: true }),
+      /one file at a time\. Choose an episode/,
+    );
+    const calls = [];
+    await assert.rejects(
+      client({ ssh: [MAC], calls }).handle({ kind: 'play', id: '10', target: 'infuse:mac_studio', resume: true }),
+      /Mark it infuse: true/,
+    );
+    assert.deepEqual(calls, []);
+  });
+
+  test('open failing says to check Infuse and the login', async () => {
+    await assert.rejects(
+      client({ ssh: [INFUSE], sshAnswer: 'mac_studio: command exited 1' })
+        .handle({ kind: 'play', id: '10', target: 'infuse:mac_studio', resume: true }),
+      /could not open Infuse/,
+    );
+  });
+
+  test('nothing in the link can leave the quoted argument', () => {
+    const bad = "http://pms/x?t=it's'; rm -rf ~; echo (x)! *";
+    const command = infuseCommand(bad, 5, "Bob's Film: (1999)!.mkv", bad);
     const quoted = command.slice(command.indexOf("'"));
     assert.match(quoted, /^'[^']*'$/);
     assert.ok(!/[\s;$`\\]/.test(quoted), quoted);

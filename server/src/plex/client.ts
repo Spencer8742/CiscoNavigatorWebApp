@@ -61,6 +61,15 @@ const log = logger('plex');
  * `input-ipc-server` set; without it playback still works and Plex simply is
  * not told.
  *
+ * ## Playing on a Mac, in Infuse
+ *
+ * A Mac marked `infuse: true` is offered the same way, for media IINA's
+ * decoders struggle with. The file goes to Infuse as an
+ * `infuse://x-callback-url/play` link: the original file, a resume position,
+ * a file name Infuse can match to its own metadata, and the first subtitle
+ * file Plex keeps beside the media. Infuse has no socket to follow, so Plex
+ * hears nothing back — no resume point, no watched mark, and no remote card.
+ *
  * ## Music
  *
  * Not offered. The page is for watching; music lives on the Sonos screens.
@@ -73,7 +82,7 @@ const APPLE_TV_READY_MS = 25_000;
 const POLL_MS = 1_500;
 /** A Plex part key: the original file, as the server serves it. */
 const PART_RE = /^\/library\/parts\/\d{1,12}(\/\d{1,12})?\/file(\.[A-Za-z0-9]{1,8})?$/;
-/** What IINA is handed: one file at a time. */
+/** What IINA or Infuse is handed: one file at a time. */
 const MAC_PLAYABLE = new Set<PlexKind>(['movie', 'episode', 'clip', 'track']);
 /** A Plex sidecar stream: a subtitle file kept beside the media. */
 const STREAM_RE = /^\/library\/streams\/\d{1,12}$/;
@@ -114,7 +123,7 @@ export interface PlexDeps {
   /** Ask the bridge to do something to an Apple TV. Null on success. */
   appleTvCommand: (device: string, op: 'power_on') => Promise<string | null>;
   openApp: (device: string, bundleId: string) => Promise<string | null>;
-  /** Hosts in `controls.ssh`, current as of now. Those marked `iina` are Plex targets. */
+  /** Hosts in `controls.ssh`, current as of now. Those marked `iina` or `infuse` are Plex targets. */
   sshHosts?: () => SshHostConfig[];
   /** Run a command on one of them. Null on success. */
   runSsh?: (host: string, command: string) => Promise<string | null>;
@@ -375,6 +384,9 @@ export class PlexClient {
       product: 'Apple TV',
       appleTv: tv.id,
     }));
+    for (const mac of this.#infuseMacs()) {
+      out.push({ id: `infuse:${mac.id}`, name: mac.name, product: 'Infuse on Mac', appleTv: null });
+    }
     for (const mac of this.#macs()) {
       out.push({ id: `mac:${mac.id}`, name: mac.name, product: 'IINA on Mac', appleTv: null });
     }
@@ -388,6 +400,7 @@ export class PlexClient {
 
   async play(id: string, target: string, resume: boolean): Promise<void> {
     if (target.startsWith('mac:')) return this.#playOnMac(id, target.slice(4), resume);
+    if (target.startsWith('infuse:')) return this.#playInInfuse(id, target.slice(7), resume);
     const [meta, player] = await Promise.all([
       this.#metadata(id),
       this.#resolveTarget(target),
@@ -462,6 +475,44 @@ export class PlexClient {
     }
     log.info(`Playing "${meta.title ?? id}" in IINA on ${mac.name}`);
     this.#deps.iinaWatch?.(mac.id, this.#iinaSync(id, part, meta, mac, kind, token));
+  }
+
+  /**
+   * Open the item's file in Infuse on a Mac, over SSH, as `#playOnMac` does
+   * for IINA. Infuse cannot be followed afterwards, so this is the whole job.
+   */
+  async #playInInfuse(id: string, macId: string, resume: boolean): Promise<void> {
+    const mac = this.#infuseMacs().find((host) => host.id === macId);
+    if (!mac || !this.#deps.runSsh) throw new Error('That Mac is not set up to play Plex. Mark it infuse: true under controls.ssh.');
+    const meta = await this.#metadata(id);
+    const kind = kindOf(meta.type);
+    if (!MAC_PLAYABLE.has(kind)) {
+      const one = kind === 'season' || kind === 'show' ? 'an episode' : kind === 'album' || kind === 'artist' ? 'a track' : 'a single item';
+      throw new Error(`Infuse is sent one file at a time. Choose ${one}.`);
+    }
+    const part = meta.Media?.[0]?.Part?.[0];
+    if (!part?.key || !PART_RE.test(part.key)) throw new Error(`Plex has no playable file for ${meta.title ?? 'that'}`);
+
+    const token = await this.#transientToken();
+    const media = new URL(part.key, this.#env.url);
+    media.searchParams.set('X-Plex-Token', token);
+    const sidecar = (part.Stream ?? []).find(
+      (stream) => stream.streamType === 3 && typeof stream.key === 'string' && STREAM_RE.test(stream.key),
+    );
+    let subtitles: string | null = null;
+    if (sidecar?.key) {
+      const url = new URL(sidecar.key, this.#env.url);
+      url.searchParams.set('X-Plex-Token', token);
+      subtitles = url.href;
+    }
+    const start = resume && typeof meta.viewOffset === 'number' ? Math.floor(meta.viewOffset / 1000) : 0;
+    const problem = await this.#deps.runSsh(mac.id, infuseCommand(media.href, start, infuseFileName(meta, part.key), subtitles));
+    if (problem) {
+      throw new Error(/exited 1$/.test(problem)
+        ? `${mac.name} could not open Infuse. Is it installed, and is someone logged in to the Mac?`
+        : `Could not reach ${mac.name}: ${problem}`);
+    }
+    log.info(`Playing "${meta.title ?? id}" in Infuse on ${mac.name}`);
   }
 
   /**
@@ -674,6 +725,10 @@ export class PlexClient {
 
   #macs(): SshHostConfig[] {
     return (this.#deps.sshHosts?.() ?? []).filter((host) => host.iina);
+  }
+
+  #infuseMacs(): SshHostConfig[] {
+    return (this.#deps.sshHosts?.() ?? []).filter((host) => host.infuse);
   }
 
   /**
@@ -980,6 +1035,38 @@ export function iinaCommand(media: string, startSeconds: number): string {
   const link = `iina://open?${query.join('&')}`;
   if (!/^[A-Za-z0-9%._~:/?&=-]+$/.test(link)) throw new Error('Refusing an unsafe link');
   return `caffeinate -u -t 1; open '${link}'`;
+}
+
+/**
+ * The shell command that opens a file in Infuse.
+ *
+ * Encoded and checked the same way as `iinaCommand`. `position` is in
+ * seconds; `filename` is what Infuse matches against its own metadata.
+ */
+export function infuseCommand(media: string, startSeconds: number, fileName: string | null, subtitles: string | null): string {
+  const query = [`url=${encodeAll(media)}`];
+  if (startSeconds > 0) query.push(`position=${Math.floor(startSeconds)}`);
+  if (fileName) query.push(`filename=${encodeAll(fileName)}`);
+  if (subtitles) query.push(`sub=${encodeAll(subtitles)}`);
+  const link = `infuse://x-callback-url/play?${query.join('&')}`;
+  if (!/^[A-Za-z0-9%._~:/?&=-]+$/.test(link)) throw new Error('Refusing an unsafe link');
+  return `caffeinate -u -t 1; open '${link}'`;
+}
+
+/**
+ * A file name in the shape Infuse recognises — `Show S01E02.mkv`,
+ * `Film (1999).mkv` — since the link's own path is only Plex's part key.
+ */
+function infuseFileName(meta: PlexMetadata, part: string): string | null {
+  const ext = part.match(/\.([A-Za-z0-9]{1,8})$/)?.[1];
+  if (!ext || !meta.title) return null;
+  const clean = (text: string): string => text.replace(/[/\\:]/g, ' ').trim();
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  if (meta.type === 'episode' && meta.grandparentTitle && typeof meta.parentIndex === 'number' && typeof meta.index === 'number') {
+    return `${clean(meta.grandparentTitle)} S${pad(meta.parentIndex)}E${pad(meta.index)}.${ext}`;
+  }
+  if (meta.type === 'movie' && meta.year) return `${clean(meta.title)} (${meta.year}).${ext}`;
+  return `${clean(meta.title)}.${ext}`;
 }
 
 function encodeAll(value: string): string {

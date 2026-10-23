@@ -699,6 +699,7 @@ function sshHostList(v: unknown): SshHostConfig[] {
       username,
       name: str(raw['name'], id, `${path}.name`),
       iina: bool(raw['iina'], false, `${path}.iina`),
+      infuse: bool(raw['infuse'], false, `${path}.infuse`),
       screens: screenList(raw['screens'], `${path}.screens`),
     });
   });
