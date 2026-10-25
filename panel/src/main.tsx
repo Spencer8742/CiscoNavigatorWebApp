@@ -4,7 +4,8 @@ import { setNativeWakePaused } from '~/assist/native.ts';
 import { App } from '~/app.tsx';
 import { initAuth } from '~/net/auth.ts';
 import { connect } from '~/net/socket.ts';
-import { installKineticScroll } from '~/lib/kinetic.ts';
+import { deviceInfo } from '~/lib/device.ts';
+import { installKineticScroll, prefersNativeTouchScroll } from '~/lib/kinetic.ts';
 import { resyncClock, startClock } from '~/state/clock.ts';
 import { startIdleMonitor } from '~/state/idle.ts';
 import { startPlaceMemory } from '~/state/place.ts';
@@ -17,6 +18,8 @@ import '~/styles/base.css';
 import '~/styles/components.css';
 import '~/styles/screens.css';
 import '~/styles/timers.css';
+// Last, so its phone-sized overrides win at equal specificity.
+import '~/styles/mobile.css';
 
 /**
  * Entry point.
@@ -41,7 +44,13 @@ startClock();
 startIdleMonitor();
 // Every list in the app glides after a swipe; the Navigator's own touch
 // scrolling stops dead on release. See lib/kinetic.ts.
-installKineticScroll();
+//
+// A phone or tablet browser scrolls better on its own than any emulation
+// does, so there the finger goes back to the browser: `data-scroll` relaxes
+// the scrollers' `touch-action` (base.css) and the module ignores touches.
+const nativeTouchScroll = prefersNativeTouchScroll(deviceInfo().isRoomOS);
+if (nativeTouchScroll) document.documentElement.dataset['scroll'] = 'native';
+installKineticScroll({ touch: !nativeTouchScroll });
 // Before connect(), so the effect is watching when the first `hello` lands
 // and the panel restores where it was in the same tick rather than after a
 // visible frame on Home.

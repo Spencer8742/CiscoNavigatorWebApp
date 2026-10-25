@@ -41,8 +41,33 @@ const VELOCITY_WINDOW_MS = 100;
 
 type Axis = 'x' | 'y';
 
+export interface KineticOptions {
+  /**
+   * Take over touch drags as well as mouse drags. True on RoomOS, where the
+   * engine's own touch scrolling is the problem this module exists for.
+   * False on a phone or tablet browser, whose native scrolling (rubber-band,
+   * fling, the platform's own physics) is better than anything emulated
+   * here — `html[data-scroll="native"]` in base.css gives those touches back
+   * to the browser, and this leaves them alone so the two never fight.
+   */
+  touch?: boolean;
+}
+
+/**
+ * Should touch scrolling be left to the browser?
+ *
+ * Only off RoomOS, and only where the primary pointer is a finger: a phone or
+ * a tablet browser. The Navigator keeps the emulation it was built for, and a
+ * desktop browser keeps mouse drag-to-scroll.
+ */
+export function prefersNativeTouchScroll(isRoomOS: boolean): boolean {
+  if (isRoomOS) return false;
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
+  return window.matchMedia('(pointer: coarse)').matches;
+}
+
 /** Install once, at start-up. Returns an uninstaller, for tests. */
-export function installKineticScroll(): () => void {
+export function installKineticScroll({ touch = true }: KineticOptions = {}): () => void {
   let pointer: number | null = null;
   let target: Element | null = null;
   let startX = 0;
@@ -67,6 +92,8 @@ export function installKineticScroll(): () => void {
 
   const onDown = (e: PointerEvent) => {
     if (pointer !== null || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    // Native scrolling owns this finger; see KineticOptions.touch.
+    if (!touch && e.pointerType !== 'mouse') return;
     // A touch on a gliding list stops it, as on a phone.
     stopGlide();
     pointer = e.pointerId;

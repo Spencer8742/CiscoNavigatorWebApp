@@ -1,0 +1,321 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Phones
+   ───────────────────────────────────────────────────────────────────────────
+   Loaded LAST (see main.tsx), so a rule here wins over the one it adjusts at
+   equal specificity without anything upstream needing to know it exists.
+
+   Everything in this file is one of two kinds, and that is what keeps it
+   from changing a wall panel:
+
+     1. Behind a phone-sized media query — the 34rem width the rest of the app
+        already treats as "phone" (state/ui.ts `narrow`), or a height of
+        480px and under (a phone on its side, and the 800x480 Nest Hub).
+     2. env(safe-area-inset-*), which is 0 on every device without a notch
+        or a home indicator: the Navigator, a Desk Pro, a desktop browser.
+
+   Chromium 102 safe like the rest: env(), max(), calc(), :not() with one
+   simple selector each.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Native scrolling ─────────────────────────────────────────────────────
+   On a phone or tablet browser the scrollers give their touches back to the
+   browser (main.tsx sets `data-scroll`; lib/kinetic.ts then ignores
+   touches). The platform's own fling and rubber-band are what a hand
+   expects, and an emulation of them is always slightly wrong.
+
+   Every element base.css and the screens hand to the emulation with
+   `touch-action: none` is listed. Controls that own their drag — sliders,
+   the Apple TV swipe pad, Cover Flow, the reveal corner — are deliberately
+   NOT: they keep `none` and keep their gesture. */
+html[data-scroll='native'] .scroll,
+html[data-scroll='native'] .home-col,
+html[data-scroll='native'] .browse-filters,
+html[data-scroll='native'] .apple-tv-switcher,
+html[data-scroll='native'] .devtile-list,
+html[data-scroll='native'] .plex-shelf,
+html[data-scroll='native'] .assist-exchange {
+  touch-action: auto;
+}
+
+/* ── Notch and home indicator ─────────────────────────────────────────────
+   index.html asks for `viewport-fit=cover`, which lets the page draw edge
+   to edge on an iPhone — and nothing ever moved out of the way, so in
+   landscape the rail sat under the notch and on every phone the bottom bar
+   sat under the home indicator. These insets are 0 everywhere else. */
+.shell {
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+    env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+}
+
+/* With a bottom bar, the BAR takes the inset: its surface runs to the edge
+   of the glass, and its icons sit above the indicator. */
+.shell[data-nav='bottom']:not([data-kiosk]):not([data-nonav]) {
+  padding-bottom: 0;
+  grid-template-rows: 1fr calc(var(--bar-h) + env(safe-area-inset-bottom, 0px));
+}
+
+.nav[data-pos='bottom'] {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Sheets slide up from the bottom edge, so their last row would sit under
+   the indicator too. */
+.sheet {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* ── Toast ────────────────────────────────────────────────────────────────
+   Bottom-centre was ON the bottom bar, covering two or three destinations:
+   a tap aimed at Rooms while an error was showing landed on the toast and
+   went nowhere. It sits above the bar instead. The toast is a later sibling
+   of the shell (app.tsx), which is what lets this see the nav position. */
+.toast {
+  bottom: calc(var(--s-5) + env(safe-area-inset-bottom, 0px));
+}
+
+.shell[data-nav='bottom']:not([data-kiosk]):not([data-nonav]) ~ .toast {
+  bottom: calc(var(--bar-h) + var(--s-3) + env(safe-area-inset-bottom, 0px));
+}
+
+/* ═══ Narrow: a phone held upright ═══════════════════════════════════════ */
+@media (max-width: 34rem) {
+  /* A thumb-height tab bar. 4.75rem is sized for a panel read from a step
+     away; on a phone it was a sixth of the screen spent on icons whose labels
+     are hidden anyway (base.css). 52px is still above the touch floor. */
+  .shell {
+    --bar-h: max(3.75rem, 52px);
+  }
+
+  /* The toast is outside the shell, so it needs the same value to clear it. */
+  .toast {
+    --bar-h: max(3.75rem, 52px);
+    max-width: calc(100vw - 2 * var(--s-4));
+  }
+
+  /* A phone's gutter. 2rem either side was 15% of a 375px screen gone to
+     margin. Re-pointing the token inside the screens moves every header,
+     body, bar and grid gap that uses it together, so they stay aligned with
+     each other; sheets and the screensaver are outside `.shell-main` and
+     keep theirs. */
+  .shell-main {
+    --s-6: 1.25rem;
+  }
+
+  /* ── Home ──
+     The clock is the panel's face from across a room. In a hand it is a
+     header, and at 4.25rem it pinned ~130px above everything that scrolls. */
+  .home-hero {
+    padding-top: var(--s-5);
+    padding-bottom: var(--s-3);
+  }
+
+  .home-time {
+    font-size: 3.25rem;
+  }
+
+  .home-date {
+    margin-top: var(--s-1);
+    font-size: 1rem;
+  }
+
+  .home-weather {
+    padding: var(--s-2) var(--s-3);
+  }
+
+  /* ── Media ──
+     Six controls above Now Playing wrapped into three rows of pills and
+     took a third of the screen before the artwork began. As a toolbar:
+     the speaker picker on its own row, the four actions sharing the row
+     beneath it equally with the settings key at the end — icon over label,
+     the way a phone toolbar reads. */
+  .player-select-bar {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr)) var(--touch-min);
+    gap: var(--s-2) var(--s-1);
+    padding-top: var(--s-3);
+  }
+
+  .player-select-bar .player-select {
+    grid-column: 1 / -1;
+    min-height: var(--touch-min);
+  }
+
+  .player-select-bar .browse-button {
+    flex-direction: column;
+    justify-content: center;
+    gap: 0.2rem;
+    min-width: 0;
+    min-height: var(--touch-min);
+    padding: var(--s-1) 0;
+    border-radius: var(--r-md);
+    font-size: 0.8125rem;
+    line-height: 1.1;
+    white-space: nowrap;
+  }
+
+  .player-select-bar .browse-button.p-sm {
+    flex-direction: row;
+  }
+
+  .group-bar,
+  .queue-bar {
+    min-height: var(--touch-min);
+    padding-top: var(--s-2);
+    padding-bottom: var(--s-2);
+  }
+
+  .queue-bar {
+    margin-bottom: var(--s-3);
+  }
+
+  /* Bounded by the HEIGHT as well. Square at the full width put the title,
+     the transport and the volume below the fold, so the one screen for
+     playing music opened with no way to pause it in view. */
+  .now-playing {
+    gap: var(--s-4);
+  }
+
+  .now-playing .np-art {
+    max-width: min(100%, 32vh);
+  }
+
+  .now-playing .np-title {
+    font-size: 1.375rem;
+  }
+
+  .now-playing .np-artist {
+    font-size: 1rem;
+  }
+
+  .now-playing .np-transport {
+    justify-content: center;
+    margin-top: var(--s-3);
+  }
+
+  .now-playing .np-modes {
+    justify-content: center;
+  }
+
+  .now-playing .np-volume {
+    margin-top: var(--s-4);
+  }
+
+  /* ── Sheets ──
+     Full width already; a little less padding gives the content the room. */
+  .sheet-head {
+    padding: var(--s-4) var(--s-4) var(--s-3);
+  }
+
+  .sheet-body {
+    padding-left: var(--s-4);
+    padding-right: var(--s-4);
+  }
+
+  /* iOS zooms the whole page into a text field whose type is under 16px, and
+     at the phone's 14px root every field here was. */
+  input[type='text'],
+  input[type='search'],
+  input[type='number'],
+  input:not([type]),
+  textarea,
+  select {
+    font-size: max(16px, 1em);
+  }
+}
+
+/* ═══ Short: a phone on its side ═════════════════════════════════════════
+   A landscape phone is 360-430px tall. Not a width query: at 844x390 the
+   panel keeps its left rail, which is right (height is the scarce axis), but
+   the rail's seven 77px destinations came to ~600px and ran off the bottom.
+
+   30rem in a media query is 480px (media queries use the browser's 16px, not
+   the root scale), so the 800x480 Nest Hub lands here too — on purpose. Its
+   labelled rail was ~540px in 480 and cut off Photos, Settings and Assist,
+   which nothing could scroll back into view. Icons only, it fits. */
+@media (max-height: 30rem) and (min-width: 34.0625rem) {
+  .shell {
+    --rail-w: 4.25rem;
+  }
+
+  .nav[data-pos='left'] {
+    padding: 2px var(--s-1);
+    gap: 2px;
+    /* If it still does not fit — 360px Android, seven destinations — the
+       rail scrolls rather than clipping the last of them. */
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: none;
+    overscroll-behavior: contain;
+  }
+
+  .nav[data-pos='left']::-webkit-scrollbar {
+    display: none;
+  }
+
+  .nav[data-pos='left'] .nav-item {
+    flex: 0 0 auto;
+    height: var(--touch-min);
+  }
+
+  .nav[data-pos='left'] .nav-item-label {
+    display: none;
+  }
+
+  .nav[data-pos='left'] .nav-assist {
+    flex: 0 0 auto;
+    width: var(--touch-min);
+    height: var(--touch-min);
+  }
+
+  .nav[data-pos='left'] .nav-status {
+    flex: 0 0 auto;
+    height: 1rem;
+  }
+
+  .screen-head {
+    padding-top: var(--s-4);
+    padding-bottom: var(--s-3);
+  }
+
+  .home-hero {
+    padding-top: var(--s-4);
+    padding-bottom: var(--s-2);
+  }
+
+  .home-time {
+    font-size: 2.75rem;
+  }
+
+  .home-date {
+    margin-top: var(--s-1);
+    font-size: 0.9375rem;
+  }
+
+  /* Media: the bars above and below Now Playing were ~200px of a 390px
+     screen, leaving the part that scrolls a letterbox. */
+  .player-select-bar {
+    padding-top: var(--s-2);
+  }
+
+  .player-select,
+  .browse-button,
+  .group-bar,
+  .queue-bar {
+    min-height: var(--touch-min);
+  }
+
+  .browse-button,
+  .group-bar,
+  .queue-bar {
+    padding-top: var(--s-1);
+    padding-bottom: var(--s-1);
+  }
+
+  .group-bar {
+    margin-bottom: var(--s-2);
+  }
+
+  .queue-bar {
+    margin-bottom: var(--s-2);
+  }
+}
