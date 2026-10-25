@@ -43,6 +43,8 @@ const log = logger('sonos-spotify');
 
 const TOKEN_URL = 'https://accounts.spotify.com/api/token';
 const API = 'https://api.spotify.com/v1';
+/** The page behind Spotify's "Embed playlist" widget. See `#embedded`. */
+const EMBED_URL = 'https://open.spotify.com/embed/playlist';
 const SEARCH_URL = `${API}/search`;
 
 /** Spotify Development Mode reduced the search maximum to 10 in February 2026. */
@@ -200,11 +202,19 @@ export class SpotifySearch {
           page = await this.#collect(`${API}/playlists/${id}/tracks?${market}`, offset, 'Spotify could not list that playlist');
         } catch (err) {
           /*
-           * Spotify withholds the tracks of its own editorial and algorithmic
-           * playlists from apps like this one (since November 2024). That is
-           * a fact about the playlist, not a fault, and it still plays.
+           * The Web API no longer lists a playlist for an app like this one:
+           * Spotify's own playlists have been withheld since November 2024,
+           * and since February 2026 Development Mode lists only playlists
+           * the signed-in user owns — and this app signs nobody in. The
+           * embed widget's page still carries the list, so that is asked
+           * next; if it fails too, the playlist still plays.
            */
           if (/HTTP (403|404)/.test(err instanceof Error ? err.message : '')) {
+            const embedded = await this.#embedded(ref.id, offset, account).catch((e: unknown) => {
+              log.warn(`Spotify embed for playlist ${ref.id} failed: ${e instanceof Error ? e.message : e}`);
+              return null;
+            });
+            if (embedded) return embedded;
             return {
               kind: 'list',
               items: [],
@@ -226,6 +236,50 @@ export class SpotifySearch {
         });
       }
     }
+  }
+
+  /**
+   * A playlist's tracks, read from the page Spotify serves for its embed
+   * widget — public, unauthenticated, and the same list anybody sees when a
+   * playlist is embedded in a web page.
+   *
+   * Not a documented API, so it is the fallback rather than the route, and
+   * anything unexpected in it is a null rather than an error. It carries at
+   * most the first 100 tracks and no per-track artwork; the playlist's cover
+   * goes on each row instead.
+   */
+  async #embedded(id: string, offset: number, account: Account): Promise<BrowseResult | null> {
+    const response = await this.#fetch(`${EMBED_URL}/${encodeURIComponent(id)}`, {
+      headers: { 'user-agent': 'Mozilla/5.0', accept: 'text/html' },
+    });
+    if (!response.ok) return null;
+    const parsed = parseEmbed(await response.text());
+    if (!parsed || parsed.tracks.length === 0) return null;
+
+    const rows = parsed.tracks.slice(offset, offset + BROWSE_PAGE);
+    const items: MediaItem[] = [];
+    for (const t of rows) {
+      const spotifyKind = t.kind === 'episode' ? 'episode' : 'track';
+      const item = this.#shape(
+        { id: t.uri.split(':').pop(), name: t.title, uri: t.uri, artists: t.subtitle ? [{ name: t.subtitle }] : [] },
+        spotifyKind === 'episode' ? 'podcast' : 'track',
+        account,
+        spotifyKind,
+        parsed.art,
+      );
+      if (item) items.push(item);
+    }
+
+    const more = offset + BROWSE_PAGE < parsed.tracks.length;
+    return {
+      kind: 'list',
+      items,
+      offset,
+      more,
+      ...(!more && parsed.tracks.length >= EMBED_MAX
+        ? { note: `Spotify shares only the first ${EMBED_MAX} tracks of this playlist. Play still plays all of it.` }
+        : {}),
+    };
   }
 
   /**
@@ -692,6 +746,56 @@ export function spotifyRef(
   const match = /spotify%3a(?:user%3a[^%?]+%3a)?(album|playlist|artist|show)%3a([A-Za-z0-9]+)/i.exec(playUri);
   if (!match?.[1] || !match[2]) return null;
   return { kind: match[1].toLowerCase() as 'album' | 'playlist' | 'artist' | 'show', id: match[2] };
+}
+
+/** The most tracks the embed page lists, however long the playlist. */
+const EMBED_MAX = 100;
+
+interface EmbedTrack {
+  uri: string;
+  title: string;
+  subtitle: string;
+  kind: 'track' | 'episode';
+}
+
+/**
+ * The track list out of an embed page's `__NEXT_DATA__`.
+ *
+ * Shape as served in October 2026:
+ * `props.pageProps.state.data.entity.{trackList[], coverArt.sources[]}`.
+ * Null for anything else, so a change on Spotify's side degrades to the
+ * "still plays" note instead of a broken card.
+ */
+export function parseEmbed(html: string): { tracks: EmbedTrack[]; art: string | null } | null {
+  const match = /<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/.exec(html);
+  if (!match?.[1]) return null;
+
+  let data: unknown;
+  try {
+    data = JSON.parse(match[1]);
+  } catch {
+    return null;
+  }
+
+  let entity: unknown = data;
+  for (const key of ['props', 'pageProps', 'state', 'data', 'entity']) {
+    entity = isObject(entity) ? entity[key] : null;
+  }
+  if (!isObject(entity) || !Array.isArray(entity['trackList'])) return null;
+
+  const tracks: EmbedTrack[] = [];
+  for (const raw of entity['trackList']) {
+    if (!isObject(raw) || raw['isPlayable'] === false) continue;
+    const uri = typeof raw['uri'] === 'string' ? raw['uri'] : '';
+    const title = typeof raw['title'] === 'string' ? raw['title'] : '';
+    const kind = /^spotify:episode:[A-Za-z0-9]+$/.test(uri) ? 'episode' : /^spotify:track:[A-Za-z0-9]+$/.test(uri) ? 'track' : null;
+    if (!kind || !title) continue;
+    tracks.push({ uri, title, subtitle: typeof raw['subtitle'] === 'string' ? raw['subtitle'] : '', kind });
+  }
+
+  const cover = isObject(entity['coverArt']) ? entity['coverArt']['sources'] : null;
+  const art = Array.isArray(cover) ? imageOf({ images: cover }) : null;
+  return { tracks, art };
 }
 
 /** Wide enough for a Cover Flow cover (about 20 rem) without being a poster. */
