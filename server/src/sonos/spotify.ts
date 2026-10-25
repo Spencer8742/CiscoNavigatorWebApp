@@ -5,6 +5,7 @@ import type { UriRegistry } from '~/sonos/uris.ts';
 import type { MediaArt } from '~/http/media-art.ts';
 import type { Env } from '~/env.ts';
 import type { MusicServices } from '~/sonos/music.ts';
+import { BROWSE_PAGE } from '@shared/protocol.ts';
 import type { BrowseResult, MediaItem, MediaKind } from '@shared/protocol.ts';
 import type { PlayStyle } from '~/sonos/uris.ts';
 
@@ -41,7 +42,8 @@ const log = logger('sonos-spotify');
  */
 
 const TOKEN_URL = 'https://accounts.spotify.com/api/token';
-const SEARCH_URL = 'https://api.spotify.com/v1/search';
+const API = 'https://api.spotify.com/v1';
+const SEARCH_URL = `${API}/search`;
 
 /** Spotify Development Mode reduced the search maximum to 10 in February 2026. */
 const LIMIT = 10;
@@ -79,6 +81,13 @@ export class SpotifySearch {
   #token: string | null = null;
   #tokenExpires = 0;
   #account: Account | null = null;
+  /**
+   * Rows asked for per call when opening something. Spotify's own maximum is
+   * 50; Development Mode has been cutting maximums without notice (search to
+   * 10 in February 2026), so a refused limit drops this to `LIMIT` for the
+   * life of the process instead of failing every open.
+   */
+  #chunk = 50;
 
   constructor(
     env: Env['spotify'],
@@ -127,7 +136,7 @@ export class SpotifySearch {
       `&type=track,album,artist,playlist,show,episode&limit=${LIMIT}` +
       `&market=${encodeURIComponent(this.#env.market)}`;
 
-    const body = await this.#get(url, token);
+    const body = await this.#get(url, 'Spotify search failed', token);
 
     const groups = [
       { name: 'Songs', items: this.#shapeAll(body, 'tracks', 'track', account) },
@@ -139,6 +148,130 @@ export class SpotifySearch {
     ];
 
     return { kind: 'groups', groups: groups.filter((g) => g.items.length > 0) };
+  }
+
+  /**
+   * What is on a Spotify album, playlist, artist or podcast that search
+   * returned — so the panel can open it, not only play it.
+   *
+   * Null when `playUri` is not a Spotify container this can read, so the
+   * caller can fall through to Sonos's own browse. Reads the same public
+   * catalog as search, with the same client-credentials token: still nothing
+   * of anybody's account.
+   */
+  async contents(playUri: string, offset: number): Promise<BrowseResult | null> {
+    const ref = spotifyRef(playUri);
+    if (!ref || !this.#env.enabled) return null;
+
+    const account = await this.#resolveAccount();
+    if (!account) throw new Error('No Spotify account is linked in Sonos.');
+
+    const market = `market=${encodeURIComponent(this.#env.market)}`;
+    const id = encodeURIComponent(ref.id);
+
+    switch (ref.kind) {
+      case 'album': {
+        // Album tracks carry no artwork of their own; the album's goes on
+        // every row, which is also what tells the panel to list them rather
+        // than flow fourteen copies of one cover.
+        const album = await this.#get(`${API}/albums/${id}?${market}`, 'Spotify could not open that album');
+        const art = imageOf(album);
+        const page = await this.#collect(`${API}/albums/${id}/tracks?${market}`, offset, 'Spotify could not list that album');
+        return this.#list(page, offset, (raw) => this.#shape(raw, 'track', account, 'track', art));
+      }
+
+      case 'artist': {
+        const page = await this.#collect(
+          `${API}/artists/${id}/albums?include_groups=album,single,compilation&${market}`,
+          offset,
+          'Spotify could not list that artist',
+        );
+        return this.#list(page, offset, (raw) => this.#shape(raw, 'album', account, 'album'));
+      }
+
+      case 'show': {
+        const page = await this.#collect(`${API}/shows/${id}/episodes?${market}`, offset, 'Spotify could not list that podcast');
+        return this.#list(page, offset, (raw) => this.#shape(raw, 'podcast', account, 'episode'));
+      }
+
+      case 'playlist': {
+        let page: { items: unknown[]; more: boolean };
+        try {
+          page = await this.#collect(`${API}/playlists/${id}/tracks?${market}`, offset, 'Spotify could not list that playlist');
+        } catch (err) {
+          /*
+           * Spotify withholds the tracks of its own editorial and algorithmic
+           * playlists from apps like this one (since November 2024). That is
+           * a fact about the playlist, not a fault, and it still plays.
+           */
+          if (/HTTP (403|404)/.test(err instanceof Error ? err.message : '')) {
+            return {
+              kind: 'list',
+              items: [],
+              offset,
+              more: false,
+              note: 'Spotify does not share the tracks of this playlist with other apps. Play still works.',
+            };
+          }
+          throw err;
+        }
+        return this.#list(page, offset, (raw) => {
+          // Playlist rows wrap the track, and may be an episode, a removed
+          // track (null) or a local file Sonos cannot reach.
+          const entry = isObject(raw) ? raw['track'] : null;
+          if (!isObject(entry) || entry['is_local'] === true) return null;
+          return entry['type'] === 'episode'
+            ? this.#shape(entry, 'podcast', account, 'episode')
+            : this.#shape(entry, 'track', account, 'track');
+        });
+      }
+    }
+  }
+
+  /**
+   * One panel page of a Spotify listing, in as many calls as it takes.
+   *
+   * The panel pages by `BROWSE_PAGE` items and Spotify by at most 50, so a
+   * page that asked Spotify for one 50 would skip ten rows on every "More".
+   */
+  async #collect(base: string, offset: number, what: string): Promise<{ items: unknown[]; more: boolean }> {
+    const items: unknown[] = [];
+    let at = offset;
+    let more = false;
+
+    while (items.length < BROWSE_PAGE) {
+      const want = Math.min(this.#chunk, BROWSE_PAGE - items.length);
+      let body: Record<string, unknown>;
+      try {
+        body = await this.#get(`${base}&limit=${want}&offset=${at}`, what);
+      } catch (err) {
+        if (this.#chunk > LIMIT && /HTTP 400/.test(err instanceof Error ? err.message : '')) {
+          this.#chunk = LIMIT;
+          continue;
+        }
+        throw err;
+      }
+      const list = Array.isArray(body['items']) ? (body['items'] as unknown[]) : [];
+      items.push(...list);
+      at += list.length;
+      more = typeof body['next'] === 'string' && list.length > 0;
+      if (!more) break;
+    }
+
+    return { items, more };
+  }
+
+  #list(
+    page: { items: unknown[]; more: boolean },
+    offset: number,
+    shape: (raw: unknown) => MediaItem | null,
+  ): BrowseResult {
+    const items: MediaItem[] = [];
+    for (const raw of page.items) {
+      const item = shape(raw);
+      if (item) items.push(item);
+    }
+    return { kind: 'list', items, offset, more: page.more };
   }
 
   /* ── Spotify's API ─────────────────────────────────────────────────────*/
@@ -177,7 +310,8 @@ export class SpotifySearch {
     return this.#token;
   }
 
-  async #get(url: string, token: string): Promise<Record<string, unknown>> {
+  async #get(url: string, what: string, given?: string): Promise<Record<string, unknown>> {
+    const token = given ?? (await this.#accessToken());
     const response = await this.#fetch(url, { headers: { authorization: `Bearer ${token}` } });
 
     if (response.status === 401) {
@@ -185,11 +319,11 @@ export class SpotifySearch {
       this.#token = null;
       const fresh = await this.#accessToken();
       const retry = await this.#fetch(url, { headers: { authorization: `Bearer ${fresh}` } });
-      if (!retry.ok) throw new Error(await spotifyFailure(retry, 'Spotify search failed'));
+      if (!retry.ok) throw new Error(await spotifyFailure(retry, what));
       return (await retry.json()) as Record<string, unknown>;
     }
 
-    if (!response.ok) throw new Error(await spotifyFailure(response, 'Spotify search failed'));
+    if (!response.ok) throw new Error(await spotifyFailure(response, what));
     return (await response.json()) as Record<string, unknown>;
   }
 
@@ -235,6 +369,8 @@ export class SpotifySearch {
     kind: MediaKind,
     account: Account,
     spotifyKind: SpotifyKind,
+    /** Artwork for a row that carries none of its own: an album's tracks. */
+    fallbackArt: string | null = null,
   ): MediaItem | null {
     if (!isObject(raw)) return null;
 
@@ -260,15 +396,15 @@ export class SpotifySearch {
         ) ?? '',
       n: name,
       k: kind,
-      // Web API search results are playable references, not SMAPI browse
-      // object ids, so opening them as folders would always lead nowhere.
-      ...(kind === 'track' ? {} : { b: false as const }),
+      // An episode is one thing to play, whatever kind it is filed under.
+      // Albums, artists, playlists and shows open through `contents()`.
+      ...(spotifyKind === 'episode' ? { b: false as const } : {}),
     };
 
     const sub = subtitleOf(raw, spotifyKind);
     if (sub) item.s = sub;
 
-    const art = this.#art.register(imageOf(raw));
+    const art = this.#art.register(imageOf(raw) ?? fallbackArt);
     if (art) item.a = art;
 
     return item;
@@ -543,17 +679,49 @@ function subtitleOf(raw: Record<string, unknown>, kind: SpotifyKind): string | n
 }
 
 /**
+ * Which Spotify container a play URI points at, if it is one.
+ *
+ * Read back off the URI `sonosUri` built — `…cpcontainer:1004206cspotify%3a
+ * album%3a<id>?…` — rather than from a table kept beside the key registry, so
+ * a pinned or recent album still opens after the backend restarts.
+ */
+export function spotifyRef(
+  playUri: string,
+): { kind: 'album' | 'playlist' | 'artist' | 'show'; id: string } | null {
+  if (!playUri.startsWith('x-rincon-cpcontainer:')) return null;
+  const match = /spotify%3a(?:user%3a[^%?]+%3a)?(album|playlist|artist|show)%3a([A-Za-z0-9]+)/i.exec(playUri);
+  if (!match?.[1] || !match[2]) return null;
+  return { kind: match[1].toLowerCase() as 'album' | 'playlist' | 'artist' | 'show', id: match[2] };
+}
+
+/** Wide enough for a Cover Flow cover (about 20 rem) without being a poster. */
+const ART_MIN_PX = 300;
+
+/**
  * The smallest image that is still big enough.
  *
- * Spotify lists images largest-first, and the panel draws these at about
- * 56 px. Taking the first would pull 640 px covers for a list of twelve, on a
- * device that gets killed for using too much memory (docs/ROOMOS.md §2).
+ * Spotify lists images largest-first, typically 640, 300 and 64 px. The 64
+ * was enough for a list row and is a smear as a Cover Flow cover; the 640 is
+ * four times the decoded memory of the 300 on a device that gets killed for
+ * using too much (docs/ROOMOS.md §2). So: the smallest at least
+ * `ART_MIN_PX`, or the largest there is.
  */
-function imageOf(raw: Record<string, unknown>): string | null {
+export function imageOf(raw: Record<string, unknown>): string | null {
   const container = isObject(raw['album']) ? raw['album'] : raw;
   const images = container['images'];
   if (!Array.isArray(images) || images.length === 0) return null;
 
-  const last = images[images.length - 1];
-  return isObject(last) && typeof last['url'] === 'string' ? last['url'] : null;
+  let pick: { url: string; w: number } | null = null;
+  for (const image of images) {
+    if (!isObject(image) || typeof image['url'] !== 'string') continue;
+    // A playlist's single mosaic has no width; treat it as big enough.
+    const w = typeof image['width'] === 'number' ? image['width'] : Number.POSITIVE_INFINITY;
+    const better = !pick
+      ? true
+      : pick.w < ART_MIN_PX
+        ? w > pick.w
+        : w >= ART_MIN_PX && w < pick.w;
+    if (better) pick = { url: image['url'], w };
+  }
+  return pick?.url ?? null;
 }

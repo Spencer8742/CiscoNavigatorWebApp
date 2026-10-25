@@ -19,6 +19,9 @@ import {
   seconds,
   flag,
   sonosUri,
+  spotifyRef,
+  imageOf,
+  SpotifySearch,
   UriRegistry,
 } from '../dist/testkit.js';
 
@@ -2066,6 +2069,169 @@ describe('Spotify catalog search', () => {
     assert.match(episode.metadata, /id="00032020spotify%3aepisode%3a/);
     assert.equal(show.playStyle, 'track');
     assert.equal(episode.playStyle, 'track');
+  });
+});
+
+/**
+ * Opening what Spotify search found.
+ *
+ * Search results are playable references rather than folders Sonos can
+ * browse, so an album that could only be played was a cover that could not
+ * be turned over in Cover Flow. Its contents come from the same public
+ * catalog search reads.
+ */
+describe('opening Spotify search results', () => {
+  const account = { sid: 9, sn: 3 };
+  const realFetch = globalThis.fetch;
+  let routes;
+  let asked;
+
+  before(() => {
+    globalThis.fetch = async (url) => {
+      const href = String(url);
+      asked.push(href);
+      if (href.startsWith('https://accounts.spotify.com/')) {
+        return Response.json({ access_token: 'tok', expires_in: 3600 });
+      }
+      for (const [pattern, answer] of routes) {
+        if (pattern.test(href)) return typeof answer === 'function' ? answer(href) : answer;
+      }
+      return Response.json({ error: { message: 'no route' } }, { status: 404 });
+    };
+  });
+
+  after(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  const make = () => {
+    routes = [];
+    asked = [];
+    return new SpotifySearch(
+      { clientId: 'id', clientSecret: 'secret', market: 'US', enabled: true },
+      { household: { zones: new Map() } },
+      new UriRegistry(),
+      { register: (u) => (u ? `/art/${u}` : null) },
+      { ready: async () => {}, list: () => [{ name: 'Spotify', sid: 9, sn: 3 }] },
+    );
+  };
+
+  const albumUri = sonosUri('spotify:album:6wiUBliPe76YAVpNEdidpY', 'A', 'album', account).uri;
+
+  test('reads the container back off the URI Sonos is given', () => {
+    assert.deepEqual(spotifyRef(albumUri), { kind: 'album', id: '6wiUBliPe76YAVpNEdidpY' });
+    const playlist = sonosUri('spotify:playlist:37i9dQZF1DXcBWIGoYBM5M', 'P', 'playlist', account).uri;
+    assert.deepEqual(spotifyRef(playlist), { kind: 'playlist', id: '37i9dQZF1DXcBWIGoYBM5M' });
+    const track = sonosUri('spotify:track:0GiWi4EkPduFWHQyhiKpRB', 'T', 'track', account).uri;
+    assert.equal(spotifyRef(track), null, 'a track is played, not opened');
+    assert.equal(spotifyRef('x-rincon-cpcontainer:1004206cplex%3aalbum%3a12'), null);
+  });
+
+  test('picks cover art big enough for Cover Flow but no bigger', () => {
+    const images = [
+      { url: 'big', width: 640 },
+      { url: 'mid', width: 300 },
+      { url: 'small', width: 64 },
+    ];
+    assert.equal(imageOf({ images }), 'mid');
+    assert.equal(imageOf({ images: [{ url: 'only', width: 64 }] }), 'only');
+    assert.equal(imageOf({ images: [{ url: 'mosaic', width: null }] }), 'mosaic');
+  });
+
+  test('search no longer marks albums, artists and playlists unopenable', async () => {
+    const spotify = make();
+    routes.push([
+      /\/v1\/search/,
+      Response.json({
+        albums: { items: [{ id: 'al1', name: 'Album', uri: 'spotify:album:al1', images: [] }] },
+        episodes: { items: [{ id: 'ep1', name: 'Episode', uri: 'spotify:episode:ep1', images: [] }] },
+      }),
+    ]);
+    const result = await spotify.search('x');
+    const album = result.groups.find((g) => g.name === 'Albums').items[0];
+    const episode = result.groups.find((g) => g.name === 'Podcast episodes').items[0];
+    assert.equal(album.b, undefined);
+    assert.equal(episode.b, false, 'an episode is still only played');
+  });
+
+  test("lists an album's tracks with the album's cover on each", async () => {
+    const spotify = make();
+    routes.push([
+      /\/v1\/albums\/6wiUBliPe76YAVpNEdidpY\/tracks/,
+      Response.json({
+        items: [
+          { id: 't1', name: 'One', uri: 'spotify:track:t1', artists: [{ name: 'Band' }] },
+          { id: 't2', name: 'Two', uri: 'spotify:track:t2', artists: [{ name: 'Band' }] },
+        ],
+        next: null,
+      }),
+    ]);
+    routes.push([
+      /\/v1\/albums\/6wiUBliPe76YAVpNEdidpY\?/,
+      Response.json({ images: [{ url: 'cover', width: 300 }] }),
+    ]);
+
+    const page = await spotify.contents(albumUri, 0);
+    assert.equal(page.kind, 'list');
+    assert.deepEqual(page.items.map((i) => i.n), ['One', 'Two']);
+    assert.ok(page.items.every((i) => i.k === 'track' && i.a === '/art/cover' && /^[0-9a-f]{16}$/.test(i.u)));
+    assert.equal(page.more, false);
+  });
+
+  test('fills one panel page from several Spotify pages', async () => {
+    const spotify = make();
+    const rows = (from, n) =>
+      Array.from({ length: n }, (_, i) => ({
+        id: `a${from + i}`,
+        name: `Album ${from + i}`,
+        uri: `spotify:album:a${from + i}`,
+        images: [{ url: 'c', width: 300 }],
+      }));
+    routes.push([
+      /\/v1\/artists\/ar1\/albums/,
+      (href) => {
+        const url = new URL(href);
+        const offset = Number(url.searchParams.get('offset'));
+        const limit = Number(url.searchParams.get('limit'));
+        return Response.json({ items: rows(offset, limit), next: 'more' });
+      },
+    ]);
+
+    const artist = sonosUri('spotify:artist:ar1', 'Artist', 'artist', account).uri;
+    const page = await spotify.contents(artist, 60);
+    assert.equal(page.items.length, 60);
+    assert.equal(page.items[0].n, 'Album 60', 'starts where the panel asked, not at a Spotify page');
+    assert.equal(page.items[59].n, 'Album 119');
+    assert.equal(page.more, true);
+    assert.ok(page.items.every((i) => i.k === 'album' && i.b === undefined), 'albums open in turn');
+  });
+
+  test('says so when Spotify withholds a playlist', async () => {
+    const spotify = make();
+    routes.push([/\/v1\/playlists\//, Response.json({ error: { message: 'Not found' } }, { status: 404 })]);
+    const playlist = sonosUri('spotify:playlist:37i9dQZF1DXcBWIGoYBM5M', 'P', 'playlist', account).uri;
+    const page = await spotify.contents(playlist, 0);
+    assert.equal(page.items.length, 0);
+    assert.match(page.note, /Play still works/);
+  });
+
+  test('skips removed and local tracks in a playlist', async () => {
+    const spotify = make();
+    routes.push([
+      /\/v1\/playlists\/pl1\/tracks/,
+      Response.json({
+        items: [
+          { track: { id: 't1', name: 'Kept', uri: 'spotify:track:t1', type: 'track' } },
+          { track: null },
+          { track: { id: 'l1', name: 'Local', uri: 'spotify:local:x', is_local: true } },
+          { track: { id: 'e1', name: 'Episode', uri: 'spotify:episode:e1', type: 'episode' } },
+        ],
+        next: null,
+      }),
+    ]);
+    const playlist = sonosUri('spotify:playlist:pl1', 'P', 'playlist', account).uri;
+    const page = await spotify.contents(playlist, 0);
+    assert.deepEqual(page.items.map((i) => [i.n, i.k]), [['Kept', 'track'], ['Episode', 'podcast']]);
   });
 });
 
