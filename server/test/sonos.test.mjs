@@ -21,6 +21,7 @@ import {
   sonosUri,
   spotifyRef,
   imageOf,
+  parseEmbed,
   SpotifySearch,
   UriRegistry,
 } from '../dist/testkit.js';
@@ -2213,6 +2214,75 @@ describe('opening Spotify search results', () => {
     const page = await spotify.contents(playlist, 0);
     assert.equal(page.items.length, 0);
     assert.match(page.note, /Play still works/);
+  });
+
+  /** An embed page, cut to the parts read: the shape Spotify served in October 2026. */
+  const embedPage = (count, extra = []) => {
+    const trackList = [
+      ...Array.from({ length: count }, (_, i) => ({
+        uri: `spotify:track:t${i}`,
+        title: `Song ${i}`,
+        subtitle: 'Michael McDonald',
+        isPlayable: true,
+        entityType: 'track',
+      })),
+      ...extra,
+    ];
+    const data = {
+      props: {
+        pageProps: {
+          state: {
+            data: {
+              entity: {
+                name: 'Yacht Rock',
+                coverArt: { sources: [{ url: 'mosaic', width: null, height: null }] },
+                trackList,
+              },
+            },
+          },
+        },
+      },
+    };
+    return `<html><body><script id="__NEXT_DATA__" type="application/json">${JSON.stringify(data)}</script></body></html>`;
+  };
+
+  test('reads a track list out of an embed page', () => {
+    const parsed = parseEmbed(
+      embedPage(2, [
+        { uri: 'spotify:track:gone', title: 'Gone', isPlayable: false },
+        { uri: 'spotify:local:x', title: 'Local' },
+        { uri: 'spotify:episode:e1', title: 'An episode', subtitle: 'A show' },
+      ]),
+    );
+    assert.equal(parsed.art, 'mosaic');
+    assert.deepEqual(
+      parsed.tracks.map((t) => [t.title, t.kind]),
+      [['Song 0', 'track'], ['Song 1', 'track'], ['An episode', 'episode']],
+    );
+    assert.equal(parseEmbed('<html>no data</html>'), null);
+    assert.equal(parseEmbed('<script id="__NEXT_DATA__" type="application/json">{"props":{}}</script>'), null);
+  });
+
+  test('falls back to the embed page when the Web API will not list a playlist', async () => {
+    const spotify = make();
+    routes.push([/\/v1\/playlists\//, Response.json({ error: { message: 'Forbidden' } }, { status: 403 })]);
+    routes.push([/open\.spotify\.com\/embed\/playlist\/pl2$/, () => new Response(embedPage(100))]);
+    const playlist = sonosUri('spotify:playlist:pl2', 'Yacht Rock', 'playlist', account).uri;
+
+    const first = await spotify.contents(playlist, 0);
+    assert.equal(first.items.length, 60);
+    assert.equal(first.items[0].n, 'Song 0');
+    assert.equal(first.items[0].s, 'Michael McDonald');
+    assert.equal(first.items[0].a, '/art/mosaic', "the playlist's cover stands in for each track's");
+    assert.ok(first.items.every((i) => i.k === 'track' && /^[0-9a-f]{16}$/.test(i.u)), 'every row plays');
+    assert.equal(first.more, true);
+    assert.equal(first.note, undefined);
+
+    const second = await spotify.contents(playlist, 60);
+    assert.equal(second.items.length, 40);
+    assert.equal(second.items[0].n, 'Song 60');
+    assert.equal(second.more, false);
+    assert.match(second.note, /first 100 tracks/);
   });
 
   test('skips removed and local tracks in a playlist', async () => {
