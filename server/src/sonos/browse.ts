@@ -591,6 +591,13 @@ export class SonosBrowser {
     const target = playable.objectId ?? playable.uri;
     if (!target) throw new Error('That item cannot be opened');
 
+    // A Spotify album, artist or playlist from search has a URI and no
+    // object id Sonos can browse. Its contents come from Spotify's catalog.
+    if (!playable.objectId && playable.uri) {
+      const opened = await this.#deps.spotify.contents(playable.uri, offset);
+      if (opened) return opened;
+    }
+
     // A service's ids mean nothing to a speaker: they are addresses inside
     // Plex or SoundCloud, and opening one is a call to that service.
     if (playable.sid !== null) return this.#service(playable.sid, target, offset);

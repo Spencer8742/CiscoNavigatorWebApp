@@ -54,7 +54,7 @@ export { seconds, flag, integer } from '~/sonos/soap.ts';
 
 export { SmapiClient, SmapiError } from '~/sonos/smapi.ts';
 export { accountsFromUris } from '~/sonos/services.ts';
-export { sonosUri } from '~/sonos/spotify.ts';
+export { sonosUri, spotifyRef, imageOf, SpotifySearch } from '~/sonos/spotify.ts';
 export { UriRegistry } from '~/sonos/uris.ts';
 export { parsePanelCommand, parseTimerDuration, panelCommandResult } from '~/assist/commands.ts';
 export { WeatherForecasts, normalizeForecast } from '~/ha/weather.ts';
