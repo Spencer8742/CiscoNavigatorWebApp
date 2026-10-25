@@ -1942,3 +1942,386 @@ html[data-theme='light'] .forecast-symbol[data-weather="clear"] { color: #5b8fa8
   align-items: center;
   gap: var(--s-2);
 }
+
+/* ── Cover Flow ───────────────────────────────────────────────────────────
+   The browser's covers view (components/CoverFlow.tsx). Every cover's
+   transform is written from script, frame by frame while it moves and never
+   while it rests; everything here is the static shape around that. Only
+   transform and opacity ever change, and the flip is one transform on one
+   element. Sizes arrive as --cf-* from the component, measured off the
+   stage, so the row fits whatever window the panel has. */
+
+.browse-mode {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: 2.5rem;
+  padding: 0 var(--s-3);
+  border-radius: var(--r-full);
+  background: var(--surface-1);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-dim);
+  font-size: 0.875rem;
+  font-weight: 580;
+}
+
+.browse-body.is-flow {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.cf-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  outline: none;
+  overflow: hidden;
+}
+
+.cf-track {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 12rem;
+  /* The row owns its drag — lib/kinetic.ts leaves anything declaring this
+     alone, and no pinch-zoom starts on it either (docs/ROOMOS.md §6). */
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: grab;
+  transition: opacity var(--t-base) var(--ease);
+}
+
+.cf-cover {
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  width: var(--cf-cover);
+  height: var(--cf-cover);
+  margin: calc(var(--cf-cover) / -2) 0 0 calc(var(--cf-cover) / -2);
+  will-change: transform;
+}
+
+.cf-face {
+  width: 100%;
+  height: 100%;
+  border-radius: var(--r-md);
+  transition: transform var(--t-base) var(--ease-out-back);
+  /* The floor reflection that makes it Cover Flow. Painted with the cover
+     into its own layer, so it moves for free with the transform. */
+  -webkit-box-reflect: below 0.35rem
+    linear-gradient(to bottom, transparent 62%, rgba(255, 255, 255, 0.22));
+}
+
+.cf-cover.is-center[data-pressed] .cf-face {
+  transform: scale(0.95);
+  transition: transform var(--t-instant) var(--ease);
+}
+
+/* The turning card takes the centre cover's place while it is over. */
+.cf-cover.is-lifted { visibility: hidden; }
+
+.cf-art {
+  width: 100%;
+  height: 100%;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border-subtle);
+  pointer-events: none;
+}
+
+.cf-art img {
+  -webkit-user-drag: none;
+}
+
+.cf-caption {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-5) var(--s-4);
+  transition: opacity var(--t-base) var(--ease);
+}
+
+.cf-caption-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: center;
+  animation: cf-caption-in var(--t-fast) var(--ease) both;
+}
+
+@keyframes cf-caption-in {
+  from { opacity: 0; transform: translate3d(0, 0.3rem, 0); }
+  to { opacity: 1; transform: none; }
+}
+
+.cf-caption-name {
+  font-size: 1.1875rem;
+  font-weight: 640;
+  color: var(--text);
+}
+
+.cf-caption-sub {
+  margin-top: 0.15rem;
+  font-size: 0.9375rem;
+  color: var(--text-dim);
+}
+
+.cf-caption-group {
+  display: inline-block;
+  margin-right: var(--s-2);
+  padding: 0 0.5em;
+  border-radius: var(--r-full);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.75rem;
+  font-weight: 620;
+  line-height: 1.6;
+  vertical-align: 0.1em;
+}
+
+.cf-caption-hint {
+  margin-top: 0.3rem;
+  font-size: 0.8125rem;
+  color: var(--text-faint);
+}
+
+.cf-step {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--touch-min);
+  height: var(--touch-min);
+  border-radius: var(--r-full);
+  background: var(--surface-1);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-dim);
+}
+
+.cf-step[data-disabled] { opacity: 0.3; }
+
+/* ── Flipped ──────────────────────────────────────────────────────────── */
+
+.cf-stage.is-flipped .cf-track { opacity: 0.18; }
+.cf-stage.is-flipped .cf-caption { opacity: 0; pointer-events: none; }
+
+.cf-catcher {
+  position: absolute;
+  inset: 0;
+  z-index: 2000;
+}
+
+.cf-flip-wrap {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 2001;
+  width: var(--cf-panel-w);
+  height: var(--cf-panel-h);
+  margin: calc(var(--cf-panel-h) / -2) 0 0 calc(var(--cf-panel-w) / -2);
+  perspective: calc(var(--cf-panel-h) * 3);
+  pointer-events: none;
+}
+
+/* At rest the card is the cover: same place, same size, face up. Open, it
+   comes forward to full size and turns over. */
+.cf-flip {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  transform: translate3d(0, var(--cf-dy), 0) scale(var(--cf-r)) rotateY(0deg);
+  transition: transform calc(600ms * var(--motion)) cubic-bezier(0.3, 0.9, 0.3, 1.04);
+  will-change: transform;
+}
+
+.cf-flip.is-open {
+  transform: translate3d(0, 0, 0) scale(1) rotateY(180deg);
+  pointer-events: auto;
+}
+
+.cf-front,
+.cf-back {
+  position: absolute;
+  inset: 0;
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+}
+
+/* Square and centred, at the card's height: scaled down, it lands exactly
+   on the cover it replaced, whatever width the back needs. */
+.cf-front {
+  display: flex;
+  justify-content: center;
+}
+
+.cf-front-art {
+  width: var(--cf-panel-h);
+  height: 100%;
+  border-radius: calc(var(--r-md) / var(--cf-r));
+}
+
+.cf-back {
+  transform: rotateY(180deg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+}
+
+.cf-back-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-4) var(--s-4) var(--s-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.cf-back-art {
+  width: 4.5rem;
+  height: 4.5rem;
+}
+
+.cf-back-titles {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.cf-back-kind {
+  font-size: 0.75rem;
+  font-weight: 620;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.cf-back-name {
+  margin-top: 0.1rem;
+  font-size: 1.25rem;
+  font-weight: 660;
+  line-height: 1.25;
+  color: var(--text);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.cf-back-sub {
+  margin-top: 0.15rem;
+  font-size: 0.9375rem;
+  color: var(--text-dim);
+}
+
+.cf-back-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.cf-back-play {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: var(--touch-min);
+  padding: 0 var(--s-4);
+  border-radius: var(--r-full);
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 1rem;
+  font-weight: 660;
+}
+
+.cf-back-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--touch-min);
+  height: var(--touch-min);
+  border-radius: var(--r-full);
+  background: var(--surface-3);
+  color: var(--text-dim);
+}
+
+.cf-back-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--s-3) var(--s-3) var(--s-2);
+}
+
+/* Rows land one after another as the card finishes turning, rather than
+   all at once — a bounded, run-once animation per row. */
+.cf-back-row {
+  animation: cf-row-in var(--t-base) var(--ease) both;
+}
+.cf-back-row:nth-child(2) { animation-delay: calc(30ms * var(--motion)); }
+.cf-back-row:nth-child(3) { animation-delay: calc(60ms * var(--motion)); }
+.cf-back-row:nth-child(4) { animation-delay: calc(90ms * var(--motion)); }
+.cf-back-row:nth-child(5) { animation-delay: calc(120ms * var(--motion)); }
+.cf-back-row:nth-child(6) { animation-delay: calc(150ms * var(--motion)); }
+.cf-back-row:nth-child(n + 7) { animation-delay: calc(180ms * var(--motion)); }
+
+@keyframes cf-row-in {
+  from { opacity: 0; transform: translate3d(0, 0.5rem, 0); }
+  to { opacity: 1; transform: none; }
+}
+
+.cf-back-pager {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding: var(--s-2) 0 var(--s-3);
+}
+
+/* Wide card: the record on the left, its contents on the right — the way a
+   sleeve opens. */
+.cf-back.is-wide {
+  flex-direction: row;
+}
+
+.cf-back.is-wide .cf-back-head {
+  flex: 0 0 34%;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  padding: var(--s-5);
+  border-bottom: none;
+  border-right: 1px solid var(--border-subtle);
+  overflow: hidden;
+}
+
+.cf-back.is-wide .cf-back-art {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1 / 1;
+  max-height: 55%;
+  max-width: 100%;
+  border-radius: var(--r-lg);
+}
+
+.cf-back.is-wide .cf-back-titles {
+  flex: 0 0 auto;
+  width: 100%;
+}
+
+.cf-back.is-wide .cf-back-actions {
+  width: 100%;
+  margin-top: auto;
+  justify-content: space-between;
+}
+
+.cf-back.is-wide .cf-back-list {
+  padding: var(--s-4) var(--s-4) var(--s-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cf-flip { transition: none; }
+  .cf-back-row, .cf-caption-text { animation: none; }
+}
