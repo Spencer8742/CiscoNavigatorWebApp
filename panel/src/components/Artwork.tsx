@@ -19,11 +19,16 @@ export function Artwork({
   src,
   icon = 'media',
   alt = '',
+  class: cls = '',
+  iconSize = '1.3rem',
 }: {
   /** Already-proxied path on this origin, or null. */
   src: string | null | undefined;
   icon?: string;
   alt?: string;
+  /** Extra class, for a cover drawn larger than a list row's. */
+  class?: string;
+  iconSize?: string;
 }) {
   const [failed, setFailed] = useState(false);
   const token = getToken();
@@ -34,14 +39,14 @@ export function Artwork({
 
   if (!src || failed) {
     return (
-      <div class="browse-cover is-empty">
-        <Icon name={icon} size="1.3rem" weight={1.6} />
+      <div class={`browse-cover is-empty ${cls}`}>
+        <Icon name={icon} size={iconSize} weight={1.6} />
       </div>
     );
   }
 
   return (
-    <div class="browse-cover">
+    <div class={`browse-cover ${cls}`}>
       <img
         src={`${src}${token ? `&t=${encodeURIComponent(token)}` : ''}`}
         alt={alt}

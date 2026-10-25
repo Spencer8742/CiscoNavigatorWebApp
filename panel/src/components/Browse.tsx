@@ -3,6 +3,8 @@ import { Icon } from '~/components/Icon.tsx';
 import { Pressable } from '~/components/Pressable.tsx';
 import { browse } from '~/net/socket.ts';
 import { Artwork } from '~/components/Artwork.tsx';
+import { CoverFlow } from '~/components/CoverFlow.tsx';
+import { KIND_ICON, KIND_LABEL, isExpandable } from '~/lib/media.ts';
 import { speakers } from '~/state/selectors.ts';
 import * as act from '~/state/actions.ts';
 import { BROWSE_PAGE } from '@shared/protocol.ts';
@@ -76,6 +78,22 @@ const SEARCH: Tab = {
   request: { kind: 'search', text: '' },
 };
 
+/**
+ * Covers or rows. Remembered per panel as a convenience only — the storage is
+ * wiped nightly on RoomOS (docs/ROOMOS.md §5), and Cover Flow is the default
+ * it falls back to.
+ */
+type ViewMode = 'flow' | 'list';
+const MODE_KEY = 'browse.mode';
+
+function savedMode(): ViewMode {
+  try {
+    return localStorage.getItem(MODE_KEY) === 'list' ? 'list' : 'flow';
+  } catch {
+    return 'flow';
+  }
+}
+
 /** One level of the drill-down: what we opened, and what it was called. */
 interface Crumb {
   uri: string;
@@ -101,6 +119,7 @@ export function Browse({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [chosen, setChosen] = useState<MediaItem | null>(null);
+  const [mode, setMode] = useState<ViewMode>(savedMode);
   /**
    * The drill-down stack.
    *
@@ -190,6 +209,19 @@ export function Browse({
     setOffset(0);
   };
 
+  const toggleMode = (): void => {
+    const next: ViewMode = mode === 'flow' ? 'list' : 'flow';
+    setMode(next);
+    try {
+      localStorage.setItem(MODE_KEY, next);
+    } catch {
+      /* private or wiped storage — it simply isn't remembered */
+    }
+  };
+
+  const canFlow = !loading && !error && flowable(result, here !== null);
+  const flowing = mode === 'flow' && canFlow;
+
   return (
     <div class="sheet-layer">
       <div class="sheet-scrim" onPointerDown={onClose} />
@@ -212,6 +244,16 @@ export function Browse({
             </h2>
             <div class="sheet-subtitle truncate">Play on {playerName}</div>
           </div>
+          {canFlow ? (
+            <Pressable
+              class="browse-mode p-sm"
+              onPress={toggleMode}
+              ariaLabel={mode === 'flow' ? 'Show as a list' : 'Show as Cover Flow'}
+            >
+              <Icon name={mode === 'flow' ? 'list' : 'grid'} size="1.1rem" weight={1.9} />
+              <span>{mode === 'flow' ? 'List' : 'Covers'}</span>
+            </Pressable>
+          ) : null}
           {here?.playable ? (
             <Pressable
               class="sheet-edit p-sm"
@@ -269,13 +311,14 @@ export function Browse({
           </>
         ) : null}
 
-        <div class="sheet-body scroll browse-body">
+        <div class={flowing ? 'sheet-body browse-body is-flow' : 'sheet-body scroll browse-body'}>
           <Results
             loading={loading}
             error={error}
             result={result}
             searching={view === 'search' && !here}
             query={query}
+            flow={flowing}
             onPick={setChosen}
             onOpen={open}
           />
@@ -333,6 +376,7 @@ function Results({
   result,
   searching,
   query,
+  flow,
   onPick,
   onOpen,
 }: {
@@ -341,6 +385,8 @@ function Results({
   result: BrowseResult | null;
   searching: boolean;
   query: string;
+  /** Draw it as Cover Flow. Only ever true when there is something to draw. */
+  flow: boolean;
   onPick: (item: MediaItem) => void;
   onOpen: (item: MediaItem) => void;
 }) {
@@ -361,6 +407,20 @@ function Results({
           Transport and volume still work — this is only the library.
         </p>
       </div>
+    );
+  }
+
+  if (flow && result) {
+    return (
+      <>
+        {result.kind === 'list' && result.note ? <p class="browse-note">{result.note}</p> : null}
+        <CoverFlow
+          result={result}
+          onPick={onPick}
+          onOpen={onOpen}
+          renderRow={(item, openRow) => <ItemRow item={item} onPick={onPick} onOpen={openRow} />}
+        />
+      </>
     );
   }
 
@@ -427,8 +487,25 @@ function Results({
   return null;
 }
 
-/** Kinds whose contents can be opened rather than only played. */
-const EXPANDABLE = new Set<MediaKind>(['album', 'artist', 'playlist', 'podcast']);
+/**
+ * Whether this result is worth drawing as covers.
+ *
+ * Anything with rows is — except the inside of an album, where every row
+ * carries the same cover: a swipe through fourteen copies of one sleeve is
+ * a list pretending to be something else, so it stays a list.
+ */
+function flowable(result: BrowseResult | null, drilled: boolean): boolean {
+  if (!result) return false;
+  const items =
+    result.kind === 'list'
+      ? result.items
+      : result.kind === 'groups'
+        ? result.groups.flatMap((g) => g.items)
+        : [];
+  if (items.length === 0) return false;
+  if (drilled && items.length > 1 && new Set(items.map((i) => i.a ?? '')).size === 1) return false;
+  return true;
+}
 
 /**
  * One browsable row.
@@ -448,7 +525,7 @@ function ItemRow({
 }) {
   // `o` says the row is a place rather than a record — a source, a category.
   const openOnly = item.o === true;
-  const expandable = openOnly || (item.b !== false && EXPANDABLE.has(item.k) && item.u !== '');
+  const expandable = isExpandable(item);
 
   return (
     <div class="browse-row">
@@ -683,23 +760,3 @@ function PlayOptions({
     </div>
   );
 }
-
-const KIND_LABEL: Record<MediaKind, string> = {
-  artist: 'Artist',
-  album: 'Album',
-  track: 'Song',
-  playlist: 'Playlist',
-  radio: 'Radio',
-  podcast: 'Podcast',
-  audiobook: 'Audiobook',
-};
-
-const KIND_ICON: Record<MediaKind, string> = {
-  artist: 'media',
-  album: 'disc',
-  track: 'media',
-  playlist: 'list',
-  radio: 'radio',
-  podcast: 'media',
-  audiobook: 'media',
-};
