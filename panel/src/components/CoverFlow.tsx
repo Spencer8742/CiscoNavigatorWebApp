@@ -58,11 +58,14 @@ type Phase = 'opening' | 'open' | 'closing';
 
 export function CoverFlow({
   result,
+  large = false,
   onPick,
   onOpen,
   renderRow,
 }: {
   result: BrowseResult;
+  /** It has the whole screen, so the covers may grow to fill it. */
+  large?: boolean;
   /** Play something — opens the play options. */
   onPick: (item: MediaItem) => void;
   /** Drill into something, replacing the row with its contents. */
@@ -188,8 +191,10 @@ export function CoverFlow({
       const th = t.clientHeight;
       if (w === 0 || th === 0) return;
       const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
-      const cover = Math.round(Math.min(th * 0.72, w * 0.34, rem * 20));
-      const panelH = Math.round(Math.min(h - rem, rem * 34));
+      const cover = Math.round(
+        large ? Math.min(th * 0.78, w * 0.62, rem * 44) : Math.min(th * 0.72, w * 0.34, rem * 20),
+      );
+      const panelH = Math.round(Math.min(h - rem * (large ? 2 : 1), rem * (large ? 46 : 34)));
       // Wider than tall where there is room, for the sleeve-and-tracklist
       // layout; never wider than the stage, however narrow it is.
       const panelW = Math.round(Math.min(w - rem * 1.5, panelH * 1.65));
@@ -204,7 +209,7 @@ export function CoverFlow({
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [large]);
 
   /* A new result starts at the beginning, face up. */
   useLayoutEffect(() => {
@@ -399,7 +404,7 @@ export function CoverFlow({
   return (
     <div
       ref={stage}
-      class={showingFlip ? 'cf-stage is-flipped' : 'cf-stage'}
+      class={`cf-stage${large ? ' is-large' : ''}${showingFlip ? ' is-flipped' : ''}`}
       tabIndex={0}
       aria-roledescription="carousel"
       aria-label="Cover Flow. Swipe or use the arrow keys to browse."
