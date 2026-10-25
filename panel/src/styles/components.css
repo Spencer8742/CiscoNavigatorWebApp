@@ -1826,7 +1826,11 @@ html[data-theme='light'] .forecast-symbol[data-weather="clear"] { color: #5b8fa8
   display: flex;
   align-items: center;
   gap: var(--s-3);
-  width: 100%;
+  /* Not `width: 100%`: with the side margins that came to the full width
+     PLUS 4rem, and the bar ran off the right edge — clipped by the screen,
+     which hid its chevron and its right-hand border. The screen is a flex
+     column, so stretching fills the width between the margins instead. */
+  align-self: stretch;
   min-height: var(--touch);
   margin: 0 var(--s-6) var(--s-4);
   padding: var(--s-2) var(--s-4);
