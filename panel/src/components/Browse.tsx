@@ -121,6 +121,13 @@ export function Browse({
   const [chosen, setChosen] = useState<MediaItem | null>(null);
   const [mode, setMode] = useState<ViewMode>(savedMode);
   /**
+   * Search only: the covers were dismissed for this set of results, so they
+   * show as a list under the search box. A new search brings them back.
+   */
+  const [steppedOut, setSteppedOut] = useState(false);
+  /** Whether the last render was full screen, to stay there through a load. */
+  const wasImmersive = useRef(false);
+  /**
    * The drill-down stack.
    *
    * A stack rather than a route, so Back always means "up one" and closing
@@ -209,7 +216,22 @@ export function Browse({
     setOffset(0);
   };
 
+  const search = (text: string): void => {
+    setQuery(text);
+    setSteppedOut(false);
+  };
+
+  const filter = (kind: MediaKind | undefined): void => {
+    setMediaFilter(kind);
+    setSteppedOut(false);
+  };
+
   const toggleMode = (): void => {
+    // Back into the covers for these results, without changing the default.
+    if (steppedOut && mode === 'flow') {
+      setSteppedOut(false);
+      return;
+    }
     const next: ViewMode = mode === 'flow' ? 'list' : 'flow';
     setMode(next);
     try {
@@ -220,18 +242,63 @@ export function Browse({
   };
 
   const canFlow = !loading && !error && flowable(result, here !== null);
-  const flowing = mode === 'flow' && canFlow;
+  const shownMode: ViewMode = view === 'search' && steppedOut ? 'list' : mode;
+  const flowing = shownMode === 'flow' && canFlow;
+  /*
+   * Search results as covers take the whole screen: the search box and its
+   * chips have done their job, and the covers are what you came for. One
+   * button leaves. Opening an artist from a flipped card stays full screen
+   * while it loads, rather than flashing the sheet up and back down.
+   */
+  const immersive =
+    view === 'search' &&
+    shownMode === 'flow' &&
+    (canFlow || (loading && wasImmersive.current));
+  wasImmersive.current = immersive;
+
+  // Escape steps out, as the button does — unless it was turning a flipped
+  // card back over, which CoverFlow claims first.
+  useEffect(() => {
+    if (!immersive || chosen) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape' && !e.defaultPrevented) setSteppedOut(true);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [immersive, chosen]);
 
   return (
-    <div class="sheet-layer">
+    <div class={immersive ? 'sheet-layer is-immersive' : 'sheet-layer'}>
       <div class="sheet-scrim" onPointerDown={onClose} />
 
       <div
-        class="sheet browse-sheet"
+        class={immersive ? 'sheet browse-sheet is-immersive' : 'sheet browse-sheet'}
         role="dialog"
         aria-label={view === 'search' ? 'Search music' : 'Recently played music'}
         aria-modal={!chosen}
       >
+        {immersive ? (
+          <div class="cf-immersive-bar">
+            {here ? (
+              <Pressable class="cf-immersive-btn" onPress={back} ariaLabel="Back">
+                <Icon name="chevronLeft" size="1.4rem" weight={2.2} />
+              </Pressable>
+            ) : (
+              <span />
+            )}
+            <div class="cf-immersive-title truncate">{here ? here.name : query}</div>
+            <Pressable
+              class="cf-immersive-btn is-exit"
+              onPress={() => setSteppedOut(true)}
+              ariaLabel="Leave Cover Flow"
+            >
+              <Icon name="close" size="1.4rem" weight={2} />
+            </Pressable>
+          </div>
+        ) : null}
+
+        {/* Hidden rather than unmounted while immersive, so stepping out
+            finds the search box as it was left. */}
         <div class="sheet-head">
           {here ? (
             <Pressable class="sheet-back p-sm" onPress={back} ariaLabel="Back">
@@ -248,10 +315,10 @@ export function Browse({
             <Pressable
               class="browse-mode p-sm"
               onPress={toggleMode}
-              ariaLabel={mode === 'flow' ? 'Show as a list' : 'Show as Cover Flow'}
+              ariaLabel={shownMode === 'flow' ? 'Show as a list' : 'Show as Cover Flow'}
             >
-              <Icon name={mode === 'flow' ? 'list' : 'grid'} size="1.1rem" weight={1.9} />
-              <span>{mode === 'flow' ? 'List' : 'Covers'}</span>
+              <Icon name={shownMode === 'flow' ? 'list' : 'grid'} size="1.1rem" weight={1.9} />
+              <span>{shownMode === 'flow' ? 'List' : 'Covers'}</span>
             </Pressable>
           ) : null}
           {here?.playable ? (
@@ -290,12 +357,12 @@ export function Browse({
 
         {view === 'search' && !here ? (
           <>
-            <SearchBox value={query} onSearch={setQuery} placeholder="Search Spotify and Sonos" />
+            <SearchBox value={query} onSearch={search} placeholder="Search Spotify and Sonos" />
             <div class="browse-filters scroll" aria-label="Result type">
               <FilterChip
                 label="All types"
                 active={!mediaFilter}
-                onPress={() => setMediaFilter(undefined)}
+                onPress={() => filter(undefined)}
               />
               {(['track', 'album', 'artist', 'playlist', 'radio', 'podcast'] as MediaKind[]).map(
                 (kind) => (
@@ -303,7 +370,7 @@ export function Browse({
                     key={kind}
                     label={KIND_LABEL[kind]}
                     active={mediaFilter === kind}
-                    onPress={() => setMediaFilter(kind)}
+                    onPress={() => filter(kind)}
                   />
                 ),
               )}
@@ -319,6 +386,7 @@ export function Browse({
             searching={view === 'search' && !here}
             query={query}
             flow={flowing}
+            immersive={immersive}
             onPick={setChosen}
             onOpen={open}
           />
@@ -377,6 +445,7 @@ function Results({
   searching,
   query,
   flow,
+  immersive,
   onPick,
   onOpen,
 }: {
@@ -387,6 +456,8 @@ function Results({
   query: string;
   /** Draw it as Cover Flow. Only ever true when there is something to draw. */
   flow: boolean;
+  /** The covers have the whole screen. */
+  immersive: boolean;
   onPick: (item: MediaItem) => void;
   onOpen: (item: MediaItem) => void;
 }) {
@@ -416,6 +487,7 @@ function Results({
         {result.kind === 'list' && result.note ? <p class="browse-note">{result.note}</p> : null}
         <CoverFlow
           result={result}
+          large={immersive}
           onPick={onPick}
           onOpen={onOpen}
           renderRow={(item, openRow) => <ItemRow item={item} onPick={onPick} onOpen={openRow} />}
@@ -588,7 +660,12 @@ function SearchBox({
     input.current?.focus();
   }, []);
 
-  const submit = (): void => onSearch(text.trim());
+  const submit = (): void => {
+    // Put the soft keyboard away: the results, perhaps full-screen covers,
+    // are what comes next.
+    input.current?.blur();
+    onSearch(text.trim());
+  };
 
   return (
     <form
