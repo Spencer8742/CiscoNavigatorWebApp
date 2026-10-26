@@ -2042,6 +2042,32 @@ describe('Spotify catalog search', () => {
     ]);
   });
 
+  test('copies the track shape from a song Sonos favourited', () => {
+    // The fields Sonos writes for a favourited song, which may differ from
+    // the built-in ones on newer firmware.
+    const favourites =
+      '<DIDL-Lite><item id="FV:2/7" parentID="FV:2" restricted="false">' +
+      '<dc:title>Song</dc:title><res>x-sonos-spotify:spotify%3atrack%3aFAV?sid=12&amp;flags=8232&amp;sn=1</res>' +
+      '<r:resMD>&lt;DIDL-Lite&gt;&lt;item id="10032020spotify%3atrack%3aFAV" parentID="10036028spotify%3aalbum%3aX" restricted="true"&gt;' +
+      '&lt;upnp:class&gt;object.item.audioItem.musicTrack&lt;/upnp:class&gt;' +
+      '&lt;desc id="cdudn"&gt;SA_RINCON3079_X_#Svc3079-0-Token&lt;/desc&gt;&lt;/item&gt;&lt;/DIDL-Lite&gt;</r:resMD></item></DIDL-Lite>';
+
+    const [account] = spotifyAccountsIn(favourites);
+    assert.deepEqual(account.track, {
+      flags: '8232',
+      idPrefix: '10032020',
+      parentId: '10036028spotify%3aalbum%3aX',
+    });
+
+    const song = sonosUri('spotify:track:OTHER', 'Other', 'track', account);
+    assert.equal(song.uri, 'x-sonos-spotify:spotify%3atrack%3aOTHER?sid=12&flags=8232&sn=1');
+    assert.match(song.metadata, /<item id="10032020spotify%3atrack%3aOTHER" parentID="10036028spotify%3aalbum%3aX"/);
+
+    // Containers keep their own shape.
+    const album = sonosUri('spotify:album:A', 'A', 'album', account);
+    assert.match(album.uri, /flags=8300/);
+  });
+
   test('learns the account from a track a speaker is playing, without a token', () => {
     assert.deepEqual(
       spotifyAccountsIn('x-sonos-spotify:spotify%3atrack%3aabc?sid=9&flags=8224&sn=2 '),
