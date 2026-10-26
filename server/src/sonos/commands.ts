@@ -1,5 +1,5 @@
 import { logger } from '~/lib/log.ts';
-import { integer } from '~/sonos/soap.ts';
+import { integer, SoapError } from '~/sonos/soap.ts';
 import { toPlayMode } from '~/sonos/store.ts';
 import { textOf, type XmlNode } from '~/sonos/xml.ts';
 import type { SonosClient } from '~/sonos/client.ts';
@@ -396,12 +396,28 @@ export class SonosCommands {
      * decides where. Zero means "at the end", which is what "add" means.
      */
     const next = enqueue === 'next' || enqueue === 'replace_next';
-    const added = await this.#av(lead, 'AddURIToQueue', {
-      EnqueuedURI: uri,
-      EnqueuedURIMetaData: playable.metadata,
-      DesiredFirstTrackNumberEnqueued: '0',
-      EnqueueAsNext: next ? '1' : '0',
-    });
+    let added: XmlNode;
+    try {
+      added = await this.#av(lead, 'AddURIToQueue', {
+        EnqueuedURI: uri,
+        EnqueuedURIMetaData: playable.metadata,
+        DesiredFirstTrackNumberEnqueued: '0',
+        EnqueueAsNext: next ? '1' : '0',
+      });
+    } catch (err) {
+      /*
+       * 800 is the speaker refusing the item itself rather than the moment:
+       * for a music service that is almost always the account the URI names
+       * (`sid`, `sn`) or the token in its `<desc>`. Log both, since the bare
+       * fault says nothing about which item or account was refused.
+       */
+      if (!(err instanceof SoapError) || err.code !== 800) throw err;
+      const token = /SA_RINCON[^<>"'\s]*-Token/.exec(playable.metadata)?.[0] ?? 'none';
+      log.warn(`${lead.name} refused to queue ${uri.slice(0, 160)} (UPnP 800, desc ${token})`);
+      return playable.sid !== null
+        ? 'Sonos refused that — check the service is linked in the Sonos app'
+        : 'The speaker did not accept that';
+    }
 
     /*
      * Sonos answers 200 OK with `NumTracksAdded: 0` when it cannot resolve
