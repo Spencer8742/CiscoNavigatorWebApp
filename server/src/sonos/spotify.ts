@@ -100,6 +100,8 @@ export class SpotifySearch {
   #account: Account | null = null;
   /** When `#account` expires. Infinity once it came from a URI Sonos wrote. */
   #accountUntil = 0;
+  /** The lookup in progress, so a page of concurrent opens shares one. */
+  #accountLookup: Promise<Account | null> | null = null;
   /**
    * Rows asked for per call when opening something. Spotify's own maximum is
    * 50; Development Mode has been cutting maximums without notice (search to
@@ -490,8 +492,15 @@ export class SpotifySearch {
    * deliberate: a URI Sonos itself built is ground truth, where the service
    * list gives an id that still leaves the account number to guess.
    */
-  async #resolveAccount(): Promise<Account | null> {
-    if (this.#account && Date.now() < this.#accountUntil) return this.#account;
+  #resolveAccount(): Promise<Account | null> {
+    if (this.#account && Date.now() < this.#accountUntil) return Promise.resolve(this.#account);
+    this.#accountLookup ??= this.#lookUpAccount().finally(() => {
+      this.#accountLookup = null;
+    });
+    return this.#accountLookup;
+  }
+
+  async #lookUpAccount(): Promise<Account | null> {
 
     /*
      * A Spotify item Sonos wrote is ground truth for all three of sid, sn and
@@ -534,7 +543,8 @@ export class SpotifySearch {
             `token=${learned.token ?? 'default'} — from ${source}`,
         );
       }
-      if (!seen) {
+      // Once per account, not once a minute while it stays unconfirmed.
+      if (changed && !seen) {
         log.warn(
           'No Spotify item in favourites, Sonos playlists, queues or on any speaker, ' +
             'so the Spotify account is not confirmed. If Sonos refuses Spotify songs, ' +

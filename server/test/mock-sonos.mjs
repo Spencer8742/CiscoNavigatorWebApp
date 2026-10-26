@@ -161,6 +161,7 @@ export function defaultZones() {
 export class MockSonos {
   /** uuid → { zone, server, port }. */
   #speakers = new Map();
+  #stopped = false;
   /** SID → { uuid, service, callback }. */
   #subs = new Map();
   #sidSeq = 0;
@@ -388,6 +389,7 @@ export class MockSonos {
   }
 
   async stop() {
+    this.#stopped = true;
     for (const { server } of this.#speakers.values()) {
       await new Promise((resolve) => server.close(resolve));
     }
@@ -411,6 +413,9 @@ export class MockSonos {
    */
   async set(uuid, changes) {
     const speaker = this.#speakers.get(uuid);
+    // A request still in flight when the suite stopped the household: the
+    // speaker is gone, so there is nothing left to change.
+    if (!speaker && this.#stopped) return;
     if (!speaker) throw new Error(`No mock speaker ${uuid}`);
     Object.assign(speaker.zone, changes);
 
@@ -558,6 +563,9 @@ export class MockSonos {
     // That is what lets events REPLACE the initial read rather than supplement
     // it, so a mock that waits for a change would hide a real dependency.
     setTimeout(() => {
+      // A subscription that landed just before the suite stopped the
+      // household has no speaker left to describe.
+      if (this.#stopped) return;
       if (service === 'RenderingControl') void this.#notifyRendering(zone.uuid);
       else if (service === 'AVTransport') void this.#notifyTransport(zone.uuid);
       else void this.#notifyTopology();
