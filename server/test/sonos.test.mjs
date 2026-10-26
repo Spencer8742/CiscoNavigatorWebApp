@@ -23,6 +23,7 @@ import {
   imageOf,
   parseEmbed,
   SpotifySearch,
+  spotifyAccountsIn,
   UriRegistry,
 } from '../dist/testkit.js';
 
@@ -2009,6 +2010,44 @@ describe('Spotify catalog search', () => {
     );
     assert.match(result.metadata, /id="00032020spotify%3atrack%3a0GiWi4EkPduFWHQyhiKpRB"/);
     assert.match(result.metadata, /SA_RINCON2311_X_#Svc2311-0-Token/);
+  });
+
+  test('carries the account token Sonos wrote into the metadata', () => {
+    const result = sonosUri('spotify:track:0GiWi4EkPduFWHQyhiKpRB', 'T', 'track', {
+      sid: 12,
+      sn: 3,
+      token: 'SA_RINCON3079_X_#Svc3079-1a2b3c4d-Token',
+    });
+
+    assert.match(result.uri, /\?sid=12&flags=8224&sn=3$/);
+    assert.match(result.metadata, />SA_RINCON3079_X_#Svc3079-1a2b3c4d-Token<\/desc>/);
+    assert.doesNotMatch(result.metadata, /-0-Token/);
+  });
+
+  test('learns sid, sn and token from a favourite Sonos wrote', () => {
+    // A favourites Result as a speaker sends it: the token is one escaping
+    // level down, inside r:resMD, and comes after the res it belongs to.
+    const result =
+      '<DIDL-Lite><item id="FV:2/1" parentID="FV:2" restricted="false">' +
+      '<dc:title>Radio 6</dc:title><res>x-sonosapi-stream:s44491?sid=254&amp;flags=8224&amp;sn=0</res>' +
+      '<r:resMD>&lt;DIDL-Lite&gt;&lt;item id="s44491"&gt;&lt;desc&gt;SA_RINCON65031_&lt;/desc&gt;&lt;/item&gt;&lt;/DIDL-Lite&gt;</r:resMD></item>' +
+      '<item id="FV:2/2" parentID="FV:2" restricted="false">' +
+      '<dc:title>Mix</dc:title><res>x-rincon-cpcontainer:1006206cspotify%3aplaylist%3a37i9?sid=12&amp;flags=8300&amp;sn=5</res>' +
+      '<r:resMD>&lt;DIDL-Lite&gt;&lt;item id="1006206cspotify%3aplaylist%3a37i9"&gt;' +
+      '&lt;desc id="cdudn"&gt;SA_RINCON3079_X_#Svc3079-9f8e7d6c-Token&lt;/desc&gt;&lt;/item&gt;&lt;/DIDL-Lite&gt;</r:resMD></item>' +
+      '</DIDL-Lite>';
+
+    assert.deepEqual(spotifyAccountsIn(result), [
+      { sid: 12, sn: 5, token: 'SA_RINCON3079_X_#Svc3079-9f8e7d6c-Token' },
+    ]);
+  });
+
+  test('learns the account from a track a speaker is playing, without a token', () => {
+    assert.deepEqual(
+      spotifyAccountsIn('x-sonos-spotify:spotify%3atrack%3aabc?sid=9&flags=8224&sn=2 '),
+      [{ sid: 9, sn: 2 }],
+    );
+    assert.deepEqual(spotifyAccountsIn('x-sonosapi-stream:s1?sid=254&sn=1'), []);
   });
 
   test('uses Sonos container and metadata prefixes independently', () => {

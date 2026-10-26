@@ -1,5 +1,5 @@
 import { logger } from '~/lib/log.ts';
-import { escapeXml, textOf } from '~/sonos/xml.ts';
+import { decodeEntities, escapeXml, textOf } from '~/sonos/xml.ts';
 import type { SonosClient } from '~/sonos/client.ts';
 import type { UriRegistry } from '~/sonos/uris.ts';
 import type { MediaArt } from '~/http/media-art.ts';
@@ -36,9 +36,14 @@ const log = logger('sonos-spotify');
  * either wrong produces a speaker that accepts the command and plays silence.
  *
  * So they are **learned from the household itself**: any existing Spotify item
- * in your favourites is a URI Sonos built, carrying the right values. Failing
- * that, `ListAvailableServices` gives the service id and `sn` falls back to 1.
- * Learned values are cached for the life of the process.
+ * in your favourites, Sonos playlists, a queue or on a speaker right now is a
+ * URI Sonos built, carrying the right values — and, alongside it, the account
+ * token in its `<desc>`, which is the third thing a speaker checks and the one
+ * a wrong guess at turns into UPnP 800. Failing that, `/status/accounts` gives
+ * the serial without a token, and `ListAvailableServices` the service id with
+ * `sn` guessed as 1. Only values Sonos wrote are cached for the life of the
+ * process; anything weaker is retried a minute later, so playing one Spotify
+ * song from the Sonos app is enough to correct it without a restart.
  */
 
 const TOKEN_URL = 'https://accounts.spotify.com/api/token';
@@ -71,7 +76,17 @@ interface Account {
   sid: number;
   /** Which linked account of that service. */
   sn: number;
+  /**
+   * The `<desc>` text Sonos itself wrote for this account —
+   * `SA_RINCON3079_X_#Svc3079-0-Token`, or with an account id in place of the
+   * `0`. Absent when nothing Sonos-written was found; `serviceDidl` then falls
+   * back to the `-0-` form.
+   */
+  token?: string;
 }
+
+/** How long an account that was not read from a Sonos-written URI is trusted. */
+const GUESS_TTL_MS = 60_000;
 
 export class SpotifySearch {
   readonly #env: Env['spotify'];
@@ -83,6 +98,10 @@ export class SpotifySearch {
   #token: string | null = null;
   #tokenExpires = 0;
   #account: Account | null = null;
+  /** When `#account` expires. Infinity once it came from a URI Sonos wrote. */
+  #accountUntil = 0;
+  /** The lookup in progress, so a page of concurrent opens shares one. */
+  #accountLookup: Promise<Account | null> | null = null;
   /**
    * Rows asked for per call when opening something. Spotify's own maximum is
    * 50; Development Mode has been cutting maximums without notice (search to
@@ -473,32 +492,82 @@ export class SpotifySearch {
    * deliberate: a URI Sonos itself built is ground truth, where the service
    * list gives an id that still leaves the account number to guess.
    */
-  async #resolveAccount(): Promise<Account | null> {
-    if (this.#account) return this.#account;
+  #resolveAccount(): Promise<Account | null> {
+    if (this.#account && Date.now() < this.#accountUntil) return Promise.resolve(this.#account);
+    this.#accountLookup ??= this.#lookUpAccount().finally(() => {
+      this.#accountLookup = null;
+    });
+    return this.#accountLookup;
+  }
 
-    // The shared service catalog reads `/status/accounts`, which is the only
-    // reliable source of the account serial when a household has no Spotify
-    // favourite (or has more than one Spotify login). Use it before the older
-    // URI/service-list fallbacks kept for firmware without that endpoint.
+  async #lookUpAccount(): Promise<Account | null> {
+
+    /*
+     * A Spotify item Sonos wrote is ground truth for all three of sid, sn and
+     * the `<desc>` token. `/status/accounts` (via the shared service catalog)
+     * still breaks a tie when the household has more than one Spotify login:
+     * the item from THAT account wins. But it no longer outranks what the
+     * speaker itself plays through — a serial it lists that no Sonos-written
+     * item uses is how a household got `AddURIToQueue → UPnP 800` on every
+     * Spotify song.
+     */
     await this.#services.ready();
     const linked = this.#services
       .list()
       .find((service) => service.name.toLowerCase() === 'spotify' && service.sn !== null);
-    const learned = linked?.sn !== null && linked?.sn !== undefined
-      ? { sid: linked.sid, sn: linked.sn }
-      : (await this.#learnFromFavourites()) ?? (await this.#learnFromServices());
+    const written = await this.#learnFromHousehold();
+    const seen =
+      written.find((a) => linked && a.sid === linked.sid && a.sn === linked.sn) ?? written[0] ?? null;
+
+    let learned: Account | null;
+    let source: string;
+    if (seen) {
+      learned = seen;
+      source = 'a Spotify item Sonos wrote';
+    } else if (linked?.sn !== null && linked?.sn !== undefined) {
+      learned = { sid: linked.sid, sn: linked.sn };
+      source = 'the linked-account list (no Spotify item to confirm it)';
+    } else {
+      learned = await this.#learnFromServices();
+      source = 'a guess from the service list';
+    }
+
     if (learned) {
-      log.info(`Sonos Spotify account: sid=${learned.sid}, sn=${learned.sn}`);
+      const changed =
+        learned.sid !== this.#account?.sid ||
+        learned.sn !== this.#account?.sn ||
+        learned.token !== this.#account?.token;
+      if (changed) {
+        log.info(
+          `Sonos Spotify account: sid=${learned.sid}, sn=${learned.sn}, ` +
+            `token=${learned.token ?? 'default'} — from ${source}`,
+        );
+      }
+      // Once per account, not once a minute while it stays unconfirmed.
+      if (changed && !seen) {
+        log.warn(
+          'No Spotify item in favourites, Sonos playlists, queues or on any speaker, ' +
+            'so the Spotify account is not confirmed. If Sonos refuses Spotify songs, ' +
+            'play any Spotify song once from the Sonos app; it is picked up within a minute.',
+        );
+      }
       this.#account = learned;
+      this.#accountUntil = seen ? Number.POSITIVE_INFINITY : Date.now() + GUESS_TTL_MS;
     }
     return learned;
   }
 
-  /** Lift `sid` and `sn` out of any Spotify URI the household already holds. */
-  async #learnFromFavourites(): Promise<Account | null> {
-    const host = [...this.#client.household.zones.values()][0]?.host;
-    if (!host) return null;
+  /**
+   * Every Spotify account a URI Sonos wrote names: favourites, Sonos
+   * playlists, the queue, and whatever each speaker is playing now — the last
+   * being what one song played from the Sonos app leaves behind.
+   */
+  async #learnFromHousehold(): Promise<Account[]> {
+    const zones = [...this.#client.household.zones.values()];
+    const host = zones[0]?.host;
+    if (!host) return [];
 
+    const texts: string[] = [];
     for (const objectId of ['FV:2', 'SQ:', 'Q:0']) {
       try {
         const response = await this.#client.call(host, 'ContentDirectory', 'Browse', {
@@ -509,15 +578,27 @@ export class SpotifySearch {
           RequestedCount: 100,
           SortCriteria: '',
         });
-
-        const found = accountFromUris(JSON.stringify(response));
-        if (found) return found;
+        texts.push(textOf(response, 'Result') ?? '');
       } catch {
         // A household with no favourites, or a speaker that declined. Try the
         // next container rather than giving up on the whole feature.
       }
     }
-    return null;
+
+    for (const zone of zones) {
+      try {
+        const media = await this.#client.call(zone.host, 'AVTransport', 'GetMediaInfo', { InstanceID: 0 });
+        const position = await this.#client.call(zone.host, 'AVTransport', 'GetPositionInfo', { InstanceID: 0 });
+        texts.push(
+          `${textOf(media, 'CurrentURI') ?? ''} ${textOf(media, 'CurrentURIMetaData') ?? ''}`,
+          `${textOf(position, 'TrackURI') ?? ''} ${textOf(position, 'TrackMetaData') ?? ''}`,
+        );
+      } catch {
+        // An unreachable speaker says nothing about the account.
+      }
+    }
+
+    return texts.flatMap((text) => spotifyAccountsIn(text));
   }
 
   /** Fall back to the service list, which gives an id but no account number. */
@@ -611,6 +692,7 @@ export function sonosUri(
     title,
     upnpClass: UPNP_CLASS[kind] ?? UPNP_CLASS['track'] ?? '',
     sid: account.sid,
+    ...(account.token ? { token: account.token } : {}),
   });
 
   // Spotify share links, including albums and playlists, are expanded by
@@ -661,6 +743,8 @@ const UPNP_CLASS: Partial<Record<SpotifyKind, string>> = {
  * `serviceType = sid * 256 + 7` is Sonos's own relationship between a music
  * service's id and the token in its metadata descriptor — arbitrary-looking,
  * and load-bearing: it is how the speaker picks the account to play through.
+ * `token` is the descriptor Sonos itself wrote, when one was found; households
+ * whose accounts are keyed by an id rather than `0` refuse the default.
  */
 export function serviceDidl(item: {
   id: string;
@@ -668,8 +752,10 @@ export function serviceDidl(item: {
   upnpClass: string;
   sid: number;
   parentId?: string;
+  token?: string;
 }): string {
   const serviceType = item.sid * 256 + 7;
+  const token = item.token ?? `SA_RINCON${serviceType}_X_#Svc${serviceType}-0-Token`;
   return (
     '<DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" ' +
     'xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" ' +
@@ -679,22 +765,48 @@ export function serviceDidl(item: {
     `<dc:title>${escapeXml(item.title)}</dc:title>` +
     `<upnp:class>${item.upnpClass}</upnp:class>` +
     '<desc id="cdudn" nameSpace="urn:schemas-rinconnetworks-com:metadata-1-0/">' +
-    `SA_RINCON${serviceType}_X_#Svc${serviceType}-0-Token</desc>` +
+    `${escapeXml(token)}</desc>` +
     '</item></DIDL-Lite>'
   );
 }
 
-/** Find a `sid`/`sn` pair in any Spotify URI inside a blob of response text. */
-export function accountFromUris(text: string): Account | null {
-  // `&amp;` survives one decode — Sonos escapes the URI's own `&` before it
-  // escapes the DIDL around it. See `accountsFromUris` for what this cost.
-  const flat = text.replace(/&amp;/g, '&');
-  const match = /x-sonos-spotify:[^"'<\\\s]*[?&]sid=(\d+)[^"'<\\\s]*?[?&]sn=(\d+)/.exec(flat);
-  if (!match?.[1] || !match[2]) return null;
+/**
+ * Every Spotify account named by a Sonos-written URI in a DIDL blob, with the
+ * `<desc>` token from the same item when it carries one.
+ *
+ * Favourites hold the token one escaping level down, inside `r:resMD`, so the
+ * text is decoded until it stops changing. Items are then taken one
+ * `</item>` at a time: a favourite's `res` comes before its `resMD`, and the
+ * inner item's close is the first one after both, so each chunk pairs a URI
+ * with its own token rather than a neighbour's.
+ *
+ * Any Spotify URI counts — tracks, and the `x-rincon-cpcontainer:` albums and
+ * playlists that make up most favourites.
+ */
+export function spotifyAccountsIn(text: string): Account[] {
+  let flat = text;
+  for (let i = 0; i < 4; i += 1) {
+    const next = decodeEntities(flat);
+    if (next === flat) break;
+    flat = next;
+  }
 
-  const sid = Number.parseInt(match[1], 10);
-  const sn = Number.parseInt(match[2], 10);
-  return Number.isFinite(sid) && Number.isFinite(sn) ? { sid, sn } : null;
+  const out: Account[] = [];
+  for (const chunk of flat.split('</item>')) {
+    const uri = /(?:x-sonos-spotify:|x-rincon-cpcontainer:[0-9a-f]{8})spotify%3a[^"'<>\s\\]*/i.exec(chunk)?.[0];
+    if (!uri) continue;
+    const sid = Number(/[?&]sid=(\d+)/.exec(uri)?.[1]);
+    const sn = Number(/[?&]sn=(\d+)/.exec(uri)?.[1]);
+    if (!Number.isSafeInteger(sid) || !Number.isSafeInteger(sn) || sid <= 0) continue;
+
+    const type = sid * 256 + 7;
+    const token = new RegExp(`SA_RINCON${type}_[^<>"'\\s]*?-Token`).exec(chunk)?.[0];
+    // One entry per account, keeping the first chunk that carried a token.
+    const known = out.find((a) => a.sid === sid && a.sn === sn);
+    if (!known) out.push({ sid, sn, ...(token ? { token } : {}) });
+    else if (!known.token && token) known.token = token;
+  }
+  return out;
 }
 
 /* ── Helpers ─────────────────────────────────────────────────────────────*/
