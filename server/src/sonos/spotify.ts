@@ -83,6 +83,23 @@ interface Account {
    * back to the `-0-` form.
    */
   token?: string;
+  /**
+   * How Sonos itself shapes a single Spotify track for this household, copied
+   * from one it wrote: the `flags` in the URI, the eight-digit prefix on the
+   * DIDL item id, and its `parentID`.
+   *
+   * These are firmware details rather than account ones, and they move: a
+   * favourited song played while the same song built here was refused with
+   * UPnP 800 under the identical sid, sn and token. Absent when no
+   * Sonos-written track was found, and the built-in values are used.
+   */
+  track?: TrackShape;
+}
+
+interface TrackShape {
+  flags: string;
+  idPrefix: string;
+  parentId: string | null;
 }
 
 /** How long an account that was not read from a Sonos-written URI is trusted. */
@@ -536,11 +553,16 @@ export class SpotifySearch {
       const changed =
         learned.sid !== this.#account?.sid ||
         learned.sn !== this.#account?.sn ||
-        learned.token !== this.#account?.token;
+        learned.token !== this.#account?.token ||
+        JSON.stringify(learned.track) !== JSON.stringify(this.#account?.track);
       if (changed) {
         log.info(
           `Sonos Spotify account: sid=${learned.sid}, sn=${learned.sn}, ` +
-            `token=${learned.token ?? 'default'} — from ${source}`,
+            `token=${learned.token ?? 'default'}, ` +
+            (learned.track
+              ? `track flags=${learned.track.flags} id=${learned.track.idPrefix}… parent=${learned.track.parentId ?? '-1'}`
+              : 'track shape default') +
+            ` — from ${source}`,
         );
       }
       // Once per account, not once a minute while it stays unconfirmed.
@@ -552,7 +574,9 @@ export class SpotifySearch {
         );
       }
       this.#account = learned;
-      this.#accountUntil = seen ? Number.POSITIVE_INFINITY : Date.now() + GUESS_TTL_MS;
+      // Settled once a Sonos-written TRACK has been seen; until then a
+      // favourite added later still gets picked up.
+      this.#accountUntil = seen?.track ? Number.POSITIVE_INFINITY : Date.now() + GUESS_TTL_MS;
     }
     return learned;
   }
@@ -683,15 +707,19 @@ export function sonosUri(
   const encoded = encodeURIComponent(spotifyUri).replace(/%3A/g, '%3a');
   const prefix = CONTAINER_URI_PREFIX[kind];
 
+  // A single track or episode takes the shape Sonos was seen writing.
+  const shape = prefix ? undefined : account.track;
+
   const uri = prefix
     ? `x-rincon-cpcontainer:${prefix}${encoded}?sid=${account.sid}&flags=${CONTAINER_FLAGS}&sn=${account.sn}`
-    : `x-sonos-spotify:${encoded}?sid=${account.sid}&flags=${FLAGS}&sn=${account.sn}`;
+    : `x-sonos-spotify:${encoded}?sid=${account.sid}&flags=${shape?.flags ?? FLAGS}&sn=${account.sn}`;
 
   const metadata = serviceDidl({
-    id: `${ITEM_ID_PREFIX[kind] ?? ITEM_ID_PREFIX.track}${encoded}`,
+    id: `${shape?.idPrefix ?? ITEM_ID_PREFIX[kind] ?? ITEM_ID_PREFIX.track}${encoded}`,
     title,
     upnpClass: UPNP_CLASS[kind] ?? UPNP_CLASS['track'] ?? '',
     sid: account.sid,
+    ...(shape?.parentId ? { parentId: shape.parentId } : {}),
     ...(account.token ? { token: account.token } : {}),
   });
 
@@ -801,12 +829,28 @@ export function spotifyAccountsIn(text: string): Account[] {
 
     const type = sid * 256 + 7;
     const token = new RegExp(`SA_RINCON${type}_[^<>"'\\s]*?-Token`).exec(chunk)?.[0];
-    // One entry per account, keeping the first chunk that carried a token.
+    const track = uri.toLowerCase().startsWith('x-sonos-spotify:spotify%3atrack%3a')
+      ? trackShapeIn(uri, chunk)
+      : undefined;
+
+    // One entry per account, filling in whatever a later chunk adds.
     const known = out.find((a) => a.sid === sid && a.sn === sn);
-    if (!known) out.push({ sid, sn, ...(token ? { token } : {}) });
-    else if (!known.token && token) known.token = token;
+    if (!known) out.push({ sid, sn, ...(token ? { token } : {}), ...(track ? { track } : {}) });
+    else {
+      if (!known.token && token) known.token = token;
+      if (!known.track && track) known.track = track;
+    }
   }
   return out;
+}
+
+/** The flags, item-id prefix and parent of one Sonos-written Spotify track. */
+function trackShapeIn(uri: string, chunk: string): TrackShape | undefined {
+  const flags = /[?&]flags=(\d+)/.exec(uri)?.[1];
+  const item = /<item\b[^>]*\bid="([0-9a-f]{8})spotify%3atrack%3a[^"]*"[^>]*>/i.exec(chunk);
+  if (!flags || !item?.[1]) return undefined;
+  const parentId = /\bparentID="([^"]*)"/.exec(item[0])?.[1] ?? null;
+  return { flags, idPrefix: item[1], parentId: parentId && parentId !== '-1' ? parentId : null };
 }
 
 /* ── Helpers ─────────────────────────────────────────────────────────────*/
