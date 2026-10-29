@@ -8,6 +8,7 @@ import {
   assistWakeResult,
   linkStatus,
   markActivity,
+  prefs,
   ready,
   showToast,
 } from '~/state/ui.ts';
@@ -26,6 +27,7 @@ export function AssistWakeListener() {
     ready.value &&
     linkStatus.value === 'connected' &&
     !assistWakePaused.value &&
+    prefs.value.alwaysListening &&
     canRecordVoice();
 
   useEffect(() => {

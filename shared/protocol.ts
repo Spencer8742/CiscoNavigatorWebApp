@@ -1131,6 +1131,7 @@ export type ClientMessage =
   | { t: 'pref'; id: number; key: 'showSettings'; value: boolean }
   | { t: 'pref'; id: number; key: 'rememberPage'; value: boolean }
   | { t: 'pref'; id: number; key: 'meetingPromptEverywhere'; value: boolean }
+  | { t: 'pref'; id: number; key: 'alwaysListening'; value: boolean }
   /**
    * Not a setting anybody taps — the panel noting where it is, so it can
    * come back here after a reload. Sent on navigation rather than on a
@@ -1259,6 +1260,17 @@ export interface PanelPrefs {
    */
   meetingPromptEverywhere: boolean;
   /**
+   * Let the microphone listen for the wake word, and let the Assist button
+   * open it.
+   *
+   * On by default, which is how voice has always behaved. Off turns the
+   * microphone off entirely on this panel: no wake word listening (in the
+   * browser or the Android wrapper), and the Assist button in the navigation
+   * is shown disabled rather than hidden, so it is obvious the panel is not
+   * listening and where to look to change that.
+   */
+  alwaysListening: boolean;
+  /**
    * The page this panel was last on, or null if it has not been anywhere.
    *
    * Written by the panel as it navigates, read back once when it reconnects
@@ -1368,6 +1380,7 @@ export const DEFAULT_PREFS: PanelPrefs = {
   showSettings: true,
   rememberPage: true,
   meetingPromptEverywhere: false,
+  alwaysListening: true,
   lastPage: null,
   lastRoom: null,
   lastControlPage: null,
@@ -1409,6 +1422,7 @@ export const BOOLEAN_PREFS = [
   'showSettings',
   'rememberPage',
   'meetingPromptEverywhere',
+  'alwaysListening',
 ] as const;
 
 /** Application-level heartbeat interval. A Wi-Fi roam can leave a socket

@@ -7,6 +7,7 @@ import {
   narrow,
   navigate,
   openAssistAndListen,
+  prefs,
   route,
   visibleRoutes,
   type Route,
@@ -58,6 +59,7 @@ export function Nav() {
   const pos = narrow.value ? 'bottom' : ui.value.navPosition;
   const active = route.value;
   const status = linkStatus.value;
+  const listening = prefs.value.alwaysListening;
 
   return (
     <nav class="nav" data-pos={pos} aria-label="Primary">
@@ -76,12 +78,16 @@ export function Nav() {
       ))}
 
       {!deviceInfo().isRoomNavigator ? (
+        // Disabled, not hidden, when the microphone is off in Settings: a
+        // missing button reads as a broken panel, a crossed-out one as a
+        // choice somebody made.
         <Pressable
           class="nav-assist p-sm"
           onPress={openAssistAndListen}
-          ariaLabel="Assist"
+          disabled={!listening}
+          ariaLabel={listening ? 'Assist' : 'Assist (microphone off in Settings)'}
         >
-          <Icon name="mic" size="1.45rem" weight={1.9} />
+          <Icon name={listening ? 'mic' : 'micOff'} size="1.45rem" weight={1.9} />
         </Pressable>
       ) : null}
 
