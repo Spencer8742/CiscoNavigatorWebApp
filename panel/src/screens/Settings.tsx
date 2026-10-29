@@ -3,6 +3,7 @@ import { config, ui } from '~/config/index.ts';
 import { health, linkStatus, prefs, socketState } from '~/state/ui.ts';
 import { Pressable } from '~/components/Pressable.tsx';
 import { WakeSettings } from '~/components/WakeSettings.tsx';
+import { NotificationSettings } from '~/components/NotificationSettings.tsx';
 import { reloadAllPanels, setPref } from '~/net/socket.ts';
 import { getPanelId } from '~/net/auth.ts';
 import {
@@ -105,6 +106,7 @@ export function Settings() {
         </p>
 
         <WakeSettings />
+        <NotificationSettings />
         <div class="section-head">
           <h2 class="section-title">Home screen</h2>
         </div>

@@ -1,4 +1,5 @@
 import { authHeaders, getToken } from '~/net/auth.ts';
+import { isStandalone } from '~/lib/device.ts';
 
 /**
  * Work out *why* the panel cannot connect, and say so on screen.
@@ -88,7 +89,11 @@ export async function diagnose(): Promise<ConnectionProblem> {
         ? 'The server rejected the stored token. It was most likely changed on the server.'
         : 'This page was opened without a token, so the panel cannot authenticate.',
       // The single most useful sentence this app can display.
-      fix: `Open this address once, with the PANEL_TOKEN set on the server:\n\nhttp://${host}/?t=YOUR_PANEL_TOKEN`,
+      fix: isStandalone()
+        // A home-screen app has no address bar to open anything in, and keeps
+        // the address it was added from — so the fix is to add it again.
+        ? `Remove this app from the Home Screen, open this address in Safari, then Add to Home Screen from there:\n\nhttp://${host}/?t=YOUR_PANEL_TOKEN`
+        : `Open this address once, with the PANEL_TOKEN set on the server:\n\nhttp://${host}/?t=YOUR_PANEL_TOKEN`,
     };
   }
 
