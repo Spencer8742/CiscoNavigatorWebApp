@@ -853,3 +853,47 @@ controls:
   #      # has a real Camera toggle and those keys should be deleted — a key
   #      # that only says "the press was sent" is strictly worse than a toggle
   #      # that reads the camera back.
+
+# ─── Notifications ──────────────────────────────────────────────────────────
+# Push notifications the backend sends by itself, to phones and iPads that
+# have the panel on their home screen (docs/DEPLOYMENT.md §3b). Each block is
+# off until it is written here.
+#
+# `to:` is a list of PANEL IDS. A phone is addressed by the `&panel=` it was
+# added to the home screen with — add yours from
+#   https://<panel address>/?t=<PANEL_TOKEN>&panel=spencer-phone
+# and it is `spencer-phone` here. Leave `to:` out to reach every device that
+# has the category switched on. Each device also turns a category on or off
+# in its own Settings → Notifications.
+#
+# notifications:
+#   # Household quiet hours, on ui.timezone. Only rules with `urgent: true`
+#   # send between these times; the rest are dropped, not held for morning.
+#   quiet: { from: "22:00", until: "07:00" }
+#
+#   # A warning before each booking on a device tile's meeting list (a tile
+#   # with a `meetings:` entity — see controls.pages). Tapping it opens the
+#   # page that tile is on, where Join already is.
+#   meetings:
+#     leadMinutes: 5
+#     to: [spencer-phone]
+#     # devices: [desk_pro]   # tile ids; leave out for every device tile
+#
+#   # Somebody's left something open. When the house empties, after
+#   # `afterSeconds` (time for the garage to close behind the car), one
+#   # notification lists anything still open or unlocked. While it stays
+#   # empty, anything watched that opens or unlocks is reported at once.
+#   # Urgent by default, so it comes through quiet hours.
+#   away:
+#     # zone.home (people home, the default), an alarm_control_panel armed
+#     # away, or a person / group / device_tracker that is not home.
+#     presence: zone.home
+#     afterSeconds: 120
+#     to: [spencer-phone]
+#     watch:
+#       - cover.garage_door
+#       - lock.front_door
+#       - binary_sensor.back_door
+#
+# These entities are only read by the backend. Watching a lock does NOT let a
+# panel unlock it — that still needs the lock on the dashboard itself.

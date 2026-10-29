@@ -214,14 +214,28 @@ export class PushNotifier {
    */
   async notify(input: unknown): Promise<SendReport> {
     const message = parseMessage(input);
-    const category = message.category ?? 'general';
-    const targets = [...this.#subs.values()].filter(
-      (sub) => sub.categories.includes(category) && (!message.panel || sub.panel === message.panel),
-    );
-    return this.#deliver(targets, { ...message, category });
+    return this.send(message, { panels: message.panel ? [message.panel] : [] });
   }
 
-  async #deliver(targets: StoredSubscription[], message: PushMessage): Promise<SendReport> {
+  /**
+   * The backend's own way in, for notifications it decides to send itself.
+   *
+   * `panels` limits it to devices subscribed as one of those panel ids; empty
+   * means every device that wants the category. `urgent` asks the push
+   * service to deliver it straight away rather than when convenient.
+   */
+  async send(
+    message: PushMessage,
+    { panels = [], urgent = false }: { panels?: string[]; urgent?: boolean } = {},
+  ): Promise<SendReport> {
+    const category = message.category ?? 'general';
+    const targets = [...this.#subs.values()].filter(
+      (sub) => sub.categories.includes(category) && (panels.length === 0 || (sub.panel !== null && panels.includes(sub.panel))),
+    );
+    return this.#deliver(targets, { ...message, category }, urgent);
+  }
+
+  async #deliver(targets: StoredSubscription[], message: PushMessage, urgent = false): Promise<SendReport> {
     const report: SendReport = { sent: 0, failed: 0, removed: 0 };
     if (!this.#key || !this.#keys || targets.length === 0) return report;
 
@@ -232,10 +246,10 @@ export class PushNotifier {
         tag: message.tag ?? null,
         // A tap opens the panel the device subscribed as, so it comes back
         // with its own settings rather than the shared ones.
-        url: message.url ?? (sub.panel ? `/?panel=${sub.panel}` : '/'),
+        url: withPanel(message.url ?? '/', sub.panel),
         category: message.category ?? null,
       }));
-      const status = await this.#send(sub, payload);
+      const status = await this.#send(sub, payload, urgent);
       if (status >= 200 && status < 300) {
         report.sent++;
       } else if (status === 404 || status === 410) {
@@ -256,7 +270,7 @@ export class PushNotifier {
   }
 
   /** One POST to one push service. Returns the HTTP status, or 0. */
-  async #send(sub: StoredSubscription, payload: Buffer): Promise<number> {
+  async #send(sub: StoredSubscription, payload: Buffer, urgent: boolean): Promise<number> {
     if (!this.#key || !this.#keys) return 0;
     try {
       const res = await this.#fetch(sub.endpoint, {
@@ -268,7 +282,7 @@ export class PushNotifier {
           // A day: long enough for a phone that is off overnight, short
           // enough that "the door is open" does not arrive next week.
           ttl: '86400',
-          urgency: 'normal',
+          urgency: urgent ? 'high' : 'normal',
         },
         body: encryptPayload(sub, payload),
         signal: AbortSignal.timeout(10_000),
@@ -320,6 +334,15 @@ export class PushNotifier {
       log.warn(`Could not persist push subscriptions to ${this.#subsPath}:`, err);
     }
   }
+}
+
+/** `url`, with `panel=` added when the device has an id and the path names none. */
+function withPanel(url: string, panel: string | null): string {
+  if (!panel) return url;
+  const parsed = new URL(url, 'http://panel');
+  if (parsed.searchParams.has('panel')) return url;
+  parsed.searchParams.set('panel', panel);
+  return `${parsed.pathname}${parsed.search}${parsed.hash}`;
 }
 
 function parseTarget(value: unknown): PushTarget | null {

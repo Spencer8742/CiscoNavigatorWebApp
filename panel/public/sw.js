@@ -69,6 +69,9 @@ self.addEventListener('notificationclick', (event) => {
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windows) => {
       for (const client of windows) {
         if (new URL(client.url).origin === self.location.origin && 'focus' in client) {
+          // The panel does its own routing (it never navigates by URL), so
+          // it is told where to go rather than reloaded there.
+          client.postMessage({ t: 'open', url: target.href });
           return client.focus();
         }
       }

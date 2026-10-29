@@ -66,6 +66,18 @@ export class HaStore {
     return this.#states.get(entityId) ?? null;
   }
 
+  /**
+   * Any entity, referenced by the config or not — for the backend's own
+   * readers only, such as the notification rules watching a lock.
+   *
+   * Never hand this to a panel. What panels see, and what they may call a
+   * service on, stays the allow-list above: watching the front door so the
+   * backend can say it is unlocked must not also let a panel unlock it.
+   */
+  peek(entityId: string): EntityState | null {
+    return this.#states.get(entityId) ?? null;
+  }
+
   /** True if the config references this entity. Used by the service guard. */
   isAllowed(entityId: string): boolean {
     return this.#allowed.has(entityId);

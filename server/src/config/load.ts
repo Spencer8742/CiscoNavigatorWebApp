@@ -14,6 +14,7 @@ import {
 import { panelIdOf } from '@shared/protocol.ts';
 import type {
   AlertRule,
+  NotificationsConfig,
   CastDisplay,
   CastPane,
   CastTarget,
@@ -115,6 +116,7 @@ export const FALLBACK_CONFIG: DashboardConfig = {
     appleTvs: [],
     pollSeconds: 15,
   },
+  notifications: { quiet: null, meetings: null, away: null },
 };
 
 /* ── Coercion helpers ──────────────────────────────────────────────────────
@@ -427,7 +429,91 @@ function validate(raw: unknown): DashboardConfig {
       // two lights cost four requests a minute.
       pollSeconds: num(controlsRaw['pollSeconds'], 15, 'controls.pollSeconds', 0, 3600),
     },
+
+    notifications: notificationsConfig(root['notifications']),
   };
+}
+
+/**
+ * `notifications:`. Every block is optional and off until written; a block
+ * that cannot be used — an `away:` watching nothing — is dropped with a
+ * warning rather than left to send nothing in silence.
+ */
+function notificationsConfig(v: unknown): NotificationsConfig {
+  const raw = obj(v);
+  const out: NotificationsConfig = { quiet: null, meetings: null, away: null };
+
+  if (raw['quiet'] !== undefined) {
+    const q = obj(raw['quiet']);
+    const from = clockTime(q['from'], 'notifications.quiet.from');
+    const until = clockTime(q['until'], 'notifications.quiet.until');
+    if (from && until) out.quiet = { from, until };
+  }
+
+  if (raw['meetings'] !== undefined) {
+    const m = obj(raw['meetings']);
+    out.meetings = {
+      leadMinutes: num(m['leadMinutes'], 5, 'notifications.meetings.leadMinutes', 1, 120),
+      to: panelIds(m['to'], 'notifications.meetings.to'),
+      devices: idList(m['devices'], 'notifications.meetings.devices'),
+      urgent: bool(m['urgent'], false, 'notifications.meetings.urgent'),
+    };
+  }
+
+  if (raw['away'] !== undefined) {
+    const a = obj(raw['away']);
+    const watch = idList(a['watch'], 'notifications.away.watch').filter((id) => {
+      if (id.includes('.')) return true;
+      warn('notifications.away.watch', 'an entity id', id);
+      return false;
+    });
+    const presence = str(a['presence'], 'zone.home', 'notifications.away.presence');
+    if (watch.length === 0) {
+      log.warn('notifications.away has nothing to watch — add entity ids under watch:');
+    } else {
+      out.away = {
+        presence,
+        afterSeconds: num(a['afterSeconds'], 120, 'notifications.away.afterSeconds', 0, 3600),
+        to: panelIds(a['to'], 'notifications.away.to'),
+        urgent: bool(a['urgent'], true, 'notifications.away.urgent'),
+        watch,
+      };
+    }
+  }
+
+  return out;
+}
+
+/** `"22:00"` → `"22:00"`; anything else is a warning and null. */
+function clockTime(v: unknown, path: string): string | null {
+  const m = typeof v === 'string' ? /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(v.trim()) : null;
+  if (m) return `${m[1]!.padStart(2, '0')}:${m[2]}`;
+  warn(path, 'a time like "22:00"', v);
+  return null;
+}
+
+function idList(v: unknown, path: string): string[] {
+  if (v === undefined || v === null) return [];
+  const list = Array.isArray(v) ? v : [v];
+  const out: string[] = [];
+  for (const item of list) {
+    if (typeof item === 'string' && item.trim()) {
+      if (!out.includes(item.trim())) out.push(item.trim());
+    } else {
+      warn(path, 'a list of ids', item);
+    }
+  }
+  return out;
+}
+
+/** Panel ids, held to the same rule the panels themselves are. */
+function panelIds(v: unknown, path: string): string[] {
+  return idList(v, path).flatMap((raw) => {
+    const id = panelIdOf(raw);
+    if (id) return [id];
+    warn(path, 'panel ids (letters, digits, - and _)', raw);
+    return [];
+  });
 }
 
 /**

@@ -195,6 +195,16 @@ test('the notifier delivers by category and panel, and forgets expired devices',
     // With no url of its own, a tap opens the panel the device subscribed as.
     assert.equal(decrypt(kitchen, service.received.at(-1).body).url, '/?panel=kitchen');
 
+    // The backend's own sends: aimed at panel ids, a tap URL that keeps the
+    // device's panel, and urgent ones asked for straight away.
+    assert.deepEqual(
+      await notifier.send({ title: 'Standup in 5 min', url: '/?go=controls%3Aoffice' }, { panels: ['kitchen', 'office'], urgent: true }),
+      { sent: 1, failed: 0, removed: 0 },
+    );
+    const urgent = service.received.at(-1);
+    assert.equal(urgent.headers.urgency, 'high');
+    assert.equal(decrypt(kitchen, urgent.body).url, '/?go=controls%3Aoffice&panel=kitchen');
+
     // A test reaches the device whatever its categories.
     assert.deepEqual(await notifier.test({ endpoint: muted.subscription.endpoint }), { sent: 1, failed: 0, removed: 0 });
 

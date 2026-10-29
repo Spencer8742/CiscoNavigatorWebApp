@@ -39,6 +39,7 @@ import { Iina } from '~/iina/index.ts';
 import { ImmichImages } from '~/immich/images.ts';
 import { Playlist } from '~/immich/playlist.ts';
 import { PushNotifier, PushRequestError } from '~/push/index.ts';
+import { NotificationRules } from '~/push/rules.ts';
 import { MUSIC_VERBS } from '@shared/protocol.ts';
 import type {
   BackendHealth,
@@ -261,6 +262,7 @@ async function main(): Promise<void> {
       const patch = store.apply(event);
       if (!isEmptyPatch(patch)) hub.broadcastPatch(patch);
       meetingRefresher.check();
+      notificationRules.check();
     },
 
     onResubscribe() {
@@ -316,6 +318,14 @@ async function main(): Promise<void> {
     getConfig: () => config.current,
     getState: (id) => store.get(id),
     press: (id) => haClient.callService('button', 'press', id),
+  });
+
+  /* `notifications:` in dashboard.yaml — meeting warnings and the
+     nobody-home watch, read off the store and sent through `push`. */
+  const notificationRules = new NotificationRules({
+    getConfig: () => config.current,
+    peek: (id) => store.peek(id),
+    send: (message, target) => push.send(message, target),
   });
 
   const weatherForecasts = new WeatherForecasts((entityId) =>
@@ -660,6 +670,7 @@ async function main(): Promise<void> {
 
   haClient.start();
   meetingRefresher.start();
+  notificationRules.start();
   sonosClient.start();
   sonosStore.start();
   // Reads stored service tokens. Discovery of the services themselves is
@@ -1068,6 +1079,7 @@ async function main(): Promise<void> {
     log.info(`${signal} received — shutting down`);
 
     haClient.stop();
+    notificationRules.stop();
     sonosClient.stop();
     sonosStore.dispose();
     // Tear the subscriptions down rather than letting them lapse. A speaker

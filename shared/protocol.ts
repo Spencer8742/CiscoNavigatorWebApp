@@ -1445,7 +1445,7 @@ export const HEARTBEAT_TIMEOUT_MS = 12_000;
  * sends it: Settings draws a switch for each entry on its own, and a device
  * that subscribed before the entry existed is asked nothing until it opts in.
  */
-export const NOTIFICATION_CATEGORIES = ['general'] as const;
+export const NOTIFICATION_CATEGORIES = ['general', 'meetings', 'away'] as const;
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];
 
 /** Shown beside each category's switch in Settings. */
@@ -1456,6 +1456,14 @@ export const NOTIFICATION_CATEGORY_INFO: Record<
   general: {
     label: 'Announcements',
     description: 'Messages sent by Home Assistant automations through /api/notify.',
+  },
+  meetings: {
+    label: 'Meetings',
+    description: 'A few minutes before a meeting on a Desk Pro or Room Kit starts.',
+  },
+  away: {
+    label: 'Nobody home',
+    description: 'A door, lock or garage left open, or opened, while everyone is out.',
   },
 };
 

@@ -55,6 +55,7 @@ const DEFAULTS: DashboardConfig = {
   // keylights/pollSeconds drive the backend's key light poll and are never
   // read by the panel; they are here to satisfy the shared type.
   controls: { pages: [], keylights: [], tvs: [], roomos: [], ssh: [], appleTvs: [], pollSeconds: 15 },
+  notifications: { quiet: null, meetings: null, away: null },
 };
 
 export const config = signal<DashboardConfig>(DEFAULTS);

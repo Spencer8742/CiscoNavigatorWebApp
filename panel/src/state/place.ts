@@ -5,6 +5,8 @@ import {
   activeRoom,
   controlPage,
   isRouteVisible,
+  markActivity,
+  navigate,
   prefs,
   route,
   socketState,
@@ -80,6 +82,54 @@ export function resetPlaceMemory(): void {
 }
 
 /**
+ * Somewhere a notification asked to be taken: `go=controls:<page id>`.
+ *
+ * Arrives two ways — in the URL the app was opened with, when a tap launched
+ * it, or from the service worker, when the app was already open and was only
+ * brought forward. Either way it waits for the first snapshot, because the
+ * page it names comes in the config, and it wins over the remembered place:
+ * the tap is the more recent thing anybody asked for.
+ */
+let pendingGo: string | null = null;
+
+export function openDeepLink(url: string): void {
+  let go: string | null = null;
+  try {
+    go = new URL(url, window.location.origin).searchParams.get('go');
+  } catch {
+    return;
+  }
+  if (!go) return;
+  pendingGo = go;
+  if (restored) applyGo();
+}
+
+function applyGo(): void {
+  const go = pendingGo;
+  pendingGo = null;
+  if (!go) return;
+  const [kind, id] = go.split(':', 2);
+  if (kind !== 'controls') return;
+  if (id && controlPages.peek().some((p) => p.id === id)) controlPage.value = id;
+  navigate('controls');
+  // A tap on a notification is somebody at the panel: out of the screensaver.
+  markActivity();
+}
+
+/** Take `go=` off the address once read, so a reload does not repeat it. */
+function readGoFromUrl(): void {
+  try {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has('go')) return;
+    openDeepLink(url.href);
+    url.searchParams.delete('go');
+    window.history.replaceState(null, '', url.pathname + (url.searchParams.toString() ? `?${url.searchParams}` : '') + url.hash);
+  } catch {
+    /* not fatal — the panel opens where it would have anyway */
+  }
+}
+
+/**
  * `settings` is a `Route` but not a `PanelPage`, which is exactly the
  * distinction wanted here: a panel that reboots into its own configuration
  * screen looks broken, and on a finished panel (`showSettings: false`) it is
@@ -134,6 +184,8 @@ function resync(): void {
 }
 
 export function startPlaceMemory(): void {
+  readGoFromUrl();
+
   /*
    * Restore on the first snapshot, and re-sync on every one after it.
    *
@@ -160,6 +212,7 @@ export function startPlaceMemory(): void {
     restored = true;
 
     if (prefs.peek().rememberPage) applyStored();
+    applyGo();
   });
 
   /*
