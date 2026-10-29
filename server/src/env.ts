@@ -99,6 +99,18 @@ export interface Env {
     token: string;
     enabled: boolean;
   };
+
+  /**
+   * Web Push to home-screen devices. Always on: with no keys given, the
+   * backend makes a pair and keeps it beside the config. See push/index.ts.
+   */
+  push: {
+    /** VAPID `sub`. Apple rejects pushes whose subject it cannot parse. */
+    subject: string;
+    /** Both set, or neither: a supplied pair, base64url. */
+    publicKey: string;
+    privateKey: string;
+  };
 }
 
 function str(name: string, fallback = ''): string {
@@ -136,6 +148,20 @@ function normalizeUrl(raw: string): string {
     log.error(`Invalid URL "${raw}" — ignoring`);
     return '';
   }
+}
+
+/**
+ * The VAPID subject, which push services may use to contact whoever runs this
+ * server. It must be a mailto: or https: URL; Apple refuses every push signed
+ * with anything else, so a bad value falls back rather than failing later.
+ */
+const DEFAULT_PUSH_SUBJECT = 'https://github.com/spencer8742/cisconavigatorwebapp';
+
+function pushSubject(raw: string): string {
+  if (!raw) return DEFAULT_PUSH_SUBJECT;
+  if (/^mailto:[^@\s]+@[^@\s]+$/i.test(raw) || /^https:\/\/[^\s]+$/i.test(raw)) return raw;
+  log.warn(`PUSH_SUBJECT="${raw}" is not a mailto: or https: URL; using ${DEFAULT_PUSH_SUBJECT}`);
+  return DEFAULT_PUSH_SUBJECT;
 }
 
 export function loadEnv(): Env {
@@ -200,7 +226,19 @@ export function loadEnv(): Env {
       token: plexToken,
       enabled: Boolean(plexUrl && plexToken),
     },
+
+    push: {
+      subject: pushSubject(str('PUSH_SUBJECT').trim()),
+      publicKey: str('VAPID_PUBLIC_KEY').trim(),
+      privateKey: str('VAPID_PRIVATE_KEY').trim(),
+    },
   };
+
+  if (Boolean(env.push.publicKey) !== Boolean(env.push.privateKey)) {
+    log.warn('Only one of VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY is set — ignoring both.');
+    env.push.publicKey = '';
+    env.push.privateKey = '';
+  }
 
   if (!env.panelToken) {
     log.warn(

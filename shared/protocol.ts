@@ -1416,3 +1416,73 @@ export const BOOLEAN_PREFS = [
 export const HEARTBEAT_MS = 25_000;
 /** Miss this many heartbeats and we tear the socket down and reconnect. */
 export const HEARTBEAT_TIMEOUT_MS = 12_000;
+
+/* ── Push notifications ──────────────────────────────────────────────────────
+   Web Push to a phone or iPad that has the panel on its home screen. Plain
+   HTTP rather than the socket: subscribing happens once, from a tap in
+   Settings, and a notification has to reach a device whose panel is not
+   open at all — which is the whole point of it. See server/src/push/. */
+
+/**
+ * What a device can choose to be told about.
+ *
+ * A device subscribes to a set of these, and every notification names one,
+ * so adding a kind of notification later is one entry here plus whatever
+ * sends it: Settings draws a switch for each entry on its own, and a device
+ * that subscribed before the entry existed is asked nothing until it opts in.
+ */
+export const NOTIFICATION_CATEGORIES = ['general'] as const;
+export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];
+
+/** Shown beside each category's switch in Settings. */
+export const NOTIFICATION_CATEGORY_INFO: Record<
+  NotificationCategory,
+  { label: string; description: string }
+> = {
+  general: {
+    label: 'Announcements',
+    description: 'Messages sent by Home Assistant automations through /api/notify.',
+  },
+};
+
+/** What a device is told: `GET /api/push`. */
+export interface PushInfo {
+  /** False when the backend could not load or create its VAPID keys. */
+  enabled: boolean;
+  /** The VAPID application server key, base64url, for `pushManager.subscribe`. */
+  publicKey: string | null;
+  /**
+   * What the device named by `?endpoint=` is subscribed to, or null when the
+   * backend does not know it — a subscription the browser kept and the
+   * backend lost, which the panel then re-sends.
+   */
+  categories: NotificationCategory[] | null;
+}
+
+/** `POST /api/push/subscribe`. Re-sending it for a known endpoint updates it. */
+export interface PushSubscribeRequest {
+  /** `PushSubscription.toJSON()`, as the browser produced it. */
+  subscription: { endpoint: string; keys: { p256dh: string; auth: string } };
+  categories: NotificationCategory[];
+  /** The panel id from the URL, if it has one, so a notification can target it. */
+  panel?: string | null;
+}
+
+/**
+ * One notification, as the backend sends it and the service worker shows it.
+ *
+ * Also the body of `POST /api/notify`, which is how anything outside this
+ * process — a Home Assistant `rest_command`, a script — sends one. There,
+ * `category` defaults to `general` and `panel` limits it to the devices that
+ * subscribed with that panel id.
+ */
+export interface PushMessage {
+  title: string;
+  body?: string;
+  category?: NotificationCategory;
+  /** Replaces an earlier notification with the same tag rather than stacking. */
+  tag?: string;
+  /** Same-origin path opened when the notification is tapped. Defaults to `/`. */
+  url?: string;
+  panel?: string | null;
+}

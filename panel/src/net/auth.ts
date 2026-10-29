@@ -29,6 +29,7 @@
  */
 
 import { PANEL_ID_PATTERN } from '@shared/protocol.ts';
+import { isIOS, isStandalone } from '~/lib/device.ts';
 
 const STORAGE_KEY = 'np.token';
 
@@ -78,7 +79,7 @@ export function initAuth(): void {
       // Storage disabled or full. Harmless: the URL still has the token and
       // RoomOS reloads that URL, so we recover on every load anyway.
     }
-    stripTokenFromUrl();
+    if (!keepTokenForHomeScreen()) stripTokenFromUrl();
     return;
   }
 
@@ -87,6 +88,20 @@ export function initAuth(): void {
   } catch {
     token = null;
   }
+}
+
+/**
+ * Whether the token has to stay in the address bar.
+ *
+ * On an iPhone or iPad, "Add to Home Screen" saves the address the page is
+ * showing at that moment, and the home-screen app it creates gets storage of
+ * its own — Safari's cached token does not come with it. So in Safari the
+ * token is left where it is: stripping it would make the icon launch a panel
+ * with no token and nowhere to type one. Once launched from the home screen,
+ * the saved address already has it and it can go as usual.
+ */
+function keepTokenForHomeScreen(): boolean {
+  return isIOS() && !isStandalone();
 }
 
 /**

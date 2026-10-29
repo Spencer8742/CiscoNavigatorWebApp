@@ -77,3 +77,10 @@ export { MediaArt } from '~/http/media-art.ts';
 export { RoomosClient } from '~/roomos/xapi.ts';
 export { Controls } from '~/controls/index.ts';
 export { SshRunner } from '~/ssh/runner.ts';
+
+/*
+ * Web Push: the encryption and signing are checked against an independent
+ * decryption in the test, and the notifier against a mock push service.
+ */
+export { encryptPayload, generateVapidKeys, vapidAuthorization, vapidKeyObject } from '~/push/webpush.ts';
+export { PushNotifier, PushRequestError, isKnownPushService } from '~/push/index.ts';

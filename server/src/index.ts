@@ -38,6 +38,7 @@ import { PlexClient } from '~/plex/client.ts';
 import { Iina } from '~/iina/index.ts';
 import { ImmichImages } from '~/immich/images.ts';
 import { Playlist } from '~/immich/playlist.ts';
+import { PushNotifier, PushRequestError } from '~/push/index.ts';
 import { MUSIC_VERBS } from '@shared/protocol.ts';
 import type {
   BackendHealth,
@@ -54,6 +55,8 @@ const STARTED_AT = Date.now();
 const MAX_ASSIST_TEXT = 500;
 const ASSIST_AUDIO_SAMPLE_RATE = 16_000;
 const MAX_ASSIST_AUDIO_BYTES = ASSIST_AUDIO_SAMPLE_RATE * 2 * 20;
+/** A subscription is ~500 bytes and a notification is capped well under this. */
+const MAX_PUSH_BODY_BYTES = 16 * 1024;
 
 /** One second of 8 kHz mono silence, as a WAV. See the /silence.wav route. */
 const SILENCE = silentWav(8000);
@@ -100,6 +103,19 @@ async function main(): Promise<void> {
   config.watch();
 
   const auth = new PanelAuth(env.panelToken);
+
+  /* Web Push to devices that have the panel on their home screen. Keys and
+     subscriptions live beside the config; see push/index.ts.
+
+     Awaited HERE, before anything below starts a timer or a request: the
+     callbacks those schedule reach for `hub`, which is not declared until
+     much further down, and an await after them lets them run first. */
+  const push = new PushNotifier({
+    dir: dirname(env.configPath),
+    subject: env.push.subject,
+    keys: env.push.publicKey ? { publicKey: env.push.publicKey, privateKey: env.push.privateKey } : null,
+  });
+  await push.start();
   const artwork = new ArtworkProxy(env.ha);
   const ttsAudio = new HaTtsProxy(env.ha);
   const mediaArt = new MediaArt();
@@ -763,6 +779,64 @@ async function main(): Promise<void> {
       return;
     }
 
+    /*
+     * Push notifications: subscribe, unsubscribe and test from the panel's
+     * Settings, and `/api/notify` for anything outside this process — a Home
+     * Assistant `rest_command` with the panel token as its bearer — to send
+     * one. Small JSON bodies, authenticated like the rest of /api.
+     */
+    if (req.method === 'POST' && (path === '/api/notify' || path.startsWith('/api/push/'))) {
+      if (!auth.check(req)) {
+        res.writeHead(401, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: 'unauthorized' }));
+        return;
+      }
+
+      const reply = (status: number, body: unknown): void => {
+        res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        res.end(JSON.stringify(body));
+      };
+
+      let body: unknown;
+      try {
+        body = JSON.parse((await readLimitedBody(req, MAX_PUSH_BODY_BYTES)).toString('utf8'));
+      } catch (err) {
+        const tooLarge = err instanceof Error && err.message === 'Request body too large';
+        reply(tooLarge ? 413 : 400, { error: tooLarge ? err.message : 'Expected a JSON body' });
+        return;
+      }
+
+      try {
+        switch (path) {
+          case '/api/push/subscribe':
+            await push.subscribe(body);
+            reply(200, { ok: true });
+            return;
+          case '/api/push/unsubscribe':
+            await push.unsubscribe(body);
+            reply(200, { ok: true });
+            return;
+          case '/api/push/test':
+            reply(200, await push.test(body));
+            return;
+          case '/api/notify':
+            reply(200, await push.notify(body));
+            return;
+          default:
+            reply(404, { error: 'not found' });
+            return;
+        }
+      } catch (err) {
+        if (err instanceof PushRequestError) {
+          reply(400, { error: err.message });
+        } else {
+          log.error(`${path} failed:`, err);
+          reply(500, { error: 'Notification could not be sent' });
+        }
+      }
+      return;
+    }
+
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.writeHead(405, { allow: 'GET, HEAD' });
       res.end();
@@ -809,6 +883,12 @@ async function main(): Promise<void> {
     if (path === '/api/config') {
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       res.end(JSON.stringify(config.current));
+      return;
+    }
+
+    if (path === '/api/push') {
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(JSON.stringify(push.info(query.get('endpoint'))));
       return;
     }
 
@@ -965,6 +1045,7 @@ async function main(): Promise<void> {
     log.info(`Home Assistant: ${env.ha.enabled ? env.ha.url : 'not configured'}`);
     log.info(`Immich: ${env.immich.enabled ? env.immich.url : 'not configured'}`);
     log.info(`Plex: ${env.plex.enabled ? env.plex.url : 'not configured'}`);
+    log.info(`Push notifications: ${push.info().enabled ? `${push.count} device(s)` : 'unavailable'}`);
     log.info(
       `Sonos: ${env.sonos.host || (env.sonos.discovery ? 'discovering' : 'not configured')}`,
     );

@@ -111,3 +111,29 @@ export function isBelowBuildTarget(): boolean {
   const major = Number.parseInt(v, 10);
   return Number.isFinite(major) && major < 102;
 }
+
+/**
+ * An iPhone or iPad, in any browser — they are all WebKit there.
+ *
+ * iPadOS reports itself as a Mac by default, so a "Mac" with a touch screen
+ * is counted too; no real Mac has one.
+ */
+export function isIOS(): boolean {
+  const ua = navigator.userAgent;
+  return /\b(iPhone|iPad|iPod)\b/.test(ua) || (/\bMacintosh\b/.test(ua) && navigator.maxTouchPoints > 1);
+}
+
+/**
+ * Launched from the home screen rather than in a browser tab.
+ *
+ * `navigator.standalone` is Apple's own flag and the one iOS has always set;
+ * the media query is how every other platform says the same thing.
+ */
+export function isStandalone(): boolean {
+  try {
+    if ((navigator as Navigator & { standalone?: boolean }).standalone === true) return true;
+    return matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: fullscreen)').matches;
+  } catch {
+    return false;
+  }
+}

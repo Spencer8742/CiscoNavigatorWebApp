@@ -898,6 +898,106 @@ PWA built for exactly that, and no casting is involved.
 
 ---
 
+## 3b. iPhone and iPad — the home-screen app and notifications
+
+Any iPhone or iPad can run the panel as a full-screen app with its own icon,
+no Safari address bar, and push notifications while it is closed.
+
+### Adding it
+
+1. Serve the panel over **HTTPS** with a certificate the device trusts
+   ([§2](#2-tls)). iOS allows service workers — and so notifications — on
+   HTTPS only. With an internal CA, install its root on the device *and* turn
+   it on under Settings → General → About → Certificate Trust Settings.
+2. In **Safari**, open the provisioned URL, token and all:
+
+   ```
+   https://panel.example.com/?t=<PANEL_TOKEN>&panel=iphone
+   ```
+
+   On an iPhone or iPad the token deliberately stays in the address bar. The
+   home-screen app is a separate install with its own storage — it does not
+   see the token Safari cached — and it launches the exact address Safari was
+   showing when it was added. Strip the token first and the icon opens a
+   panel that cannot authenticate.
+3. Tap **Share → Add to Home Screen**, and open the panel from the new icon.
+
+Opened from the icon, the token is stripped from the URL as on every other
+device, and the panel stays signed in: the home-screen app's storage is not
+wiped the way a Navigator's is.
+
+If an icon was added without the token, the panel's connection screen says
+so. Delete the icon and add it again from the full URL.
+
+### Notifications
+
+In the home-screen app, open **Settings → Notifications → Turn on
+notifications** and allow the prompt. **Send a test** confirms the whole path,
+device to Apple and back. Each device chooses its own categories; a device
+provisioned with `&panel=` is remembered under that id.
+
+The backend signs pushes with a VAPID key. On first start it creates one in
+`push-vapid.json` beside `dashboard.yaml`, and keeps the devices it may send
+to in `push-subscriptions.json`. **Back up `push-vapid.json` with the rest of
+the config**: a new key silently orphans every subscribed device (each
+re-subscribes the next time its app is opened). To supply your own pair
+instead, set `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY` in `.env`.
+
+The backend only sends to the real push services (Apple, Google, Mozilla,
+Microsoft), and it has to be able to reach them — `web.push.apple.com` for
+iOS — over outbound HTTPS.
+
+### Sending one
+
+Anything that holds the panel token can send a notification through
+`POST /api/notify`. From Home Assistant, a `rest_command`:
+
+```yaml
+# configuration.yaml
+rest_command:
+  panel_notify:
+    url: https://panel.example.com/api/notify
+    method: post
+    headers:
+      authorization: !secret panel_bearer   # "Bearer <PANEL_TOKEN>"
+    content_type: application/json
+    payload: >
+      {"title": {{ title | tojson }}, "body": {{ message | default('') | tojson }},
+       "tag": {{ tag | default('') | tojson }}}
+```
+
+```yaml
+# an automation action
+- action: rest_command.panel_notify
+  data:
+    title: Washer finished
+    message: The load is ready to come out.
+    tag: washer
+```
+
+| Field | Meaning |
+|---|---|
+| `title` | Required. Up to 120 characters. |
+| `body` | Optional. Up to 1000 characters. |
+| `category` | Which switch in Settings governs it. Defaults to `general`. |
+| `tag` | A later notification with the same tag replaces this one instead of stacking. |
+| `url` | A path on this server opened when the notification is tapped. Defaults to the device's own panel. |
+| `panel` | Only devices subscribed with this panel id. |
+
+The reply is `{"sent": n, "failed": n, "removed": n}` — `removed` counts
+devices the push service reported as uninstalled, which are forgotten.
+
+### Adding a kind of notification
+
+Notifications are grouped into categories in `shared/protocol.ts`
+(`NOTIFICATION_CATEGORIES` and `NOTIFICATION_CATEGORY_INFO`). Adding one there
+gives it a switch in every device's Settings; sending it from the backend is
+then `push.notify({ title, body, category })` from wherever the event is
+noticed (`server/src/index.ts` holds the `push` instance). Devices that were
+already subscribed get the new category off until they turn it on.
+
+---
+
 ## 4. On-device debugging
 
 This is the only way to get real numbers. A laptop tells you nothing useful
@@ -989,6 +1089,9 @@ worth taking literally:
 | "No panel token" on screen | The URL was opened without `?t=` | Open `http://host:8099/?t=YOUR_PANEL_TOKEN` once; the panel caches it |
 | "This panel token is not accepted" | `PANEL_TOKEN` was changed on the server | Re-open with the current token |
 | "Live connection blocked" | HTTP works, WebSocket does not | A reverse proxy is not forwarding `Upgrade`/`Connection` — see [§2](#2-tls) |
+| Home-screen app on iPhone says "No panel token" | It was added after the token had been stripped from the URL | Delete the icon; open the full `?t=` URL in Safari and Add to Home Screen again — see [§3b](#3b-iphone-and-ipad--the-home-screen-app-and-notifications) |
+| Settings → Notifications says it needs HTTPS | Served over `http://` | Service workers need HTTPS and a trusted certificate — see [§2](#2-tls) |
+| Test notification never arrives | The backend cannot reach the push service, or the key changed | The backend log names the push service's reply. Check outbound HTTPS to `web.push.apple.com` |
 | Connection dot amber, never green | Backend cannot reach Home Assistant | `docker compose logs`; check `HA_URL` and `HA_TOKEN` |
 | Dot green but no entities | Entities not in `dashboard.yaml` | Only configured entities are sent — that is the allow-list working |
 | Panel re-downloads everything daily | `RoomCleanup` still on | `xConfiguration RoomCleanup AutoRun ContentType WebData: Off` |

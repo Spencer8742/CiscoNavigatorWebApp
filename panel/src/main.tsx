@@ -4,6 +4,7 @@ import { setNativeWakePaused } from '~/assist/native.ts';
 import { App } from '~/app.tsx';
 import { initAuth } from '~/net/auth.ts';
 import { connect } from '~/net/socket.ts';
+import { refreshPush, startPush } from '~/net/push.ts';
 import { deviceInfo } from '~/lib/device.ts';
 import { installKineticScroll, prefersNativeTouchScroll } from '~/lib/kinetic.ts';
 import { resyncClock, startClock } from '~/state/clock.ts';
@@ -56,6 +57,8 @@ installKineticScroll({ touch: !nativeTouchScroll });
 // visible frame on Home.
 startPlaceMemory();
 connect();
+// After connect(): registering the worker is the least urgent thing at boot.
+startPush();
 
 function startAssistFromNativeWake(): void {
   const now = performance.now();
@@ -86,7 +89,12 @@ window.addEventListener('navigator-native-wake', startAssistFromNativeWake);
  * the first frame after wake rather than up to a minute later.
  */
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') resyncClock();
+  if (document.visibilityState === 'visible') {
+    resyncClock();
+    // Notification permission can be changed in the system settings while
+    // the app is in the background, and the switch should say so on return.
+    void refreshPush();
+  }
 });
 
 /**

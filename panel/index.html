@@ -21,8 +21,13 @@
 
     <!-- RoomOS looks for apple-touch-icon FIRST when building the web app
          tile, then rel=icon. Must be between 60 and 1200 px or it is
-         silently ignored. See docs/ROOMOS.md §9. -->
-    <link rel="apple-touch-icon" href="/icon-192.png" />
+         silently ignored. See docs/ROOMOS.md §9.
+
+         180 px and square-cornered on purpose: that is the size iOS uses on
+         every current iPhone and iPad, and iOS rounds the corners itself —
+         an icon that is already rounded comes out as a rounded square inside
+         a rounded square. -->
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="icon" href="/icon-192.png" type="image/png" />
 
     <!--
@@ -44,12 +49,20 @@
       erases storage nightly — and a `start_url` would replace that URL with a
       bare `/` every time the icon was tapped, launching a panel with no token
       and no identity. Omitting it makes the added URL the launch URL, query
-      string and all.
+      string and all. (The token is left in Safari's address bar on an
+      iPhone or iPad for the same reason — see net/auth.ts — since the
+      home-screen app does not share Safari's storage.)
+
+      Push notifications need this too: iOS only offers Web Push to a web app
+      launched from the home screen. See net/push.ts and public/sw.js.
     -->
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black" />
     <meta name="apple-mobile-web-app-title" content="Home" />
+    <!-- iOS turns anything that looks like a phone number — a temperature, a
+         time, a volume — into a tappable link unless told not to. -->
+    <meta name="format-detection" content="telephone=no, date=no, address=no, email=no" />
     <link rel="manifest" href="/manifest.webmanifest" />
 
     <title>Home</title>

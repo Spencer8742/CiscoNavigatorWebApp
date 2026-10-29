@@ -26,3 +26,9 @@ android/echo-panel/.gradle/
 android/echo-panel/build/
 android/echo-panel/app/build/
 android/echo-panel/local.properties
+
+# Push notification keys and device subscriptions, written beside the config.
+# push-vapid.json holds the server's PRIVATE signing key.
+push-vapid.json
+push-subscriptions.json
+push-subscriptions.json.tmp

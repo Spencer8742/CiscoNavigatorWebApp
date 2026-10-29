@@ -365,6 +365,7 @@ already in this repository. `--dry-run` prints the XML without sending it.
 | 11 | Performance pass on-device | ⬜ |
 | 12 | Deployment polish | 🟡 CI, GHCR images, Unraid template and the device provisioning script done |
 | 13 | Sonos direct — replaced Music Assistant | ✅ [`docs/SONOS.md`](docs/SONOS.md) |
+| 14 | iPhone / iPad home-screen app and push notifications | 🟡 framework and `/api/notify` done; categories to add — [`docs/DEPLOYMENT.md` §3b](docs/DEPLOYMENT.md#3b-iphone-and-ipad--the-home-screen-app-and-notifications) |
 
 Each phase is verified working before the next begins.
 
@@ -402,6 +403,7 @@ server/     backend  (Node 22, deps: ws + yaml)
   controls/   the macro keys · Elgato Key Lights · HA webhooks
   roomos/     Cisco xAPI over WebSocket — commands and live presentation
   ssh/        fixed commands on a host, with its key pinned on first use
+  push/       Web Push (RFC 8291/8292) to home-screen devices · /api/notify
   test/       integration tests + mock Home Assistant and Immich
 ```
 
