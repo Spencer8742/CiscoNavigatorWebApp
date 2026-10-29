@@ -105,7 +105,22 @@ export function Settings() {
           dark either way.
         </p>
 
-        <WakeSettings />
+        {!dev.isRoomNavigator ? (
+          <>
+            <div class="section-head">
+              <h2 class="section-title">Microphone</h2>
+            </div>
+            <div class="settings-page-grid" role="group" aria-label="Microphone">
+              <OverlayToggle pref="alwaysListening" what="microphone" label="Always listening" />
+            </div>
+            <p class="settings-note">
+              Listens for the wake word so you can talk to Assist hands-free. Turn it
+              off and this panel stops using the microphone altogether — the Assist
+              button in the navigation is disabled until it is turned back on.
+            </p>
+          </>
+        ) : null}
+        {prefs.value.alwaysListening ? <WakeSettings /> : null}
         <NotificationSettings />
         <div class="section-head">
           <h2 class="section-title">Home screen</h2>

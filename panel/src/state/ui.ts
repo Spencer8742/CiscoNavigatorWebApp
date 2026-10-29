@@ -128,7 +128,9 @@ export const assistWakeResult = signal<{ seq: number; result: AssistResult } | n
 export const assistWakePaused = signal(false);
 
 export function openAssistAndListen(): void {
-  if (deviceInfo().isRoomNavigator) return;
+  // Covers the Assist button and the Android wrapper's own wake word alike:
+  // with the microphone turned off in Settings, neither may start a capture.
+  if (deviceInfo().isRoomNavigator || !prefs.value.alwaysListening) return;
   timersOpen.value = false;
   assistWakePaused.value = true;
   assistOpen.value = true;

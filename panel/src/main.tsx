@@ -12,7 +12,7 @@ import { startIdleMonitor } from '~/state/idle.ts';
 import { startPlaceMemory } from '~/state/place.ts';
 import { startTheme } from '~/state/theme.ts';
 import { startTimers } from '~/state/timers.ts';
-import { assistWakePaused, openAssistAndListen } from '~/state/ui.ts';
+import { assistWakePaused, openAssistAndListen, prefs } from '~/state/ui.ts';
 
 import '~/styles/tokens.css';
 import '~/styles/base.css';
@@ -68,7 +68,9 @@ function startAssistFromNativeWake(): void {
 }
 
 let lastNativeWake = -Infinity;
-effect(() => setNativeWakePaused(assistWakePaused.value));
+// The Android wrapper listens for the wake word itself; turning the
+// microphone off in Settings holds it paused for as long as it stays off.
+effect(() => setNativeWakePaused(assistWakePaused.value || !prefs.value.alwaysListening));
 
 declare global {
   interface Window {

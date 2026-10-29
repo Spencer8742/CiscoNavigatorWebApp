@@ -942,6 +942,37 @@ media: { players: [] }
     await t.stop();
   });
 
+  test('turning the microphone off is per panel, and survives a reconnect', async () => {
+    /*
+     * A panel in a bedroom with its microphone off must stay off after the
+     * container restarts, and must not silence the kitchen panel with it.
+     */
+    rmSync(PREFS_FILE, { force: true });
+    const t = await isolated();
+
+    const bedroom = new PhotoPanel(t.panel.port, 'bedroom');
+    const kitchen = new PhotoPanel(t.panel.port, 'kitchen');
+    await bedroom.connect();
+    await kitchen.connect();
+
+    assert.equal(bedroom.prefs.alwaysListening, true, 'listening is on by default');
+
+    bedroom.send({ t: 'pref', id: 1, key: 'alwaysListening', value: false });
+    await waitFor(() => bedroom.prefs.alwaysListening === false, 'the bedroom microphone to go off');
+
+    await sleep(200);
+    assert.equal(kitchen.prefs.alwaysListening, true, 'the kitchen panel keeps listening');
+
+    bedroom.close();
+    const again = new PhotoPanel(t.panel.port, 'bedroom');
+    await again.connect();
+    assert.equal(again.prefs.alwaysListening, false, 'still off after reconnecting');
+
+    again.close();
+    kitchen.close();
+    await t.stop();
+  });
+
   test('a panel keeps its own clock and page choices too', async () => {
     /*
      * The scoping is per preference, not per kind of preference: the booleans
@@ -1094,6 +1125,7 @@ media:
     assert.deepEqual(
       Object.keys(t.panel.prefs).sort(),
       [
+        'alwaysListening',
         'homeDate',
         'homeSide',
         'homeTime',
