@@ -43,10 +43,23 @@ const WAKE_TIMEOUT_MS = 20_000;
 const WAKE_RESEND_MS = 1000;
 /** And the set is asked whether it is up this often. */
 const WAKE_POLL_MS = 500;
-/** A ping this often while connected, so a dead socket is noticed. */
-const KEEPALIVE_MS = 5000;
-/** Nothing heard for this long and the socket is treated as dead. */
-const DEAD_AFTER_MS = 15_000;
+/**
+ * While connected, the set is asked what it is showing this often.
+ *
+ * The subscription is what makes the label follow the remote instantly, but
+ * a subscription that silently stops delivering — webOS drops them across a
+ * Quick Start+ standby, and a missed frame is never resent — left the label
+ * wrong until the input happened to change again. Asking outright puts a
+ * ceiling on how long it can be wrong. It is also the keepalive: an SSAP
+ * request is something every set answers, which a WebSocket ping is not.
+ */
+const RECONCILE_MS = 5000;
+/** Unanswered checks in a row before the socket is treated as dead. */
+const RECONCILE_MISSES = 2;
+/** While disconnected from a paired set, how often to try again. */
+const RECONNECT_MS = 5000;
+/** After an input switch, ask again this soon in case no update arrives. */
+const CONFIRM_AFTER_MS = 1500;
 
 export interface WebosOptions {
   host: string;
@@ -59,6 +72,8 @@ export interface WebosOptions {
   wakeTimeoutMs?: number;
   /** Where the magic packet is sent. 9 unless a test is listening. */
   wolPort?: number;
+  /** How often to re-check the input, and to retry a lost connection. Tests shorten it. */
+  syncMs?: number;
 }
 
 /**
@@ -117,6 +132,16 @@ export class WebosClient {
    * empty until the input changed again.
    */
   #unresolvedAppId: string | undefined;
+  /** Set by `stop`, so a closed socket is not reopened behind its back. */
+  #stopped = false;
+  #watched = false;
+  /**
+   * Last seen in standby with the socket still up. While it is, a pushed
+   * foreground app is the one it was on before it went off, not an input it
+   * is showing — and accepting it made the label flicker back between checks.
+   */
+  #standby = false;
+  #reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   /** Called when the current input changes, so panels can be told. */
   #onInput: ((input: string | undefined) => void) | undefined;
 
@@ -168,8 +193,46 @@ export class WebosClient {
   }
 
   async stop(): Promise<void> {
+    this.#stopped = true;
+    clearTimeout(this.#reconnectTimer);
+    this.#reconnectTimer = undefined;
     this.#socket?.close();
     this.#socket = undefined;
+  }
+
+  /**
+   * Keep a connection to the set for as long as this client lives.
+   *
+   * Reconnecting used to ride on the key-light poll: every 15 seconds, only
+   * while a panel was connected, and never with `pollSeconds: 0`. So after
+   * the TV came back on, or the socket dropped, the label read "—" until
+   * that poll happened along. A television is now its own concern: a socket
+   * that closes is retried at once, and then every few seconds.
+   *
+   * Does nothing to a set that has never been paired; see `ensureConnected`.
+   */
+  watch(): void {
+    this.#stopped = false;
+    this.#watched = true;
+    this.#scheduleReconnect(0);
+  }
+
+  #scheduleReconnect(delayMs: number): void {
+    if (this.#stopped || this.#reconnectTimer) return;
+    this.#reconnectTimer = setTimeout(() => {
+      this.#reconnectTimer = undefined;
+      void this.ensureConnected().finally(() => {
+        // Self-scheduling rather than an interval: a set that is off can sit
+        // in a connect timeout for longer than the period.
+        if (this.#watching) this.#scheduleReconnect(this.#opts.syncMs ?? RECONNECT_MS);
+      });
+    }, delayMs);
+    this.#reconnectTimer.unref();
+  }
+
+  /** True once `watch` has been called and `stop` has not. */
+  get #watching(): boolean {
+    return this.#watched && !this.#stopped;
   }
 
   /* ── The operations the panel asks for ─────────────────────────────────*/
@@ -237,6 +300,11 @@ export class WebosClient {
         const now = await this.#power();
         if (now === 'on') {
           log.info(`${this.#opts.host} is on after ${Date.now() - started}ms`);
+          // A Quick Start+ set kept its socket through standby, so no new
+          // connection is coming to ask what it is showing. Ask now, rather
+          // than leave the label blank until the next periodic check.
+          const socket = this.#socket;
+          if (socket) void this.#reconcile(socket);
           return null;
         }
         if (now === 'screen-off') return this.#command(URI.turnOnScreen);
@@ -254,7 +322,11 @@ export class WebosClient {
   }
 
   async turnOff(): Promise<string | null> {
-    return this.#command(URI.turnOff);
+    const failure = await this.#command(URI.turnOff);
+    // Off is not on any input, and a Quick Start+ set keeps its socket up —
+    // so no close is coming to say so.
+    if (!failure) this.#forgetInput();
+    return failure;
   }
 
   /**
@@ -333,9 +405,19 @@ export class WebosClient {
     // later: on a set that never reports its foreground app, this is the only
     // notification the panel will ever get, and without it the label stays
     // blank however many times the key is pressed.
-    const changed = this.#requestedInput !== inputId;
-    this.#requestedInput = inputId;
-    if (changed && !this.#currentInput) this.#onInput?.(inputId);
+    this.#update(() => {
+      this.#requestedInput = inputId;
+    });
+
+    // And check, rather than trust the subscription to say so. A set that
+    // takes the switch but sends no update would otherwise keep showing the
+    // OLD input as confirmed until the next periodic check.
+    const socket = this.#socket;
+    if (socket) {
+      setTimeout(() => {
+        if (this.#socket === socket) void this.#reconcile(socket);
+      }, CONFIRM_AFTER_MS).unref();
+    }
     return null;
   }
 
@@ -356,7 +438,10 @@ export class WebosClient {
     try {
       await this.#connect();
     } catch {
-      // The set is off, which is the normal case and not news.
+      // The set is off, which is the normal case and not news. It is also
+      // the point at which what we last asked for stops being worth showing:
+      // somebody may change the input with the remote before it is back.
+      this.#forgetInput();
     }
   }
 
@@ -526,6 +611,77 @@ export class WebosClient {
     await this.#register(socket);
     this.#learnInputs();
     this.#watchInput(socket);
+    this.#keepInSync(socket);
+  }
+
+  /**
+   * Ask the set what it is doing, on a timer, for as long as this socket is
+   * the one in use. See RECONCILE_MS for why a subscription is not enough.
+   */
+  #keepInSync(socket: WebSocket): void {
+    let misses = 0;
+    let busy = false;
+    const timer = setInterval(() => {
+      if (this.#socket !== socket) {
+        clearInterval(timer);
+        return;
+      }
+      if (busy) return;
+      busy = true;
+      void this.#reconcile(socket).then((answered) => {
+        busy = false;
+        if (answered) {
+          misses = 0;
+          return;
+        }
+        misses += 1;
+        if (misses >= RECONCILE_MISSES && this.#socket === socket) {
+          log.info(`${this.#opts.host} stopped answering; reconnecting`);
+          this.#drop(socket);
+        }
+      });
+    }, this.#opts.syncMs ?? RECONCILE_MS);
+    timer.unref();
+    socket.once('close', () => clearInterval(timer));
+  }
+
+  /**
+   * One check: is the set on, and if so what is it showing. False when it
+   * did not answer at all, which is the only thing that counts as a miss.
+   *
+   * Standby matters here as much as the input does. A Quick Start+ set keeps
+   * its socket up when it is switched off, and goes on reporting the HDMI
+   * app it was last on — so without this the label confidently named an
+   * input on a television that was off.
+   */
+  async #reconcile(socket: WebSocket): Promise<boolean> {
+    try {
+      const power = await this.#ask(socket, URI.powerState);
+      this.#standby = !failureOf(power) && powerOf(power.payload) === 'standby';
+      if (this.#standby) {
+        this.#forgetInput();
+        return true;
+      }
+      const app = await this.#ask(socket, URI.foregroundApp);
+      if (this.#socket !== socket) return true;
+      // Same rule as the first question in #watchInput: a reply that does
+      // not say is not an answer of "nothing".
+      if (!failureOf(app) && 'appId' in (app.payload ?? {})) {
+        this.#reportForeground(app.payload?.['appId']);
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** A request on THIS socket, without connecting a new one. */
+  #ask(socket: WebSocket, uri: string): Promise<SsapFrame> {
+    if (socket.readyState !== WebSocket.OPEN) {
+      return Promise.reject(new Error('The TV is not connected'));
+    }
+    const id = String(this.#nextId++);
+    return this.#send(socket, { id, type: 'request', uri }, id, PROBE_TIMEOUT_MS);
   }
 
   /**
@@ -543,7 +699,7 @@ export class WebosClient {
     // Stays registered for the life of the socket: every update reuses this
     // id, so unlike a request the handler is never removed.
     this.#pending.set(id, (frame) => {
-      if (failureOf(frame)) return;
+      if (failureOf(frame) || this.#standby) return;
       this.#reportForeground(frame.payload?.['appId']);
     });
 
@@ -635,9 +791,33 @@ export class WebosClient {
   }
 
   #setInput(next: string | undefined): void {
-    if (next === this.#currentInput) return;
-    this.#currentInput = next;
-    this.#onInput?.(next);
+    this.#update(() => {
+      this.#currentInput = next;
+    });
+  }
+
+  /** The set is off, or about to be: claim nothing about what it shows. */
+  #forgetInput(): void {
+    this.#update(() => {
+      this.#currentInput = undefined;
+      this.#requestedInput = undefined;
+      this.#unresolvedAppId = undefined;
+    });
+  }
+
+  /**
+   * Make a change to what we know, and tell the panel if the label moved.
+   *
+   * One place for the comparison, because the label is drawn from TWO values
+   * — the confirmed input and the assumed one — and a change to either has
+   * to reach the panel. Checking only the confirmed one is how a cleared
+   * assumption could sit on the key until something else changed.
+   */
+  #update(change: () => void): void {
+    const before = [this.#currentInput, this.#requestedInput];
+    change();
+    if (before[0] === this.#currentInput && before[1] === this.#requestedInput) return;
+    this.#onInput?.(this.#currentInput);
   }
 
   /** Open one endpoint, or throw. */
@@ -677,32 +857,7 @@ export class WebosClient {
 
   /** Wire the long-lived handlers onto a socket that is already open. */
   #attach(socket: WebSocket): void {
-    /*
-     * Keepalive. Without it a set that drops off the network without closing
-     * the connection — the remote's power button, a power cut — leaves a
-     * socket that reads OPEN for minutes: the input label stays on the panel,
-     * and the next press waits on a television that is not there.
-     */
-    let heard = Date.now();
-    const keepalive = setInterval(() => {
-      if (Date.now() - heard > DEAD_AFTER_MS) {
-        log.info(`${this.#opts.host} stopped answering; dropping the connection`);
-        this.#drop(socket);
-        return;
-      }
-      try {
-        socket.ping();
-      } catch {
-        // Not open any more; 'close' is on its way.
-      }
-    }, KEEPALIVE_MS);
-    keepalive.unref();
-    socket.on('pong', () => {
-      heard = Date.now();
-    });
-
     socket.on('message', (data) => {
-      heard = Date.now();
       let frame: SsapFrame;
       try {
         frame = JSON.parse(String(data)) as SsapFrame;
@@ -714,24 +869,24 @@ export class WebosClient {
     });
 
     socket.on('close', () => {
-      clearInterval(keepalive);
       // A socket dropped for not answering can close after its replacement
       // has connected. What follows is about THIS television's connection,
       // and that is now the new one's to report.
       if (this.#socket && this.#socket !== socket) return;
       this.#socket = undefined;
-      // The TV is gone, so what it was showing is no longer known. Keeping
-      // the last value would leave a stale input on the panel for as long as
-      // the set stays off.
+      // What the TV was showing is no longer known, and the app id table is
+      // re-read on the next connection anyway.
       //
-      // The input we ASKED for goes too, and the app id table with it. A set
-      // that has been off is a set somebody may have put on something else
-      // with the remote, so the weak claim is no better than the strong one
-      // here — and the mapping is re-read on the next connection anyway.
-      this.#requestedInput = undefined;
+      // What we ASKED for is kept, for now. A socket closes for plenty of
+      // reasons that are not the set going off — a Wi-Fi blip, a dropped
+      // dead connection — and clearing it made the label flash to "—" on
+      // every one. The reconnect just below settles it: if the set does not
+      // answer, `ensureConnected` forgets it then.
       this.#unresolvedAppId = undefined;
       this.#appIds.clear();
+      this.#standby = false;
       this.#setInput(undefined);
+      this.#scheduleReconnect(0);
       // Fail anything still waiting rather than leaving it to time out: the
       // socket closing IS the answer, and six seconds of nothing is a worse
       // way to deliver it.

@@ -57,6 +57,26 @@ export class MockWebosTv {
   powerState = 'Active';
   /** Set to stop answering requests while the socket stays open. */
   silent = false;
+  /**
+   * Set false for a set whose foreground subscription goes quiet — it still
+   * answers when asked, it just stops pushing. What webOS does across a
+   * Quick Start+ standby, and why the client cannot rely on pushes alone.
+   */
+  pushesInput = true;
+
+  /** Change what the set is showing, the way its own remote would. */
+  showApp(appId) {
+    this.foregroundAppId = appId;
+    if (!this.pushesInput || !this.subscribeId) return;
+    for (const client of this.rawClients()) {
+      client.send(JSON.stringify({ id: this.subscribeId, type: 'response', payload: { returnValue: true, appId } }));
+    }
+  }
+
+  /** Drop every connection while staying up, like a Wi-Fi blip. */
+  dropConnections() {
+    for (const client of this.rawClients()) client.terminate();
+  }
 
   /*
    * `appId` is the set's own answer to "which app means which socket", and a
@@ -210,7 +230,9 @@ export class MockWebosTv {
       if (appId && this.reportsInput) {
         this.foregroundAppId = appId;
         reply({ id: msg.id, type: 'response', payload: { returnValue: true } });
-        reply({ id: this.subscribeId, type: 'response', payload: { returnValue: true, appId } });
+        if (this.pushesInput) {
+          reply({ id: this.subscribeId, type: 'response', payload: { returnValue: true, appId } });
+        }
         // Already recorded above, with every other request.
         return;
       }
