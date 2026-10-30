@@ -36,6 +36,18 @@ import type { KeyLightOp } from '@shared/config.ts';
 const log = logger('hub');
 
 /**
+ * How much may queue for one panel before it is cut loose.
+ *
+ * A panel whose Wi-Fi has stalled without dropping still has an open socket,
+ * and everything broadcast to it piles up in this process until the liveness
+ * sweep notices — up to a minute of every state change in the house. A
+ * healthy panel's buffer is a frame or two; a hello is the largest thing ever
+ * queued at once and is a fraction of this. Past it, the panel is not keeping
+ * up and will be sent a fresh snapshot when it reconnects anyway.
+ */
+const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
+
+/**
  * The panel hub: every connected Navigator's WebSocket.
  *
  * Responsibilities, in order of importance:
@@ -253,7 +265,31 @@ export class Hub {
       log.debug(`Panel #${panel.id} sent unparseable data`);
       return;
     }
+    // Valid JSON is not necessarily a message: `null` or `3` would throw on
+    // the first property read below.
+    if (!msg || typeof msg !== 'object' || typeof msg.t !== 'string') {
+      log.debug(`Panel #${panel.id} sent a frame that is not a message`);
+      return;
+    }
 
+    try {
+      await this.#dispatch(panel, msg);
+    } catch (err) {
+      /*
+       * A handler that throws instead of returning its error string. Without
+       * this the panel is never answered — a spinner that only its own
+       * timeout clears — and the process-level handler logs an unhandled
+       * rejection with no hint of which panel or request caused it.
+       */
+      log.error(`Panel #${panel.id} "${msg.t}" request failed:`, err);
+      const ref = (msg as { id?: unknown }).id;
+      if (typeof ref === 'number') {
+        this.#send(panel, { t: 'error', ref, code: 'request_failed', message: 'That did not work' });
+      }
+    }
+  }
+
+  async #dispatch(panel: Panel, msg: ClientMessage): Promise<void> {
     switch (msg.t) {
       case 'ping':
         this.#send(panel, { t: 'pong', ref: msg.id });
@@ -568,6 +604,15 @@ export class Hub {
 
   #raw(panel: Panel, frame: string): void {
     if (panel.socket.readyState !== WebSocket.OPEN) return;
+    if (panel.socket.bufferedAmount > MAX_BUFFERED_BYTES) {
+      log.warn(
+        `Panel #${panel.id} is not reading (${panel.socket.bufferedAmount} bytes queued) — dropping it; ` +
+          'it will reconnect and receive a fresh snapshot',
+      );
+      panel.socket.terminate();
+      this.#panels.delete(panel);
+      return;
+    }
     try {
       panel.socket.send(frame);
     } catch (err) {

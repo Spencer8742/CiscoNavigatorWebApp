@@ -1,3 +1,4 @@
+import { batch } from '@preact/signals';
 import { Backoff } from '@shared/backoff.ts';
 import { authHeaders, socketUrl } from '~/net/auth.ts';
 import { applyPatch, applySnapshot } from '~/state/entities.ts';
@@ -123,7 +124,16 @@ function open(): void {
     } catch {
       return; // ignore garbage rather than tearing down a working socket
     }
-    handle(msg);
+    if (!msg || typeof msg !== 'object') return;
+    // One frame is one update: a patch touching twenty entities, or a hello
+    // replacing everything, recomputes each derived value once rather than
+    // once per signal written.
+    try {
+      batch(() => handle(msg));
+    } catch (err) {
+      // A frame this build cannot handle must not take the connection with it.
+      console.error('[panel] could not apply', msg.t, err);
+    }
   };
 
   sock.onerror = () => {
@@ -134,15 +144,20 @@ function open(): void {
 
   sock.onclose = () => {
     if (sock !== ws) return; // a stale socket we already replaced
-    ws = null;
-    clearTimers();
-    // Nothing outstanding can be answered now. Without this a browse started
-    // just before a Wi-Fi roam leaves a spinner on screen for its full
-    // timeout, on a panel that has already visibly reconnected.
-    failBrowseWaiters();
-    socketState.value = closed ? 'disconnected' : 'connecting';
-    scheduleReconnect();
+    lost();
   };
+}
+
+/** The current socket is finished with: release what it held and reconnect. */
+function lost(): void {
+  ws = null;
+  clearTimers();
+  // Nothing outstanding can be answered now. Without this a browse started
+  // just before a Wi-Fi roam leaves a spinner on screen for its full
+  // timeout, on a panel that has already visibly reconnected.
+  failBrowseWaiters();
+  socketState.value = closed ? 'disconnected' : 'connecting';
+  scheduleReconnect();
 }
 
 /**
@@ -376,17 +391,36 @@ function handle(msg: ServerMessage): void {
 
 function startHeartbeat(): void {
   clearInterval(heartbeatTimer);
-  heartbeatTimer = setInterval(() => {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    send({ t: 'ping', id: nextId() });
-    if (pongTimer) return; // already awaiting one
-    pongTimer = setTimeout(() => {
-      pongTimer = undefined;
-      // No pong: the socket is dead even though the engine thinks otherwise.
-      // Force it closed; onclose drives the normal reconnect path.
-      ws?.close();
-    }, HEARTBEAT_TIMEOUT_MS);
-  }, HEARTBEAT_MS);
+  heartbeatTimer = setInterval(probe, HEARTBEAT_MS);
+}
+
+/**
+ * Ping now, and give up on the socket if nothing answers.
+ *
+ * Also called when the device comes out of standby, which is exactly when a
+ * socket is most likely to have died without anyone noticing — waiting for
+ * the next interval would leave a freshly woken panel showing stale state for
+ * up to half a minute.
+ */
+export function probe(): void {
+  const sock = ws;
+  if (!sock || sock.readyState !== WebSocket.OPEN) return;
+  send({ t: 'ping', id: nextId() });
+  if (pongTimer) return; // already awaiting one
+  pongTimer = setTimeout(() => {
+    pongTimer = undefined;
+    if (sock !== ws) return;
+    // No pong: the socket is dead even though the engine thinks otherwise.
+    // Not close() and wait — on a half-open connection the closing handshake
+    // has nobody to answer it, and onclose can be a long time coming. Let go
+    // of it now and reconnect; its eventual onclose finds it already replaced.
+    lost();
+    try {
+      sock.close();
+    } catch {
+      /* already closing */
+    }
+  }, HEARTBEAT_TIMEOUT_MS);
 }
 
 function failBrowseWaiters(): void {

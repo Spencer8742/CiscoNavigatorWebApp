@@ -1065,6 +1065,9 @@ async function main(): Promise<void> {
     castKeeper.start();
   });
 
+  // Compress the panel bundle now, so the first load after a deploy does not wait for it.
+  void files.warm();
+
   /* ── Shutdown ────────────────────────────────────────────────────────────
      Docker sends SIGTERM and waits ten seconds before SIGKILL. Closing panel
      sockets cleanly means each Navigator sees a close frame and reconnects

@@ -143,3 +143,45 @@ test('a reconnect can ask again immediately', async (t) => {
     'the reply must land on the new request, not a stale waiter from before the drop',
   );
 });
+
+test('a half-open socket that misses its pong is replaced without waiting for its close', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const socket = await setup(t);
+
+  // Half-open: the engine still says OPEN, nothing ever answers, and close()
+  // starts a closing handshake that nobody will finish — so no onclose.
+  const stale = live;
+  let closeCalled = false;
+  stale.close = () => {
+    closeCalled = true;
+  };
+
+  const photos = socket.requestPhotos(24);
+  socket.probe();
+  assert.equal(stale.sent.at(-1)?.t, 'ping', 'probing sends a ping at once');
+
+  t.mock.timers.tick(12_000);
+  assert.ok(closeCalled, 'the dead socket is asked to close');
+  assert.deepEqual(await photos, [], 'what it was holding is released straight away');
+
+  // Reconnection is on its normal backoff, not on the stale socket's onclose.
+  t.mock.timers.tick(30_000);
+  assert.notEqual(live, stale, 'a fresh socket has been opened');
+
+  // The stale socket's close arriving late must not tear the new one down.
+  const fresh = live;
+  stale.onclose?.();
+  t.mock.timers.tick(30_000);
+  assert.equal(live, fresh, 'the late close of the old socket is ignored');
+});
+
+test('a frame the panel cannot apply does not stop the frames after it', async (t) => {
+  const socket = await setup(t);
+  const pending = socket.requestPhotos(3);
+  const request = live.sent.find((msg) => msg.t === 'photos');
+
+  for (const data of ['null', '7', '{"t":"patch"}']) live.onmessage?.({ data });
+  live.onmessage?.({ data: JSON.stringify({ t: 'photos', ref: request.id, photos: [{ id: 'b', w: 1, h: 1 }] }) });
+
+  assert.deepEqual((await pending).map((p) => p.id), ['b']);
+});
