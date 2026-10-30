@@ -48,6 +48,15 @@ export class MockWebosTv {
   reportsInput = true;
   /** Keys the set refuses outright, whatever manifest comes with them. */
   rejectKeys = new Set();
+  /**
+   * What getPowerState answers. "Active Standby" is a set that is OFF but,
+   * with Quick Start+, still has its socket up — the case that made a power
+   * toggle think the TV was on. `undefined` models an older set without the
+   * power service, which refuses the request.
+   */
+  powerState = 'Active';
+  /** Set to stop answering requests while the socket stays open. */
+  silent = false;
 
   /*
    * `appId` is the set's own answer to "which app means which socket", and a
@@ -160,6 +169,23 @@ export class MockWebosTv {
     }
 
     this.commands.push({ uri: msg.uri, payload: msg.payload });
+
+    if (this.silent) return;
+
+    if (msg.uri === 'ssap://com.webos.service.tvpower/power/getPowerState') {
+      reply({
+        id: msg.id,
+        type: 'response',
+        payload: this.powerState
+          ? { returnValue: true, state: this.powerState }
+          : { returnValue: false, errorText: '404 no such service or method' },
+      });
+      return;
+    }
+
+    if (msg.uri === 'ssap://com.webos.service.tvpower/power/turnOnScreen') {
+      this.powerState = 'Active';
+    }
 
     if (this.refuse.has(msg.uri)) {
       reply({

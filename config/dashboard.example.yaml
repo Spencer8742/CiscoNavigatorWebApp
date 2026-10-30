@@ -494,6 +494,9 @@ controls:
   # does not. The TV must also be set to listen — Quick Start+, or Network >
   # "TV On with Mobile" on older sets — or it is genuinely unreachable when
   # off. Wired and Wi-Fi have different MACs; use whichever it connects by.
+  # Turning on keeps re-sending the packet until the set answers (up to 20s),
+  # and also sends it straight to `host`, which is what gets through from a
+  # Docker bridge network where broadcasts never reach the LAN.
   tvs: []
   #  - id: office_lg
   #    name: Office LG
