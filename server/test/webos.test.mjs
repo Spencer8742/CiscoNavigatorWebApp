@@ -405,6 +405,133 @@ describe('when the TV will not say what it is showing', () => {
   });
 });
 
+/* ── Staying in sync ──────────────────────────────────────────────────────*/
+
+describe('keeping the input in sync', () => {
+  /*
+   * Reported from the real set: the input key read "—" far more often than
+   * it should, and drifted from what the TV was showing. Each test is one way
+   * that happened.
+   */
+
+  test('a change the subscription never pushed is still picked up', async () => {
+    const quiet = new MockWebosTv(19870);
+    await quiet.start();
+    const c = client({ host: '127.0.0.1:19870', syncMs: 200 });
+    await c.switchInput('HDMI_2');
+    await waitFor(() => c.currentInput === 'HDMI_2', 'the first input');
+
+    quiet.pushesInput = false;
+    quiet.showApp('com.webos.app.hdmi3');
+    await waitFor(() => c.currentInput === 'HDMI_3', 'the periodic check to notice the remote');
+
+    await c.stop();
+    await quiet.stop();
+  });
+
+  test('a set in standby with its socket up stops claiming an input', async () => {
+    const standby = new MockWebosTv(19871);
+    await standby.start();
+    const c = client({ host: '127.0.0.1:19871', syncMs: 200 });
+    await c.switchInput('HDMI_2');
+    await waitFor(() => c.currentInput === 'HDMI_2', 'an input first');
+
+    // Off with the remote: Quick Start+ keeps the socket, and the set goes
+    // on reporting the HDMI app it was last on.
+    standby.powerState = 'Active Standby';
+    await waitFor(() => c.currentInput === undefined && c.assumedInput === undefined, 'no label on an off TV');
+
+    standby.powerState = 'Active';
+    await waitFor(() => c.currentInput === 'HDMI_2', 'and back when it comes on');
+
+    await c.stop();
+    await standby.stop();
+  });
+
+  test('turning the set off clears the label at once', async () => {
+    const on = new MockWebosTv(19872);
+    await on.start();
+    const c = client({ host: '127.0.0.1:19872' });
+    await c.switchInput('HDMI_3');
+    await waitFor(() => c.currentInput === 'HDMI_3', 'an input first');
+
+    assert.equal(await c.turnOff(), null);
+    assert.equal(c.currentInput, undefined);
+    assert.equal(c.assumedInput, undefined);
+
+    await c.stop();
+    await on.stop();
+  });
+
+  test('a watched set reconnects by itself and the label comes back', async () => {
+    const tv2 = new MockWebosTv(19873);
+    await tv2.start();
+    tv2.foregroundAppId = 'com.webos.app.hdmi2';
+    const c = client({ host: '127.0.0.1:19873', syncMs: 200 });
+    await c.listInputs(); // pair, so there is a key to reconnect with
+    c.watch();
+    await waitFor(() => c.currentInput === 'HDMI_2', 'the input');
+
+    await tv2.stop();
+    await waitFor(() => c.currentInput === undefined, 'nothing claimed while it is off');
+
+    // Back on with the TV's own remote. Nobody touches the panel.
+    await tv2.start();
+    await waitFor(() => c.currentInput === 'HDMI_2', 'the label to return on its own', 6000);
+
+    await c.stop();
+    await tv2.stop();
+  });
+
+  test('a dropped connection does not blank what the panel last chose', async () => {
+    const blip = new MockWebosTv(19874);
+    blip.reportsInput = false;
+    await blip.start();
+    const c = client({ host: '127.0.0.1:19874', syncMs: 200 });
+    await c.switchInput('HDMI_3');
+    assert.equal(c.assumedInput, 'HDMI_3');
+
+    const before = blip.registrations.length;
+    blip.dropConnections();
+    await waitFor(() => blip.registrations.length > before, 'a reconnect');
+    assert.equal(c.assumedInput, 'HDMI_3', 'the TV never went off, so the label stays');
+
+    await c.stop();
+    await blip.stop();
+  });
+
+  test('a connection that stops answering is replaced', async () => {
+    const mute = new MockWebosTv(19875);
+    await mute.start();
+    const c = client({ host: '127.0.0.1:19875', syncMs: 150 });
+    await c.listInputs();
+    const before = mute.registrations.length;
+
+    mute.silent = true;
+    await waitFor(() => mute.registrations.length > before, 'the dead socket to be dropped and reopened', 12_000);
+
+    await c.stop();
+    await mute.stop();
+  });
+
+  test('every change to the label reaches the panel, assumed ones included', async () => {
+    const tv2 = new MockWebosTv(19876);
+    tv2.reportsInput = false;
+    await tv2.start();
+    const c = client({ host: '127.0.0.1:19876' });
+    let pushes = 0;
+    c.onInputChange(() => (pushes += 1));
+
+    await c.switchInput('HDMI_2');
+    assert.equal(pushes, 1);
+    assert.equal(await c.turnOff(), null);
+    assert.equal(pushes, 2, 'clearing an assumed input is a change too');
+
+    await c.stop();
+    await tv2.stop();
+  });
+});
+
 describe('a television that is off', () => {
   test('is reported as off rather than hanging', async () => {
     const c = client({ host: '127.0.0.1:19811' });
