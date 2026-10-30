@@ -85,3 +85,12 @@ export { SshRunner } from '~/ssh/runner.ts';
 export { encryptPayload, generateVapidKeys, vapidAuthorization, vapidKeyObject } from '~/push/webpush.ts';
 export { PushNotifier, PushRequestError, isKnownPushService } from '~/push/index.ts';
 export { NotificationRules, inQuietHours, isAway, isInsecure } from '~/push/rules.ts';
+
+/*
+ * The robustness pieces: what a panel that disconnects, stalls or sends
+ * nonsense does to the process. Each is a property of one connection, so
+ * these are exercised directly rather than through a whole backend.
+ */
+export { streamUpstream } from '~/http/stream.ts';
+export { StaticFiles, preferredEncoding } from '~/http/static.ts';
+export { Hub } from '~/hub/index.ts';

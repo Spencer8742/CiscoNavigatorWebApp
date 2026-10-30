@@ -3,7 +3,7 @@ import { effect } from '@preact/signals';
 import { setNativeWakePaused } from '~/assist/native.ts';
 import { App } from '~/app.tsx';
 import { initAuth } from '~/net/auth.ts';
-import { connect } from '~/net/socket.ts';
+import { connect, probe } from '~/net/socket.ts';
 import { refreshPush, startPush } from '~/net/push.ts';
 import { deviceInfo } from '~/lib/device.ts';
 import { installKineticScroll, prefersNativeTouchScroll } from '~/lib/kinetic.ts';
@@ -93,6 +93,8 @@ window.addEventListener('navigator-native-wake', startAssistFromNativeWake);
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') {
     resyncClock();
+    // A socket that went to sleep with the device may not have woken with it.
+    probe();
     // Notification permission can be changed in the system settings while
     // the app is in the background, and the switch should say so on return.
     void refreshPush();

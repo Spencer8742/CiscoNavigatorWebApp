@@ -1,5 +1,6 @@
 import type { ServerResponse } from 'node:http';
 import { logger } from '~/lib/log.ts';
+import { streamUpstream } from '~/http/stream.ts';
 import type { Env } from '~/env.ts';
 
 const log = logger('tts');
@@ -65,34 +66,22 @@ export class HaTtsProxy {
         return;
       }
 
-      res.writeHead(200, {
-        'content-type': type,
-        'cache-control': 'private, max-age=300',
-        'x-content-type-options': 'nosniff',
+      await streamUpstream(upstream, res, {
+        headers: {
+          'content-type': type,
+          'cache-control': 'private, max-age=300',
+          'x-content-type-options': 'nosniff',
+        },
+        maxBytes: MAX_BYTES,
+        controller,
+        onFail: (reason) => log.warn(`TTS audio not sent whole: ${reason}`),
       });
-
-      let sent = 0;
-      const reader = upstream.body.getReader();
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        sent += value.byteLength;
-        if (sent > MAX_BYTES) {
-          log.warn('TTS audio exceeded size limit - truncating');
-          await reader.cancel().catch(() => undefined);
-          break;
-        }
-        if (!res.write(value)) {
-          await new Promise((resolve) => res.once('drain', resolve));
-        }
-      }
-      res.end();
     } catch (err) {
       if (!res.headersSent) {
         res.writeHead(502, { 'content-type': 'text/plain' });
         res.end('TTS audio fetch failed');
       } else {
-        res.end();
+        res.destroy();
       }
       log.debug('TTS audio fetch failed:', err);
     } finally {

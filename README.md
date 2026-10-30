@@ -361,7 +361,7 @@ already in this repository. `--dry-run` prints the XML without sending it.
 | 7 | Photo slideshow | ✅ |
 | 8 | Idle and screensaver | ✅ |
 | 9 | Controls: direct RoomOS, TV, Apple TV, SSH, webhooks and key lights — replaces the RoomOS macro and Companion | ✅ |
-| 10 | Failure hardening | ⬜ |
+| 10 | Failure hardening | 🟡 proxies survive panels that drop mid-image, the hub drops panels that stop reading and answers requests whose handler throws, and the panel replaces a half-open socket at once and checks it on wake |
 | 11 | Performance pass on-device | ⬜ |
 | 12 | Deployment polish | 🟡 CI, GHCR images, Unraid template and the device provisioning script done |
 | 13 | Sonos direct — replaced Music Assistant | ✅ [`docs/SONOS.md`](docs/SONOS.md) |
@@ -375,8 +375,8 @@ Enforced, not aspirational.
 
 | Metric | Budget | Now |
 |---|---|---|
-| Shell JS (gzip) | < 50 KB | **37.8 KB** |
-| CSS (gzip) | < 12 KB | **7.5 KB** |
+| Shell JS (gzip) | < 120 KB (CI) | **74.3 KB** — sent as **63 KB** brotli |
+| CSS (gzip) | < 24 KB (CI) | **16.7 KB** — sent as **14 KB** brotli |
 | HA state change → DOM update | — | **5–34 ms** |
 | Cold load → interactive | < 1.5 s | — |
 | Touch → visual feedback | < 100 ms | one frame |

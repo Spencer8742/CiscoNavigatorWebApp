@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { logger } from '~/lib/log.ts';
+import { streamUpstream } from '~/http/stream.ts';
 import type { Env } from '~/env.ts';
 
 const log = logger('artwork');
@@ -134,36 +135,22 @@ export class ArtworkProxy {
        * constrained link is exactly the kind of avoidable work that makes a
        * Now Playing screen feel slow.
        */
-      res.writeHead(200, {
-        'content-type': type,
-        'cache-control': 'private, max-age=86400',
-        'x-content-type-options': 'nosniff',
+      await streamUpstream(upstream, res, {
+        headers: {
+          'content-type': type,
+          'cache-control': 'private, max-age=86400',
+          'x-content-type-options': 'nosniff',
+        },
+        maxBytes: MAX_BYTES,
+        controller,
+        onFail: (reason) => log.warn(`Artwork not sent whole: ${reason}`),
       });
-
-      let sent = 0;
-      const reader = upstream.body.getReader();
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        sent += value.byteLength;
-        if (sent > MAX_BYTES) {
-          // A runaway response must not be streamed into a device with a
-          // small memory budget.
-          log.warn('Artwork exceeded size limit — truncating');
-          await reader.cancel().catch(() => undefined);
-          break;
-        }
-        if (!res.write(value)) {
-          await new Promise((resolve) => res.once('drain', resolve));
-        }
-      }
-      res.end();
     } catch (err) {
       if (!res.headersSent) {
         res.writeHead(502, { 'content-type': 'text/plain' });
         res.end('Artwork fetch failed');
       } else {
-        res.end();
+        res.destroy();
       }
       log.debug('Artwork fetch failed:', err);
     } finally {
