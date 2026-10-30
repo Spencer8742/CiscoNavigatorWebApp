@@ -987,6 +987,41 @@ rest_command:
 The reply is `{"sent": n, "failed": n, "removed": n}` — `removed` counts
 devices the push service reported as uninstalled, which are forgotten.
 
+### Meetings and "nobody home"
+
+Two kinds of notification need no Home Assistant automation: the backend
+works them out from state it already holds. Both are configured under
+`notifications:` in `dashboard.yaml` (the example file documents every key),
+and each device turns **Meetings** and **Nobody home** on or off in its own
+Settings → Notifications. A device that subscribed before these existed has
+them off until it turns them on.
+
+```yaml
+notifications:
+  quiet: { from: "22:00", until: "07:00" }
+  meetings:
+    leadMinutes: 5
+    to: [spencer-phone]
+  away:
+    presence: zone.home
+    to: [spencer-phone]
+    watch: [cover.garage_door, lock.front_door, binary_sensor.back_door]
+```
+
+- **`to:`** names panel ids — the `&panel=` a phone was added to the home
+  screen with. Leave it out to reach every device with the category on.
+- **Meetings** warn `leadMinutes` before each booking on a device tile's
+  meeting list. Tapping opens the panel on that tile's Controls page, where
+  Join is. iOS shows no buttons on a web app's notification, so the join
+  itself stays one tap away on the panel.
+- **Nobody home** sends one summary of anything still open or unlocked
+  `afterSeconds` after the house empties, then one notification for each
+  watched thing that opens or unlocks while it stays empty. A restart while
+  everyone is out is not mistaken for them leaving, and an entity dropping to
+  `unavailable` and back is not news.
+- **Quiet hours** drop rules that are not `urgent:` (meetings, by default);
+  `away` is urgent by default and comes through.
+
 ### Adding a kind of notification
 
 Notifications are grouped into categories in `shared/protocol.ts`

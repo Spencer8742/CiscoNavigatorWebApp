@@ -885,6 +885,51 @@ export interface ControlsConfig {
   pollSeconds: number;
 }
 
+/**
+ * Push notifications the backend sends on its own, from what it can see.
+ *
+ * Each rule is off until its block exists. `to` is a list of panel ids: a
+ * phone is addressed by the `&panel=` it was added to the home screen with,
+ * so "Spencer's phone" is whichever device subscribed as `spencer-phone`.
+ * An empty `to` means every device subscribed to that category. Either way a
+ * device can still switch the category off in its own Settings.
+ */
+export interface NotificationsConfig {
+  /**
+   * Household quiet hours, as `HH:MM` on `ui.timezone`, crossing midnight if
+   * `from` is later than `until`. Only rules marked `urgent` send inside it;
+   * the others are dropped rather than held, because a late warning about
+   * something that has already happened is noise.
+   */
+  quiet: { from: string; until: string } | null;
+  /** Warn before each booking on a RoomOS device tile's meeting list. */
+  meetings: {
+    leadMinutes: number;
+    to: string[];
+    /** Device tile ids to watch. Empty: every tile with a `meetings` entity. */
+    devices: string[];
+    urgent: boolean;
+  } | null;
+  /** Tell somebody when the house is empty and something is left open. */
+  away: {
+    /**
+     * What says the house is empty: `zone.home` (a count of people home, the
+     * default), an `alarm_control_panel` armed away, or a `person`, `group`
+     * or `device_tracker` that is not home.
+     */
+    presence: string;
+    /**
+     * How long after the last person leaves before checking what is open —
+     * time for a garage door to finish closing behind the car.
+     */
+    afterSeconds: number;
+    to: string[];
+    urgent: boolean;
+    /** Locks, covers and binary sensors (doors, windows, leaks). */
+    watch: string[];
+  } | null;
+}
+
 export interface DashboardConfig {
   version: 1;
   ui: UiConfig;
@@ -896,6 +941,7 @@ export interface DashboardConfig {
   assist: AssistConfig;
   cast: CastConfig;
   controls: ControlsConfig;
+  notifications: NotificationsConfig;
 }
 
 /**

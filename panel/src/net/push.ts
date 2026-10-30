@@ -1,6 +1,7 @@
 import { signal } from '@preact/signals';
 import { authHeaders, getPanelId } from '~/net/auth.ts';
 import { deviceInfo, isIOS, isStandalone } from '~/lib/device.ts';
+import { openDeepLink } from '~/state/place.ts';
 import {
   NOTIFICATION_CATEGORIES,
   type NotificationCategory,
@@ -69,6 +70,12 @@ export function startPush(): void {
     pushStatus.value = support;
     return;
   }
+  // A notification tapped while the app was already open: the worker brings
+  // the window forward and says where the tap wanted to go.
+  navigator.serviceWorker.addEventListener('message', (event: MessageEvent) => {
+    const data = event.data as { t?: unknown; url?: unknown } | null;
+    if (data?.t === 'open' && typeof data.url === 'string') openDeepLink(data.url);
+  });
   navigator.serviceWorker
     .register('/sw.js', { scope: '/' })
     .then(() => refreshPush())
