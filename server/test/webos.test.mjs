@@ -4,6 +4,7 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createSocket } from 'node:dgram';
 import { MockWebosTv } from './mock-webos.mjs';
 
 /** Poll until `check` is truthy, or fail with `what`. */
@@ -24,7 +25,7 @@ async function waitFor(check, what, timeoutMs = 4000) {
  * the source is TypeScript with path aliases, and testing what actually ships
  * beats testing something transpiled a second way.
  */
-const { WebosClient, endpointsFor, inputOfAppId } = await import('../dist/testkit.js');
+const { WebosClient, endpointsFor, inputOfAppId, wakeTargets } = await import('../dist/testkit.js');
 
 const PORT = 19810;
 let tv;
@@ -231,10 +232,10 @@ describe('what the TV is showing', () => {
   test('a set that goes away stops claiming an input', async () => {
     // Keeping the last value would leave a confident, wrong label on the
     // button for as long as the television stayed off.
-    const gone = new MockWebosTv(19833);
+    const gone = new MockWebosTv(19853);
     await gone.start();
 
-    const c = new WebosClient({ host: '127.0.0.1:19833', keyFile: join(keyDir, 'gone.json') });
+    const c = new WebosClient({ host: '127.0.0.1:19853', keyFile: join(keyDir, 'gone.json') });
     await c.switchInput('HDMI_2');
     await waitFor(() => c.currentInput === 'HDMI_2', 'an input to be known first');
 
@@ -310,7 +311,7 @@ describe('when the TV will not say what it is showing', () => {
    * and the television publishes the answer itself.
    */
   test('the input is read from the TV\'s own table, not guessed from the name', async () => {
-    const named = new MockWebosTv(19834);
+    const named = new MockWebosTv(19854);
     // Sockets this set names in a shape nothing could parse. inputOfAppId
     // returns null for every one of them; only the table resolves them.
     named.inputs = [
@@ -321,7 +322,7 @@ describe('when the TV will not say what it is showing', () => {
 
     assert.equal(inputOfAppId('com.webos.app.dock-b'), null, 'precondition: unguessable');
 
-    const c = new WebosClient({ host: '127.0.0.1:19834', keyFile: join(keyDir, 'named.json') });
+    const c = new WebosClient({ host: '127.0.0.1:19854', keyFile: join(keyDir, 'named.json') });
     await c.switchInput('HDMI_3');
     await waitFor(() => c.currentInput === 'HDMI_3', 'the TV table to resolve the app id');
 
@@ -330,11 +331,11 @@ describe('when the TV will not say what it is showing', () => {
   });
 
   test('and a set that publishes no table still falls back to the pattern', async () => {
-    const bare = new MockWebosTv(19835);
+    const bare = new MockWebosTv(19855);
     bare.hideInputAppIds = true;
     await bare.start();
 
-    const c = new WebosClient({ host: '127.0.0.1:19835', keyFile: join(keyDir, 'bare.json') });
+    const c = new WebosClient({ host: '127.0.0.1:19855', keyFile: join(keyDir, 'bare.json') });
     await c.switchInput('HDMI_3');
     await waitFor(() => c.currentInput === 'HDMI_3', 'the naming pattern to carry it');
 
@@ -349,11 +350,11 @@ describe('when the TV will not say what it is showing', () => {
      * forever on a television that simply will not answer the question. What
      * it shows is the weaker claim, and it is marked as one.
      */
-    const silent = new MockWebosTv(19836);
+    const silent = new MockWebosTv(19856);
     silent.reportsInput = false;
     await silent.start();
 
-    const c = new WebosClient({ host: '127.0.0.1:19836', keyFile: join(keyDir, 'assume.json') });
+    const c = new WebosClient({ host: '127.0.0.1:19856', keyFile: join(keyDir, 'assume.json') });
     assert.equal(c.assumedInput, undefined, 'nothing to assume before any press');
 
     await c.switchInput('HDMI_3');
@@ -368,11 +369,11 @@ describe('when the TV will not say what it is showing', () => {
     // A television that has been off is one somebody may have put on
     // something else with the remote, so the weak claim is worth no more
     // than the strong one here.
-    const going = new MockWebosTv(19837);
+    const going = new MockWebosTv(19857);
     going.reportsInput = false;
     await going.start();
 
-    const c = new WebosClient({ host: '127.0.0.1:19837', keyFile: join(keyDir, 'drop.json') });
+    const c = new WebosClient({ host: '127.0.0.1:19857', keyFile: join(keyDir, 'drop.json') });
     await c.switchInput('HDMI_2');
     assert.equal(c.assumedInput, 'HDMI_2');
 
@@ -387,11 +388,11 @@ describe('when the TV will not say what it is showing', () => {
      * push the panel gets comes from the foreground-app subscription, which
      * on this set never fires.
      */
-    const silent = new MockWebosTv(19838);
+    const silent = new MockWebosTv(19858);
     silent.reportsInput = false;
     await silent.start();
 
-    const c = new WebosClient({ host: '127.0.0.1:19838', keyFile: join(keyDir, 'notify.json') });
+    const c = new WebosClient({ host: '127.0.0.1:19858', keyFile: join(keyDir, 'notify.json') });
     const seen = [];
     c.onInputChange(() => seen.push(c.assumedInput ?? c.currentInput ?? null));
 
@@ -427,6 +428,202 @@ describe('a television that is off', () => {
   });
 });
 
+/* ── Power ────────────────────────────────────────────────────────────────*/
+
+/** A UDP listener standing in for the TV's NIC, counting magic packets. */
+async function wolListener() {
+  const socket = createSocket('udp4');
+  const packets = [];
+  socket.on('message', (msg) => packets.push(msg));
+  await new Promise((resolve) => socket.bind(0, '127.0.0.1', resolve));
+  return { port: socket.address().port, packets, close: () => socket.close() };
+}
+
+describe('power', () => {
+  /*
+   * The bug: the power key "sometimes" did nothing. With Quick Start+ a set
+   * in standby keeps its socket up, so it connected, counted as on, and a
+   * toggle sent it turnOff — to a television that was already off.
+   */
+  test('a set in standby with its socket up is off, not on', async () => {
+    const standby = new MockWebosTv(19850);
+    await standby.start();
+    standby.powerState = 'Active Standby';
+    const c = client({ host: '127.0.0.1:19850' });
+
+    assert.equal(await c.isOn(), false);
+    standby.powerState = 'Active';
+    assert.equal(await c.isOn(), true);
+
+    await c.stop();
+    await standby.stop();
+  });
+
+  test('an older set without the power service is on when it answers', async () => {
+    const old = new MockWebosTv(19851);
+    await old.start();
+    old.powerState = undefined;
+    const c = client({ host: '127.0.0.1:19851' });
+
+    assert.equal(await c.isOn(), true);
+
+    await c.stop();
+    await old.stop();
+  });
+
+  test('a dark screen is lit with turnOnScreen, not a magic packet', async () => {
+    const dark = new MockWebosTv(19852);
+    await dark.start();
+    dark.powerState = 'Screen Off';
+    const wol = await wolListener();
+    const c = client({ host: '127.0.0.1:19852', mac: 'a8:23:fe:00:11:22', broadcast: '127.0.0.1', wolPort: wol.port });
+
+    assert.equal(await c.turnOn(), null);
+    assert.ok(dark.commands.some((x) => x.uri.endsWith('/turnOnScreen')));
+    assert.equal(dark.powerState, 'Active');
+    assert.equal(wol.packets.length, 0, 'an awake set is not sent a wake packet');
+
+    await c.stop();
+    wol.close();
+    await dark.stop();
+  });
+
+  test('a set that is already on is left alone', async () => {
+    const on = new MockWebosTv(19853);
+    await on.start();
+    const wol = await wolListener();
+    const c = client({ host: '127.0.0.1:19853', mac: 'a8:23:fe:00:11:22', broadcast: '127.0.0.1', wolPort: wol.port });
+
+    assert.equal(await c.turnOn(), null);
+    assert.equal(wol.packets.length, 0);
+
+    await c.stop();
+    wol.close();
+    await on.stop();
+  });
+
+  test('turning on keeps waking until the set answers, then reports success', async () => {
+    const wol = await wolListener();
+    const asleep = new MockWebosTv(19854);
+    const c = client({
+      host: '127.0.0.1:19854',
+      mac: 'a8:23:fe:00:11:22',
+      broadcast: '127.0.0.1',
+      wolPort: wol.port,
+      wakeTimeoutMs: 8000,
+    });
+
+    // The set comes up a couple of seconds after the first packet — long
+    // enough that one burst and an immediate "done" would have been a lie.
+    const pressed = c.turnOn();
+    await waitFor(() => wol.packets.length > 0, 'a wake packet');
+    await new Promise((r) => setTimeout(r, 1500));
+    await asleep.start();
+
+    assert.equal(await pressed, null, 'success once the TV is actually up');
+    assert.ok(wol.packets.length > 3, `the packet was repeated (${wol.packets.length} sent)`);
+    assert.equal(wol.packets[0].length, 102, 'a real magic packet');
+    assert.equal(await c.isOn(), true);
+
+    await c.stop();
+    wol.close();
+    await asleep.stop();
+  });
+
+  test('a standby set is woken, and success waits for it to be Active', async () => {
+    const wol = await wolListener();
+    const standby = new MockWebosTv(19855);
+    await standby.start();
+    standby.powerState = 'Active Standby';
+    const c = client({
+      host: '127.0.0.1:19855',
+      mac: 'a8:23:fe:00:11:22',
+      broadcast: '127.0.0.1',
+      wolPort: wol.port,
+      wakeTimeoutMs: 5000,
+    });
+
+    const pressed = c.turnOn();
+    await waitFor(() => wol.packets.length > 0, 'a wake packet');
+    standby.powerState = 'Active';
+
+    assert.equal(await pressed, null);
+    assert.ok(!standby.commands.some((x) => x.uri.endsWith('/turnOff')), 'never told to turn off');
+
+    await c.stop();
+    wol.close();
+    await standby.stop();
+  });
+
+  test('a set that never wakes is reported, not claimed', async () => {
+    const wol = await wolListener();
+    const c = client({
+      host: '127.0.0.1:19856',
+      mac: 'a8:23:fe:00:11:22',
+      broadcast: '127.0.0.1',
+      wolPort: wol.port,
+      wakeTimeoutMs: 1500,
+    });
+
+    const error = await c.turnOn();
+    assert.match(error ?? '', /did not wake/);
+
+    wol.close();
+  });
+
+  test('a double press shares one wake', async () => {
+    const wol = await wolListener();
+    const c = client({
+      host: '127.0.0.1:19857',
+      mac: 'a8:23:fe:00:11:22',
+      broadcast: '127.0.0.1',
+      wolPort: wol.port,
+      wakeTimeoutMs: 300,
+    });
+
+    const [a, b] = [c.turnOn(), c.turnOn()];
+    assert.equal(a, b, 'the same in-flight promise');
+    await a;
+
+    wol.close();
+  });
+
+  test('a socket that stops answering is dropped, and the set asked afresh', async () => {
+    const tv2 = new MockWebosTv(19858);
+    await tv2.start();
+    const c = client({ host: '127.0.0.1:19858' });
+    assert.equal(await c.isOn(), true);
+
+    // Half-open: the socket reads OPEN, nothing comes back.
+    tv2.silent = true;
+    const started = Date.now();
+    assert.equal(await c.isOn(), false);
+    assert.ok(Date.now() - started < 9000, 'a short probe, not a command timeout');
+
+    tv2.silent = false;
+    assert.equal(await c.isOn(), true, 'a fresh connection once it answers again');
+
+    await c.stop();
+    await tv2.stop();
+  });
+});
+
+describe('wake targets', () => {
+  test('the TV itself is sent the packet too, for networks broadcasts cannot cross', () => {
+    const targets = wakeTargets('192.168.1.67');
+    assert.ok(targets.includes('255.255.255.255'));
+    assert.ok(targets.includes('192.168.1.67'));
+  });
+
+  test('a configured broadcast replaces the guess, but keeps the unicast', () => {
+    assert.deepEqual(wakeTargets('192.168.1.67', '192.168.1.255'), ['192.168.1.255', '192.168.1.67']);
+  });
+
+  test('a hostname gets no unicast', () => {
+    assert.deepEqual(wakeTargets('lg-tv.local'), ['255.255.255.255']);
+  });
+});
+
 /* ── Which port, and over what ────────────────────────────────────────────*/
 
 describe('finding the TV', () => {
@@ -459,11 +656,11 @@ describe('finding the TV', () => {
   test('connects over TLS to a set that only serves 3001', async () => {
     // The real 192.168.1.67 case. The TV's certificate is self-signed and
     // issued to itself, so this only works because verification is off.
-    const secure = new MockWebosTv(19831, { tls: true, cert: certPath, key: tlsKeyPath });
+    const secure = new MockWebosTv(19851, { tls: true, cert: certPath, key: tlsKeyPath });
     await secure.start();
 
     const c = new WebosClient({
-      host: '127.0.0.1:19831',
+      host: '127.0.0.1:19851',
       keyFile: join(keyDir, 'tls.json'),
     });
     const error = await c.switchInput('HDMI_2');
@@ -482,10 +679,10 @@ describe('finding the TV', () => {
     // The opposite shape: an older set with no TLS listener. The client must
     // try wss, fail, and go on rather than giving up — which is what it did
     // before, reporting the TV as simply unreachable.
-    const plain = new MockWebosTv(19832);
+    const plain = new MockWebosTv(19852);
     await plain.start();
 
-    const c = new WebosClient({ host: '127.0.0.1:19832', keyFile: join(keyDir, 'plain.json') });
+    const c = new WebosClient({ host: '127.0.0.1:19852', keyFile: join(keyDir, 'plain.json') });
     const error = await c.switchInput('HDMI_1');
 
     assert.equal(error, null, 'plaintext must be reached after TLS fails');

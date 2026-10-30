@@ -9,11 +9,13 @@ import {
   failureOf,
   inputsOf,
   isAuthFailure,
+  powerOf,
   registerPayload,
   type SsapFrame,
   type TvInput,
+  type TvPower,
 } from '~/tv/protocol.ts';
-import { wake } from '~/tv/wol.ts';
+import { wake, wakeTargets } from '~/tv/wol.ts';
 import { splitHost } from '~/cast/keeper.ts';
 
 const log = logger('webos');
@@ -23,6 +25,28 @@ const REQUEST_TIMEOUT_MS = 6000;
 /** Registration is slower: it waits for someone to accept a prompt on screen. */
 const PAIR_TIMEOUT_MS = 60_000;
 const CONNECT_TIMEOUT_MS = 5000;
+/**
+ * "Are you on?" gets less patience than a command. It is asked before every
+ * toggle, and a socket that has not answered in this long is a socket to a
+ * set that went away without saying so.
+ */
+const PROBE_TIMEOUT_MS = 2500;
+/**
+ * How long turning on waits for the set to answer before giving up.
+ *
+ * A webOS TV from cold takes a few seconds to bring its network up, and one
+ * that was switched off moments ago ignores magic packets until it has
+ * finished shutting down. Twenty seconds covers both with room to spare.
+ */
+const WAKE_TIMEOUT_MS = 20_000;
+/** While waiting, the magic packet is sent again this often. */
+const WAKE_RESEND_MS = 1000;
+/** And the set is asked whether it is up this often. */
+const WAKE_POLL_MS = 500;
+/** A ping this often while connected, so a dead socket is noticed. */
+const KEEPALIVE_MS = 5000;
+/** Nothing heard for this long and the socket is treated as dead. */
+const DEAD_AFTER_MS = 15_000;
 
 export interface WebosOptions {
   host: string;
@@ -31,6 +55,10 @@ export interface WebosOptions {
   /** Where the pairing key is kept between restarts. */
   keyFile: string;
   broadcast?: string;
+  /** How long `turnOn` waits for the set to answer. Tests shorten it. */
+  wakeTimeoutMs?: number;
+  /** Where the magic packet is sent. 9 unless a test is listening. */
+  wolPort?: number;
 }
 
 /**
@@ -53,6 +81,9 @@ export interface WebosOptions {
  * stack is down, not that the socket is idle — so "turn on" is a magic packet
  * (see wol.ts) and every other command needs a connection established on
  * demand. Holding one open permanently would just mean holding a dead one.
+ * The exception is Quick Start+, which keeps the socket up in standby — so
+ * whether the set is on is asked of the set (`getPowerState`), never inferred
+ * from the socket connecting.
  */
 export class WebosClient {
   readonly #opts: WebosOptions;
@@ -63,6 +94,8 @@ export class WebosClient {
   #pending = new Map<string, (frame: SsapFrame) => void>();
   /** In-flight connect, so concurrent presses share one handshake. */
   #connecting: Promise<void> | undefined;
+  /** In-flight wake, so a double tap does not start two. */
+  #waking: Promise<string | null> | undefined;
   /** The endpoint that last worked, tried first next time. */
   #endpoint: string | undefined;
   /** The input the TV is showing, or undefined when we do not know. */
@@ -142,22 +175,82 @@ export class WebosClient {
   /* ── The operations the panel asks for ─────────────────────────────────*/
 
   /**
-   * Turn the set on. This is the one command that does NOT use the socket.
+   * Turn the set on, and do not report success until it IS on.
+   *
+   * Three different things, depending on what the set says it is doing:
+   *
+   *  - on already: nothing to do. Firing a magic packet anyway was harmless,
+   *    but a toggle that guessed wrong would have sent `turnOff` instead.
+   *  - "Screen Off": the set is awake with the panel dark, and only
+   *    `turnOnScreen` brings the picture back. A magic packet does nothing.
+   *  - standby or unreachable: Wake-on-LAN — repeated every second until the
+   *    set answers, rather than one burst. A single burst was the flakiness:
+   *    a TV that has only just been switched off ignores the packet until it
+   *    has finished shutting down, and one that is waking can miss it.
+   *
+   * Waiting for the set to answer is also what makes a key that turns the TV
+   * on and THEN picks an input work: the input switch used to run while the
+   * set was still asleep, and fail.
    *
    * Returns an error for the panel when there is no MAC configured, rather
    * than failing silently: "the TV will not turn on" is otherwise a very
    * confusing symptom of a missing line of YAML.
    */
-  async turnOn(): Promise<string | null> {
+  turnOn(): Promise<string | null> {
+    this.#waking ??= this.#wakeUp().finally(() => {
+      this.#waking = undefined;
+    });
+    return this.#waking;
+  }
+
+  async #wakeUp(): Promise<string | null> {
+    const before = await this.#power();
+    if (before === 'on') return null;
+    if (before === 'screen-off') return this.#command(URI.turnOnScreen);
+
     const mac = this.#opts.mac;
     if (!mac) return 'No MAC address configured for this TV, so it cannot be woken';
+
+    const targets = wakeTargets(splitHost(this.#opts.host, 0).host, this.#opts.broadcast);
+    const send = (): Promise<void> => wake(mac, targets, this.#opts.wolPort);
     try {
-      await wake(mac, this.#opts.broadcast);
-      return null;
+      await send();
     } catch (err) {
       log.warn(`Wake-on-LAN to ${mac} failed:`, err);
       return 'Could not send the wake packet';
     }
+    log.info(`Woke ${this.#opts.host} (${mac} via ${targets.join(', ')}); waiting for it to answer`);
+
+    // Keep sending on a timer of its own: a probe of a set that is still
+    // asleep can sit in a connect timeout for seconds, and the packets should
+    // not wait for it.
+    const resend = setInterval(() => {
+      send().catch(() => {
+        // Already worked once; the next one will be along in a second.
+      });
+    }, WAKE_RESEND_MS);
+
+    const started = Date.now();
+    const deadline = started + (this.#opts.wakeTimeoutMs ?? WAKE_TIMEOUT_MS);
+    try {
+      while (Date.now() < deadline) {
+        const now = await this.#power();
+        if (now === 'on') {
+          log.info(`${this.#opts.host} is on after ${Date.now() - started}ms`);
+          return null;
+        }
+        if (now === 'screen-off') return this.#command(URI.turnOnScreen);
+        await new Promise((r) => setTimeout(r, WAKE_POLL_MS));
+      }
+    } finally {
+      clearInterval(resend);
+    }
+
+    log.warn(`${this.#opts.host} did not answer after Wake-on-LAN to ${mac}`);
+    return (
+      'The TV did not wake up. Check its MAC address, and that Quick Start+ ' +
+      '(or "TV On with Mobile") is turned on'
+    );
   }
 
   async turnOff(): Promise<string | null> {
@@ -165,19 +258,60 @@ export class WebosClient {
   }
 
   /**
-   * On when the socket connects, off when it does not.
+   * On only when the set says it is showing something.
    *
-   * There is no status endpoint that answers while the set is off, for the
-   * obvious reason, so reachability IS the power state. Deliberately does not
-   * try to wake anything — asking a question must never change the answer.
+   * Reachability alone is not enough, and that was the bug behind a power key
+   * that "sometimes" did nothing: with Quick Start+ a set in standby keeps
+   * its socket up, so it connected, counted as on, and a toggle sent it
+   * `turnOff`. Deliberately does not try to wake anything — asking a
+   * question must never change the answer.
    */
   async isOn(): Promise<boolean> {
-    try {
-      await this.#connect();
-      return true;
-    } catch {
-      return false;
+    return (await this.#power()) === 'on';
+  }
+
+  /**
+   * Ask the set what it is doing, or `off` when it cannot be asked.
+   *
+   * A socket that is open but does not answer is dropped and connected again
+   * once. A TV switched off at the remote can leave the connection half-open
+   * — no close ever arrives — and every question then times out on a socket
+   * that only looks alive.
+   */
+  async #power(): Promise<TvPower | 'off'> {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const reused = this.#socket?.readyState === WebSocket.OPEN;
+      try {
+        await this.#connect();
+      } catch {
+        return 'off';
+      }
+      const socket = this.#socket;
+
+      let frame: SsapFrame;
+      try {
+        frame = await this.#request(URI.powerState, undefined, PROBE_TIMEOUT_MS);
+      } catch {
+        this.#drop(socket);
+        if (reused) continue;
+        return 'off';
+      }
+
+      // The socket closing while we waited is an answer: it is off.
+      if (this.#socket !== socket) return 'off';
+      // An older set without the power service still answered, which on
+      // those sets only happens while it is on.
+      if (failureOf(frame)) return 'on';
+      return powerOf(frame.payload) ?? 'on';
     }
+    return 'off';
+  }
+
+  /** Abandon a socket that has stopped answering. */
+  #drop(socket: WebSocket | undefined): void {
+    if (!socket) return;
+    if (this.#socket === socket) this.#socket = undefined;
+    socket.terminate();
   }
 
   async listInputs(): Promise<TvInput[]> {
@@ -293,7 +427,11 @@ export class WebosClient {
     }
   }
 
-  async #request(uri: string, payload?: Record<string, unknown>): Promise<SsapFrame> {
+  async #request(
+    uri: string,
+    payload?: Record<string, unknown>,
+    timeoutMs = REQUEST_TIMEOUT_MS,
+  ): Promise<SsapFrame> {
     await this.#connect();
     const socket = this.#socket;
     if (!socket) throw new Error('The TV is not reachable');
@@ -302,7 +440,7 @@ export class WebosClient {
     const frame: Record<string, unknown> = { id, type: 'request', uri };
     if (payload) frame['payload'] = payload;
 
-    return this.#send(socket, frame, id, REQUEST_TIMEOUT_MS);
+    return this.#send(socket, frame, id, timeoutMs);
   }
 
   #send(
@@ -539,7 +677,32 @@ export class WebosClient {
 
   /** Wire the long-lived handlers onto a socket that is already open. */
   #attach(socket: WebSocket): void {
+    /*
+     * Keepalive. Without it a set that drops off the network without closing
+     * the connection — the remote's power button, a power cut — leaves a
+     * socket that reads OPEN for minutes: the input label stays on the panel,
+     * and the next press waits on a television that is not there.
+     */
+    let heard = Date.now();
+    const keepalive = setInterval(() => {
+      if (Date.now() - heard > DEAD_AFTER_MS) {
+        log.info(`${this.#opts.host} stopped answering; dropping the connection`);
+        this.#drop(socket);
+        return;
+      }
+      try {
+        socket.ping();
+      } catch {
+        // Not open any more; 'close' is on its way.
+      }
+    }, KEEPALIVE_MS);
+    keepalive.unref();
+    socket.on('pong', () => {
+      heard = Date.now();
+    });
+
     socket.on('message', (data) => {
+      heard = Date.now();
       let frame: SsapFrame;
       try {
         frame = JSON.parse(String(data)) as SsapFrame;
@@ -551,7 +714,12 @@ export class WebosClient {
     });
 
     socket.on('close', () => {
-      if (this.#socket === socket) this.#socket = undefined;
+      clearInterval(keepalive);
+      // A socket dropped for not answering can close after its replacement
+      // has connected. What follows is about THIS television's connection,
+      // and that is now the new one's to report.
+      if (this.#socket && this.#socket !== socket) return;
+      this.#socket = undefined;
       // The TV is gone, so what it was showing is no longer known. Keeping
       // the last value would leave a stale input on the panel for as long as
       // the set stays off.

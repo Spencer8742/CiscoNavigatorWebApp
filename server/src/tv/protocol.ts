@@ -108,7 +108,43 @@ export const URI = {
   listInputs: 'ssap://tv/getExternalInputList',
   switchInput: 'ssap://tv/switchInput',
   foregroundApp: 'ssap://com.webos.applicationManager/getForegroundAppInfo',
+  powerState: 'ssap://com.webos.service.tvpower/power/getPowerState',
+  /** Lights a panel that is "Screen Off" — the set is on, the picture is not. */
+  turnOnScreen: 'ssap://com.webos.service.tvpower/power/turnOnScreen',
 } as const;
+
+/**
+ * What the set says about its own power, reduced to what the panel acts on.
+ *
+ *  - `on`: showing a picture (a screen saver counts — it is on).
+ *  - `screen-off`: on, with the panel dark. Woken by `turnOnScreen`; a magic
+ *    packet does nothing to a set that is already awake.
+ *  - `standby`: answering the socket but OFF. This is what Quick Start+ looks
+ *    like: the network stays up after the remote's power button, so "the
+ *    socket connects" is not the same as "the TV is on". Treating it as on
+ *    was why the power key so often did nothing — it decided the TV was on
+ *    and sent it `turnOff`.
+ *  - `undefined`: the reply does not say, or says something unrecognised.
+ *
+ * A `processing` value naming a power-down wins over `state`: for a second or
+ * two after the remote is pressed the set still reports Active while it is
+ * already on its way off.
+ */
+export type TvPower = 'on' | 'screen-off' | 'standby';
+
+export function powerOf(payload: Record<string, unknown> | undefined): TvPower | undefined {
+  const state = payload?.['state'];
+  const processing = payload?.['processing'];
+
+  if (typeof processing === 'string' && /power off|standby|suspend/i.test(processing)) {
+    return 'standby';
+  }
+  if (typeof state !== 'string') return undefined;
+  if (/^(active|screen saver)$/i.test(state.trim())) return 'on';
+  if (/^screen off$/i.test(state.trim())) return 'screen-off';
+  if (/standby|suspend|power off/i.test(state)) return 'standby';
+  return undefined;
+}
 
 /**
  * Which input a foreground app id means, or null for anything else.
