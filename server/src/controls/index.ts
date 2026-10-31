@@ -88,6 +88,33 @@ export interface ControlsDeps {
   wakeOnLan?: (mac: string, broadcast?: string) => Promise<void>;
 }
 
+/**
+ * Which device a step drives, so steps on one device keep their order while
+ * steps on different devices run together. See `#runAll`.
+ */
+function laneOf(action: ControlAction): string {
+  switch (action.kind) {
+    case 'webhook':
+      return `webhook:${action.id}`;
+    case 'keylight':
+      // One lane for every key light: `all` and a named light overlap.
+      return 'keylight';
+    case 'tv':
+      return `tv:${action.tv}`;
+    case 'roomos':
+    case 'xcommand':
+      return `roomos:${action.device}`;
+    case 'ssh':
+      return `ssh:${action.host}`;
+    case 'appletv':
+      return `appletv:${action.device}`;
+    case 'entity':
+      return `entity:${action.entity}`;
+    case 'wait':
+      return 'wait';
+  }
+}
+
 /** A webhook is unauthenticated and idempotent-ish; still, do not hang on it. */
 const WEBHOOK_TIMEOUT_MS = 5000;
 
@@ -513,17 +540,28 @@ export class Controls {
   }
 
   /**
-   * Run a key's actions in order — all of them — and report the first failure.
+   * Run all of a key's actions — every one — and report the first failure.
    *
    * Carrying on is deliberate. "Shut Down Office" is a Desk Pro, the lights,
    * an Apple TV, a Mac and a television, and a Desk Pro that happens not to
    * answer should not leave the lights on. The step that failed is still what
    * the key reports, and a key with more than one failure says how many, so
    * a partly-started room does not read as a clean press.
+   *
+   * Different devices are driven AT THE SAME TIME. Waking a television that
+   * has been off for hours, or opening an SSH session, takes seconds each;
+   * done one after another they added up to a key that seemed to hang. So the
+   * steps are split into lanes, one per device: steps on the SAME device
+   * still run in the order written (wake the Desk Pro, then present on it),
+   * and only separate devices overlap. A `wait:` step is a barrier — every
+   * step before it finishes first, then the pause, then the rest — which is
+   * how a key says one device must be done before another starts.
    */
   async #runAll(actions: ControlAction[], label: string): Promise<string | null> {
-    const problems: string[] = [];
-    for (const action of actions) {
+    const problems: (string | null)[] = new Array(actions.length).fill(null);
+
+    const runOne = async (index: number): Promise<void> => {
+      const action = actions[index]!;
       let problem: string | null;
       try {
         problem = await this.#run(action, label);
@@ -532,11 +570,40 @@ export class Controls {
       }
       if (problem) {
         log.warn(`${label}: step ${action.kind} failed: ${problem}`);
-        problems.push(problem);
+        problems[index] = problem;
+      }
+    };
+
+    let segment: number[] = [];
+    const flush = async (): Promise<void> => {
+      const lanes = new Map<string, number[]>();
+      for (const i of segment) {
+        const key = laneOf(actions[i]!);
+        const lane = lanes.get(key);
+        if (lane) lane.push(i);
+        else lanes.set(key, [i]);
+      }
+      segment = [];
+      await Promise.all(
+        [...lanes.values()].map(async (lane) => {
+          for (const i of lane) await runOne(i);
+        }),
+      );
+    };
+
+    for (let i = 0; i < actions.length; i++) {
+      if (actions[i]!.kind === 'wait') {
+        await flush();
+        await runOne(i);
+      } else {
+        segment.push(i);
       }
     }
-    if (problems.length === 0) return null;
-    return problems.length === 1 ? problems[0]! : `${problems[0]} (+${problems.length - 1} more)`;
+    await flush();
+
+    const failed = problems.filter((p): p is string => p !== null);
+    if (failed.length === 0) return null;
+    return failed.length === 1 ? failed[0]! : `${failed[0]} (+${failed.length - 1} more)`;
   }
 
   async #run(action: ControlAction, label: string): Promise<string | null> {
