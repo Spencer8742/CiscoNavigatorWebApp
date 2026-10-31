@@ -576,8 +576,9 @@ controls:
       assert.equal(await controls.press('power'), 'C is not answering');
       const took = Date.now() - started;
       // Device a has two steps, so two delays; b and c overlap with them.
+      // That a's steps ran one after the other is shown by the order below,
+      // not by timing: a timer may fire a millisecond early.
       assert.ok(took < DELAY * 3, `took ${took}ms, expected the devices to overlap`);
-      assert.ok(took >= DELAY * 2, `took ${took}ms, expected a's two steps in sequence`);
       const a = calls.filter((c) => c.device === 'a').map((c) => `${c.op}:${c.at}`);
       assert.deepEqual(a, ['power_on:start', 'power_on:end', 'menu:start', 'menu:end']);
     } finally {
