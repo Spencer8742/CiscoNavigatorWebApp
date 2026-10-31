@@ -511,3 +511,94 @@ controls:
     }
   });
 });
+
+describe('a multi-device key', () => {
+  /*
+   * "Office Power" and "Shut Down" drive five or six devices, and each one can
+   * take a second or more to answer. Run one after another they added up; run
+   * together the key takes as long as its slowest device.
+   */
+  const DELAY = 150;
+  const YAML = `
+version: 1
+controls:
+  pollSeconds: 0
+  pages:
+    - id: room
+      name: Room
+      items:
+        - id: power
+          name: Office Power
+          actions:
+            - { appletv: a, action: power_on }
+            - { appletv: b, action: power_on }
+            - { appletv: a, action: menu }
+            - { appletv: c, action: power_on }
+        - id: barrier
+          name: Barrier
+          actions:
+            - { appletv: a, action: power_on }
+            - { wait: 0.05 }
+            - { appletv: b, action: power_on }
+`;
+
+  async function controlsWith() {
+    const path = join(dir, `lanes-${Math.random().toString(36).slice(2)}.yaml`);
+    await writeFile(path, YAML);
+    const config = new ConfigStore(path);
+    assert.equal(await config.load(), true);
+    const calls = [];
+    const controls = new Controls({
+      getConfig: () => config.current,
+      haUrl: '',
+      callService: async () => null,
+      getEntity: () => null,
+      onLights: () => {},
+      onTvs: () => {},
+      onRoomos: () => {},
+      roomosPassword: () => 'secret',
+      appleTvCommand: async (device, op) => {
+        calls.push({ device, op, at: 'start' });
+        await new Promise((r) => setTimeout(r, DELAY));
+        calls.push({ device, op, at: 'end' });
+        return device === 'c' ? 'C is not answering' : null;
+      },
+      sshCredential: async () => ({}),
+      sshKnownHostsFile: join(dir, 'ssh-known-hosts.json'),
+      hasPanels: () => false,
+      tvKeyFile: join(dir, 'tv-keys.json'),
+    });
+    return { config, controls, calls };
+  }
+
+  test('drives different devices at once, one device in order', async () => {
+    const { config, controls, calls } = await controlsWith();
+    try {
+      const started = Date.now();
+      assert.equal(await controls.press('power'), 'C is not answering');
+      const took = Date.now() - started;
+      // Device a has two steps, so two delays; b and c overlap with them.
+      assert.ok(took < DELAY * 3, `took ${took}ms, expected the devices to overlap`);
+      assert.ok(took >= DELAY * 2, `took ${took}ms, expected a's two steps in sequence`);
+      const a = calls.filter((c) => c.device === 'a').map((c) => `${c.op}:${c.at}`);
+      assert.deepEqual(a, ['power_on:start', 'power_on:end', 'menu:start', 'menu:end']);
+    } finally {
+      controls.stop();
+      config.close();
+    }
+  });
+
+  test('a wait is a barrier between devices', async () => {
+    const { config, controls, calls } = await controlsWith();
+    try {
+      assert.equal(await controls.press('barrier'), null);
+      assert.deepEqual(
+        calls.map((c) => `${c.device}:${c.at}`),
+        ['a:start', 'a:end', 'b:start', 'b:end'],
+      );
+    } finally {
+      controls.stop();
+      config.close();
+    }
+  });
+});

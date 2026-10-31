@@ -534,9 +534,14 @@ controls:
   # Note the YAML: `on` and `off` are booleans in YAML 1.1, and are read here
   # as the words they look like.
   #
-  # A key may carry SEVERAL actions. They run in order, and every one runs
-  #   even if an earlier one fails — the key then reports what failed. One key
-  #   is often one intention in more than one place:
+  # A key may carry SEVERAL actions. Every one runs even if an earlier one
+  #   fails — the key then reports what failed. Steps on DIFFERENT devices run
+  #   at the same time, so a key driving five devices takes as long as the
+  #   slowest one rather than all five added up; steps on the SAME device
+  #   still run in the order written. Where one device must finish before
+  #   another starts, put a `{ wait: <seconds> }` between them: everything
+  #   above a wait finishes, then the pause, then the rest. One key is often
+  #   one intention in more than one place:
   #
   #   - name: Office Power
   #     icon: power
