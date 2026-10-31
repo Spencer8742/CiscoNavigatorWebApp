@@ -414,7 +414,8 @@ export class HaClient {
   callService(
     domain: string,
     service: string,
-    entityId: string,
+    /** Undefined for a service that acts on no entity, like wake_on_lan. */
+    entityId: string | undefined,
     data?: Record<string, unknown>,
   ): Promise<unknown> {
     return new Promise((resolve, reject) => {
@@ -429,7 +430,7 @@ export class HaClient {
         type: 'call_service',
         domain,
         service,
-        target: { entity_id: entityId },
+        ...(entityId ? { target: { entity_id: entityId } } : {}),
         ...(data && Object.keys(data).length > 0 ? { service_data: data } : {}),
       });
 

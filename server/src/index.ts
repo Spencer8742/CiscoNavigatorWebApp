@@ -640,6 +640,21 @@ async function main(): Promise<void> {
     // Beside the config, like panel-prefs.json — that directory is already
     // the one thing a deployment is expected to persist.
     tvKeyFile: join(dirname(env.configPath), 'tv-keys.json'),
+    // Home Assistant usually runs on the host network, so its broadcast
+    // reaches a TV that this container's (on a Docker bridge) cannot once
+    // the set has been asleep long enough to drop out of the ARP cache.
+    // Needs `wake_on_lan:` in HA's configuration.yaml; without it the call
+    // fails, is logged once, and the packets sent from here still go.
+    ...(env.ha.enabled
+      ? {
+          wakeOnLan: async (mac: string, broadcast?: string) => {
+            await haClient.callService('wake_on_lan', 'send_magic_packet', undefined, {
+              mac,
+              ...(broadcast ? { broadcast_address: broadcast } : {}),
+            });
+          },
+        }
+      : {}),
   });
   appleTv.configure(config.current.controls.appleTvs);
   config.onChange((next) => appleTv.configure(next.controls.appleTvs));
