@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createSocket } from 'node:dgram';
+import { createServer as createTcpServer } from 'node:net';
 import { MockWebosTv } from './mock-webos.mjs';
 
 /** Poll until `check` is truthy, or fail with `what`. */
@@ -696,6 +697,139 @@ describe('power', () => {
     assert.match(error ?? '', /did not wake/);
 
     wol.close();
+  });
+
+  /*
+   * The morning bug. A set that has been off for hours does not answer a
+   * connect at all — the SYN goes nowhere — so asking "are you on?" sat in
+   * the connect timeout for ten seconds before the first packet was sent.
+   * Modelled with a port that accepts TCP and never speaks WebSocket.
+   */
+  test('a set that does not answer is sent packets before the probe gives up', async () => {
+    const held = new Set();
+    const silent = createTcpServer((sock) => {
+      held.add(sock);
+      sock.on('error', () => {});
+    });
+    await new Promise((r) => silent.listen(19859, '127.0.0.1', r));
+    const wol = await wolListener();
+    const c = client({
+      host: '127.0.0.1:19859',
+      mac: 'a8:23:fe:00:11:22',
+      broadcast: '127.0.0.1',
+      wolPort: wol.port,
+      wakeTimeoutMs: 2500,
+    });
+
+    const pressed = c.turnOn();
+    await waitFor(() => wol.packets.length > 0, 'a wake packet within the grace period', 2500);
+    await pressed;
+
+    await c.stop();
+    wol.close();
+    for (const sock of held) sock.destroy();
+    await new Promise((r) => silent.close(r));
+  });
+
+  /*
+   * In a Docker bridge network no broadcast from the container reaches the
+   * LAN, and the unicast stops arriving once the TV has dropped out of the
+   * host's ARP cache. Home Assistant can broadcast; it is asked to as well.
+   */
+  test('the wake is relayed, with the MAC and configured broadcast', async () => {
+    const wol = await wolListener();
+    const asleep = new MockWebosTv(19860);
+    const relayed = [];
+    const c = client({
+      host: '127.0.0.1:19860',
+      mac: 'a8:23:fe:00:11:22',
+      broadcast: '127.0.0.1',
+      wolPort: wol.port,
+      wakeTimeoutMs: 8000,
+      wakeRelay: async (mac, broadcast) => {
+        relayed.push({ mac, broadcast });
+      },
+    });
+
+    const pressed = c.turnOn();
+    await waitFor(() => relayed.length > 0, 'a relayed wake');
+    await asleep.start();
+
+    assert.equal(await pressed, null);
+    assert.deepEqual(relayed[0], { mac: 'a8:23:fe:00:11:22', broadcast: '127.0.0.1' });
+
+    await c.stop();
+    wol.close();
+    await asleep.stop();
+  });
+
+  test('a failing relay does not stop the packets sent from here', async () => {
+    const wol = await wolListener();
+    const asleep = new MockWebosTv(19861);
+    const c = client({
+      host: '127.0.0.1:19861',
+      mac: 'a8:23:fe:00:11:22',
+      broadcast: '127.0.0.1',
+      wolPort: wol.port,
+      wakeTimeoutMs: 8000,
+      wakeRelay: async () => {
+        throw new Error('Service wake_on_lan.send_magic_packet not found');
+      },
+    });
+
+    const pressed = c.turnOn();
+    await waitFor(() => wol.packets.length > 0, 'a wake packet');
+    await asleep.start();
+
+    assert.equal(await pressed, null);
+
+    await c.stop();
+    wol.close();
+    await asleep.stop();
+  });
+
+  /*
+   * "TV on, then HDMI 2": a set that has just booted says Active before its
+   * input service is ready, and turned the switch down.
+   */
+  test('an input switch refused just after waking is tried again', async () => {
+    const wol = await wolListener();
+    const booting = new MockWebosTv(19862);
+    const c = client({
+      host: '127.0.0.1:19862',
+      mac: 'a8:23:fe:00:11:22',
+      broadcast: '127.0.0.1',
+      wolPort: wol.port,
+      wakeTimeoutMs: 8000,
+    });
+
+    const pressed = c.turnOn();
+    await waitFor(() => wol.packets.length > 0, 'a wake packet');
+    await booting.start();
+    assert.equal(await pressed, null);
+
+    booting.refuse.add('ssap://tv/switchInput');
+    setTimeout(() => booting.refuse.delete('ssap://tv/switchInput'), 1500);
+    assert.equal(await c.switchInput('HDMI_2'), null);
+    const tries = booting.commands.filter((x) => x.uri === 'ssap://tv/switchInput');
+    assert.ok(tries.length >= 2, `asked again (${tries.length} attempts)`);
+
+    await c.stop();
+    wol.close();
+    await booting.stop();
+  });
+
+  test('a refused input switch on a set that was already on is reported at once', async () => {
+    const on = new MockWebosTv(19863);
+    await on.start();
+    on.refuse.add('ssap://tv/switchInput');
+    const c = client({ host: '127.0.0.1:19863' });
+
+    assert.ok(await c.switchInput('HDMI_2'));
+    assert.equal(on.commands.filter((x) => x.uri === 'ssap://tv/switchInput').length, 1);
+
+    await c.stop();
+    await on.stop();
   });
 
   test('a double press shares one wake', async () => {

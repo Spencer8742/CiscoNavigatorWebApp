@@ -20,6 +20,13 @@ import { splitHost } from '~/cast/keeper.ts';
 
 const log = logger('webos');
 
+/** Magic packets being sent until the set answers. */
+interface Waker {
+  stop(): void;
+  /** Whether any packet has left, here or through the relay. */
+  delivered(): boolean;
+}
+
 /** The TV answers in milliseconds on a LAN, or it is not going to. */
 const REQUEST_TIMEOUT_MS = 6000;
 /** Registration is slower: it waits for someone to accept a prompt on screen. */
@@ -34,11 +41,36 @@ const PROBE_TIMEOUT_MS = 2500;
 /**
  * How long turning on waits for the set to answer before giving up.
  *
- * A webOS TV from cold takes a few seconds to bring its network up, and one
- * that was switched off moments ago ignores magic packets until it has
- * finished shutting down. Twenty seconds covers both with room to spare.
+ * A set that was switched off moments ago ignores magic packets until it
+ * has finished shutting down, and that takes a few seconds. A set that has
+ * been off for hours is slower: it has left Quick Start+ for deep standby,
+ * so it boots rather than resumes, and SSAP is among the last things up.
+ * Twenty seconds covered the first case and regularly ran out on the
+ * second, which is why the TV "did not wake" in the morning and then came
+ * on anyway a few seconds after the panel had said so.
  */
-const WAKE_TIMEOUT_MS = 20_000;
+const WAKE_TIMEOUT_MS = 45_000;
+/**
+ * How long a press waits for the set to say it is on before it starts
+ * sending magic packets anyway.
+ *
+ * Asking first is right — an awake set should not be woken, and one with
+ * its screen off needs `turnOnScreen` instead — but the asking is a connect,
+ * and to a set in deep standby a connect is a SYN nobody answers. That took
+ * the full connect timeout on each endpoint, about ten seconds, before the
+ * first packet left. A set on the LAN answers well inside this.
+ */
+const EARLY_WAKE_MS = 1000;
+/**
+ * How long after waking an input switch the set refuses is tried again.
+ *
+ * A set that has just booted reports itself Active before its input
+ * service is ready, so the switch a "TV on, then HDMI 2" key sends straight
+ * afterwards can be turned down. That is a set that is not ready yet, not
+ * a set that said no.
+ */
+const SETTLE_AFTER_WAKE_MS = 15_000;
+const SETTLE_RETRY_MS = 1000;
 /** While waiting, the magic packet is sent again this often. */
 const WAKE_RESEND_MS = 1000;
 /** And the set is asked whether it is up this often. */
@@ -70,6 +102,11 @@ export interface WebosOptions {
   broadcast?: string;
   /** How long `turnOn` waits for the set to answer. Tests shorten it. */
   wakeTimeoutMs?: number;
+  /**
+   * Another way to send the magic packet, from somewhere that can reach the
+   * LAN's broadcast — Home Assistant, in practice. See `#startWaking`.
+   */
+  wakeRelay?: (mac: string, broadcast?: string) => Promise<void>;
   /** Where the magic packet is sent. 9 unless a test is listening. */
   wolPort?: number;
   /** How often to re-check the input, and to retry a lost connection. Tests shorten it. */
@@ -111,6 +148,10 @@ export class WebosClient {
   #connecting: Promise<void> | undefined;
   /** In-flight wake, so a double tap does not start two. */
   #waking: Promise<string | null> | undefined;
+  /** When the set last came up for a `turnOn`; see SETTLE_AFTER_WAKE_MS. */
+  #wokeAt = 0;
+  /** Whether the relay's failure has been explained yet, so it is said once. */
+  #relayWarned = false;
   /** The endpoint that last worked, tried first next time. */
   #endpoint: string | undefined;
   /** The input the TV is showing, or undefined when we do not know. */
@@ -267,39 +308,34 @@ export class WebosClient {
   }
 
   async #wakeUp(): Promise<string | null> {
-    const before = await this.#power();
-    if (before === 'on') return null;
-    if (before === 'screen-off') return this.#command(URI.turnOnScreen);
-
     const mac = this.#opts.mac;
-    if (!mac) return 'No MAC address configured for this TV, so it cannot be woken';
+    let waker: Waker | undefined;
+    const startWaking = (): Waker | undefined => {
+      if (mac) waker ??= this.#startWaking(mac);
+      return waker;
+    };
 
-    const targets = wakeTargets(splitHost(this.#opts.host, 0).host, this.#opts.broadcast);
-    const send = (): Promise<void> => wake(mac, targets, this.#opts.wolPort);
-    try {
-      await send();
-    } catch (err) {
-      log.warn(`Wake-on-LAN to ${mac} failed:`, err);
-      return 'Could not send the wake packet';
-    }
-    log.info(`Woke ${this.#opts.host} (${mac} via ${targets.join(', ')}); waiting for it to answer`);
-
-    // Keep sending on a timer of its own: a probe of a set that is still
-    // asleep can sit in a connect timeout for seconds, and the packets should
-    // not wait for it.
-    const resend = setInterval(() => {
-      send().catch(() => {
-        // Already worked once; the next one will be along in a second.
-      });
-    }, WAKE_RESEND_MS);
-
+    // Ask first, but do not let the asking hold the packets up: see
+    // EARLY_WAKE_MS. A set that turns out to be on was sent a packet it
+    // ignores, which costs nothing.
+    const early = setTimeout(startWaking, EARLY_WAKE_MS);
     const started = Date.now();
-    const deadline = started + (this.#opts.wakeTimeoutMs ?? WAKE_TIMEOUT_MS);
     try {
+      const before = await this.#power();
+      clearTimeout(early);
+      if (before === 'on') return null;
+      if (before === 'screen-off') return this.#command(URI.turnOnScreen);
+
+      if (!mac) return 'No MAC address configured for this TV, so it cannot be woken';
+      const sending = startWaking()!;
+      log.info(`Waking ${this.#opts.host} (${mac}); waiting for it to answer`);
+
+      const deadline = started + (this.#opts.wakeTimeoutMs ?? WAKE_TIMEOUT_MS);
       while (Date.now() < deadline) {
         const now = await this.#power();
         if (now === 'on') {
           log.info(`${this.#opts.host} is on after ${Date.now() - started}ms`);
+          this.#wokeAt = Date.now();
           // A Quick Start+ set kept its socket through standby, so no new
           // connection is coming to ask what it is showing. Ask now, rather
           // than leave the label blank until the next periodic check.
@@ -310,15 +346,90 @@ export class WebosClient {
         if (now === 'screen-off') return this.#command(URI.turnOnScreen);
         await new Promise((r) => setTimeout(r, WAKE_POLL_MS));
       }
-    } finally {
-      clearInterval(resend);
-    }
 
-    log.warn(`${this.#opts.host} did not answer after Wake-on-LAN to ${mac}`);
-    return (
-      'The TV did not wake up. Check its MAC address, and that Quick Start+ ' +
-      '(or "TV On with Mobile") is turned on'
-    );
+      if (!sending.delivered()) {
+        log.warn(`No wake packet for ${mac} could be sent from here or relayed`);
+        return 'Could not send the wake packet';
+      }
+      log.warn(`${this.#opts.host} did not answer after Wake-on-LAN to ${mac}`);
+      return (
+        'The TV did not wake up. Check its MAC address, and that Quick Start+ ' +
+        '(or "TV On with Mobile") is turned on'
+      );
+    } finally {
+      clearTimeout(early);
+      waker?.stop();
+    }
+  }
+
+  /**
+   * Send the magic packet now and every second until stopped — from here,
+   * and through the relay when there is one.
+   *
+   * On its own timer: a probe of a set that is still asleep can sit in a
+   * connect timeout for seconds, and the packets should not wait for it.
+   *
+   * The relay is what makes this work after the set has been off a while.
+   * Inside Docker's bridge network (the Unraid template's default) no
+   * broadcast from here reaches the LAN, so the only packet that gets out is
+   * the unicast to the TV's own address — and that is delivered only while
+   * the host still has the TV's MAC in its ARP cache. A set that has just
+   * gone to standby is still in it. One that has been asleep for hours is
+   * not, a sleeping NIC does not answer ARP, and every packet was dropped
+   * at the host. Home Assistant normally runs on the host network and
+   * broadcasts on the LAN itself, so it is asked to send one as well.
+   */
+  #startWaking(mac: string): Waker {
+    const targets = wakeTargets(splitHost(this.#opts.host, 0).host, this.#opts.broadcast);
+    const relay = this.#opts.wakeRelay;
+    let sent = false;
+    let relayed = false;
+    let relaying = false;
+    let warned = false;
+
+    const once = (): void => {
+      wake(mac, targets, this.#opts.wolPort).then(
+        () => {
+          sent = true;
+        },
+        (err: unknown) => {
+          if (warned) return;
+          warned = true;
+          log.warn(`Wake-on-LAN to ${mac} via ${targets.join(', ')} failed:`, err);
+        },
+      );
+      // One relay call at a time: Home Assistant answering slowly should not
+      // pile requests up behind it.
+      if (!relay || relaying) return;
+      relaying = true;
+      relay(mac, this.#opts.broadcast)
+        .then(
+          () => {
+            relayed = true;
+          },
+          (err: unknown) => {
+            if (this.#relayWarned) return;
+            this.#relayWarned = true;
+            const message = err instanceof Error ? err.message : String(err);
+            log.warn(
+              `Home Assistant could not send a wake packet for ${this.#opts.host} (${message}). ` +
+                'If the TV only wakes when it has been off briefly, add `wake_on_lan:` to ' +
+                "Home Assistant's configuration.yaml so it can send one from the LAN.",
+            );
+          },
+        )
+        .finally(() => {
+          relaying = false;
+        });
+    };
+
+    once();
+    const timer = setInterval(once, WAKE_RESEND_MS);
+    timer.unref();
+    return {
+      stop: () => clearInterval(timer),
+      delivered: () => sent || relayed,
+    };
   }
 
   async turnOff(): Promise<string | null> {
@@ -398,7 +509,19 @@ export class WebosClient {
 
   /** `inputId` is the TV's own id — HDMI_2, not "HDMI 2". */
   async switchInput(inputId: string): Promise<string | null> {
-    const failure = await this.#command(URI.switchInput, { inputId });
+    let failure = await this.#command(URI.switchInput, { inputId });
+    // See SETTLE_AFTER_WAKE_MS: a set that has only just come up can turn
+    // the switch down because it is not ready, not because it will not.
+    // Switching to an input is idempotent, so asking again is safe.
+    while (
+      failure &&
+      !isAuthFailure(failure) &&
+      Date.now() - this.#wokeAt < SETTLE_AFTER_WAKE_MS
+    ) {
+      log.debug(`${this.#opts.host} refused ${inputId} just after waking (${failure}); retrying`);
+      await new Promise((r) => setTimeout(r, SETTLE_RETRY_MS));
+      failure = await this.#command(URI.switchInput, { inputId });
+    }
     if (failure) return failure;
 
     // Worth announcing even though the television may confirm it a moment

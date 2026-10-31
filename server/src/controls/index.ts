@@ -81,6 +81,11 @@ export interface ControlsDeps {
    * restart means that prompt appears again, on a screen in a meeting room.
    */
   tvKeyFile: string;
+  /**
+   * Have Home Assistant send a magic packet too, when it is configured.
+   * See WebosClient's `#startWaking` for why one from here is not enough.
+   */
+  wakeOnLan?: (mac: string, broadcast?: string) => Promise<void>;
 }
 
 /** A webhook is unauthenticated and idempotent-ish; still, do not hang on it. */
@@ -183,6 +188,7 @@ export class Controls {
         host: tv.host,
         ...(tv.mac ? { mac: tv.mac } : {}),
         ...(tv.broadcast ? { broadcast: tv.broadcast } : {}),
+        ...(this.#deps.wakeOnLan ? { wakeRelay: this.#deps.wakeOnLan } : {}),
         keyFile: this.#deps.tvKeyFile,
       });
       // Pushed rather than polled: the TV tells us when the input changes,

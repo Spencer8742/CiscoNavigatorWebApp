@@ -494,9 +494,14 @@ controls:
   # does not. The TV must also be set to listen — Quick Start+, or Network >
   # "TV On with Mobile" on older sets — or it is genuinely unreachable when
   # off. Wired and Wi-Fi have different MACs; use whichever it connects by.
-  # Turning on keeps re-sending the packet until the set answers (up to 20s),
+  # Turning on keeps re-sending the packet until the set answers (up to 45s),
   # and also sends it straight to `host`, which is what gets through from a
-  # Docker bridge network where broadcasts never reach the LAN.
+  # Docker bridge network where broadcasts never reach the LAN — but only
+  # while the host still remembers the TV's MAC. After the set has been off
+  # for hours it does not, and that unicast is dropped. So when Home
+  # Assistant is configured it is asked to send the packet too, from the
+  # LAN: add `wake_on_lan:` to HA's configuration.yaml for that to work.
+  # (Or run this container with host networking, which needs neither.)
   tvs: []
   #  - id: office_lg
   #    name: Office LG
