@@ -327,7 +327,6 @@ controls:
           name: Shut Down
           actions:
             - { roomos: desk_pro, command: Presentation Stop }
-            - { wait: 0.1 }
             - { appletv: bedroom_apple_tv, action: power_off }
             - { roomos: desk_pro, command: Standby Halfwake }
             - { appletv: office_apple_tv, action: power_off }
@@ -346,7 +345,6 @@ controls:
       assert.deepEqual(byId('wake').actions[0].command, ['Standby', 'Deactivate']);
       assert.deepEqual(byId('atv_on').actions, [{ kind: 'appletv', device: 'office_apple_tv', op: 'power_on' }]);
       assert.deepEqual(byId('caffeinate').actions, [{ kind: 'ssh', host: 'mac_studio', run: 'caffeinate -u -t 1' }]);
-      assert.deepEqual(byId('shut_down').actions[1], { kind: 'wait', seconds: 0.1 });
       // Malformed steps are dropped, and a key left with none is not a key.
       assert.equal(byId('bad_command'), undefined);
       assert.equal(byId('bad_atv'), undefined);
@@ -534,12 +532,12 @@ controls:
             - { appletv: b, action: power_on }
             - { appletv: a, action: menu }
             - { appletv: c, action: power_on }
-        - id: barrier
-          name: Barrier
+        - id: shut_down
+          name: Shut Down Office
           actions:
-            - { appletv: a, action: power_on }
-            - { wait: 0.05 }
-            - { appletv: b, action: power_on }
+            - { appletv: a, action: power_off }
+            - { wait: 10 }
+            - { appletv: b, action: power_off }
 `;
 
   async function controlsWith() {
@@ -588,13 +586,15 @@ controls:
     }
   });
 
-  test('a wait is a barrier between devices', async () => {
+  test('a leftover wait holds nothing back', async () => {
     const { config, controls, calls } = await controlsWith();
     try {
-      assert.equal(await controls.press('barrier'), null);
+      const started = Date.now();
+      assert.equal(await controls.press('shut_down'), null);
+      assert.ok(Date.now() - started < DELAY * 2, 'both devices started at once, no 10 second pause');
       assert.deepEqual(
-        calls.map((c) => `${c.device}:${c.at}`),
-        ['a:start', 'a:end', 'b:start', 'b:end'],
+        calls.filter((c) => c.at === 'start').map((c) => c.device),
+        ['a', 'b'],
       );
     } finally {
       controls.stop();

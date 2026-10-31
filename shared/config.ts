@@ -381,14 +381,6 @@ export type ControlAction =
   /** A command to an Apple TV in `controls.appleTvs`, over its own protocols. */
   | { kind: 'appletv'; device: string; op: AppleTvKeyOp }
   /**
-   * Pause before the next step, in seconds.
-   *
-   * For the step that needs the one before it to have finished on the far
-   * side: a Desk Pro takes a few seconds to close a presentation, and one
-   * sent to standby before then wakes straight back up to finish it.
-   */
-  | { kind: 'wait'; seconds: number }
-  /**
    * Call a Home Assistant service, exactly as a dashboard tile does.
    *
    * Goes through the same ServiceGuard as everything else, and the entity is

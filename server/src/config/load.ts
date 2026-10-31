@@ -1162,8 +1162,6 @@ function defaultIcon(action: ControlAction | undefined): string {
       return 'tv';
     case 'ssh':
       return 'power';
-    case 'wait':
-      return 'clock';
     case 'webhook':
       return 'bolt';
     case 'keylight':
@@ -1191,14 +1189,15 @@ function controlAction(raw: Raw, path: string): ControlAction | null {
     return null;
   }
 
-  /* Pause before the next step: `wait: 10`, in seconds. */
+  /*
+   * `wait:` steps are skipped. A key's steps all start at once, and a pause
+   * only ever made a key slower to do anything — Shut Down sat for ten
+   * seconds before the first device moved. Skipped rather than refused, so a
+   * config written when they existed keeps working.
+   */
   if (raw['wait'] !== undefined) {
-    const seconds = raw['wait'];
-    if (typeof seconds !== 'number' || !(seconds > 0) || seconds > 120) {
-      warn(`${path}.wait`, 'seconds between 0 and 120', seconds);
-      return null;
-    }
-    return { kind: 'wait', seconds };
+    log.info(`${path}.wait: skipped — every step in a key now runs at once`);
+    return null;
   }
 
   /*

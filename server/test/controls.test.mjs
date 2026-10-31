@@ -353,20 +353,20 @@ describe('a key with more than one action', () => {
    * remembering the set.
    */
 
-  test('runs every action, in order, waiting where told to', async () => {
+  test('runs every action at once, skipping a leftover wait', async () => {
     ha.webhooks.length = 0;
     const started = Date.now();
     panel.press('combo.both');
 
     await waitFor(
-      () => ha.webhooks.some((w) => w.id === 'combo_second'),
-      'the second action to run',
+      () => ['combo_first', 'combo_second'].every((id) => ha.webhooks.some((w) => w.id === id)),
+      'both actions to run',
     );
-    assert.deepEqual(
-      ha.webhooks.map((w) => w.id),
-      ['combo_first', 'combo_second'],
-    );
-    assert.ok(Date.now() - started >= 200, 'the wait between them was honoured');
+    assert.ok(Date.now() - started < 2000, 'the 5 second wait was not honoured');
+    assert.deepEqual(page('combo').items.find((i) => i.id === 'combo.both').actions, [
+      { kind: 'webhook', id: 'combo_first' },
+      { kind: 'webhook', id: 'combo_second' },
+    ]);
   });
 
   test('reads `action: on` as ON, not as the YAML boolean it is', () => {
