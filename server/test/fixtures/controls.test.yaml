@@ -128,12 +128,13 @@ controls:
     - id: combo
       name: Combined
       items:
-        # One key, two places, with a pause between them.
+        # One key, two places. The `wait:` is a leftover from an older
+        # config: it is skipped, and holds nothing back.
         - id: combo.both
           name: Office Power
           actions:
             - { webhook: combo_first }
-            - { wait: 0.2 }
+            - { wait: 5 }
             - { webhook: combo_second }
         # `on` and `off` are BOOLEANS in YAML 1.1. Written bare here on
         # purpose: quoting them would test the wrong thing.

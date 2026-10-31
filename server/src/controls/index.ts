@@ -110,8 +110,6 @@ function laneOf(action: ControlAction): string {
       return `appletv:${action.device}`;
     case 'entity':
       return `entity:${action.entity}`;
-    case 'wait':
-      return 'wait';
   }
 }
 
@@ -553,9 +551,8 @@ export class Controls {
    * done one after another they added up to a key that seemed to hang. So the
    * steps are split into lanes, one per device: steps on the SAME device
    * still run in the order written (wake the Desk Pro, then present on it),
-   * and only separate devices overlap. A `wait:` step is a barrier — every
-   * step before it finishes first, then the pause, then the rest — which is
-   * how a key says one device must be done before another starts.
+   * and only separate devices overlap. There are no pauses: every device
+   * starts the moment the key is pressed.
    */
   async #runAll(actions: ControlAction[], label: string): Promise<string | null> {
     const problems: (string | null)[] = new Array(actions.length).fill(null);
@@ -574,32 +571,18 @@ export class Controls {
       }
     };
 
-    let segment: number[] = [];
-    const flush = async (): Promise<void> => {
-      const lanes = new Map<string, number[]>();
-      for (const i of segment) {
-        const key = laneOf(actions[i]!);
-        const lane = lanes.get(key);
-        if (lane) lane.push(i);
-        else lanes.set(key, [i]);
-      }
-      segment = [];
-      await Promise.all(
-        [...lanes.values()].map(async (lane) => {
-          for (const i of lane) await runOne(i);
-        }),
-      );
-    };
-
-    for (let i = 0; i < actions.length; i++) {
-      if (actions[i]!.kind === 'wait') {
-        await flush();
-        await runOne(i);
-      } else {
-        segment.push(i);
-      }
-    }
-    await flush();
+    const lanes = new Map<string, number[]>();
+    actions.forEach((action, i) => {
+      const key = laneOf(action);
+      const lane = lanes.get(key);
+      if (lane) lane.push(i);
+      else lanes.set(key, [i]);
+    });
+    await Promise.all(
+      [...lanes.values()].map(async (lane) => {
+        for (const i of lane) await runOne(i);
+      }),
+    );
 
     const failed = problems.filter((p): p is string => p !== null);
     if (failed.length === 0) return null;
@@ -635,9 +618,6 @@ export class Controls {
       case 'appletv':
         return this.#deps.appleTvCommand(action.device, action.op);
 
-      case 'wait':
-        await new Promise((resolve) => setTimeout(resolve, action.seconds * 1000));
-        return null;
 
       case 'entity': {
         const domain = action.entity.slice(0, action.entity.indexOf('.'));

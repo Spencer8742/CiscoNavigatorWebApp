@@ -439,7 +439,6 @@ cast:
 #               makes. Subject to the same allow-list as everything else in
 #               this file.
 #   keylight:   an Elgato Key Light, listed under `keylights:` below.
-#   wait:       a pause between two steps, in seconds.
 #   light:      not a button — the FULL key light control, with power,
 #               brightness and colour temperature.
 #   volume:     not a button — a volume slider and mute key for a device in
@@ -538,10 +537,10 @@ controls:
   #   fails — the key then reports what failed. Steps on DIFFERENT devices run
   #   at the same time, so a key driving five devices takes as long as the
   #   slowest one rather than all five added up; steps on the SAME device
-  #   still run in the order written. Where one device must finish before
-  #   another starts, put a `{ wait: <seconds> }` between them: everything
-  #   above a wait finishes, then the pause, then the rest. One key is often
-  #   one intention in more than one place:
+  #   still run in the order written. There are no pauses: every device
+  #   starts the moment the key is pressed (a `wait:` step left over from an
+  #   older config is skipped). One key is often one intention in more than
+  #   one place:
   #
   #   - name: Office Power
   #     icon: power
@@ -720,9 +719,6 @@ controls:
   #        icon: power
   #        actions:
   #          - { roomos: desk_pro, action: stop }
-  #          # A Desk Pro closes a presentation in a few seconds. Sent to
-  #          # standby before then, it wakes straight back up to finish it.
-  #          - { wait: 10 }
   #          - { roomos: desk_pro, command: Standby Halfwake }
   #          - { appletv: office_apple_tv, action: power_off }
   #          - { tv: office_lg, action: off }
