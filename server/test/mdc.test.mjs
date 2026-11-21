@@ -101,6 +101,50 @@ describe('MdcClient', () => {
     }
   });
 
+  test('power on holds the card at "on" while the display boots in silence', async () => {
+    const display = new MockMdc(PORT, { bootMs: 700 });
+    await display.start();
+    const timing = { requestTimeoutMs: 150, settleStepMs: 100, powerOnSettleMs: 3000, powerOffSettleMs: 1000 };
+    const client = new MdcClient({ id: 'room', host: `127.0.0.1:${PORT}`, displayId: 0, timing });
+    const seen = [];
+    client.onChange(() => seen.push(client.state));
+    try {
+      await client.refresh();
+      seen.length = 0;
+      assert.equal(await client.turnOn(), null);
+      assert.equal(client.state.power, true);
+      // The next step of a "Room On" key lands mid-boot and must still work.
+      assert.equal(await client.setVolume(25), null);
+      assert.equal(display.state.volume, 25);
+      await waitFor(() => Date.now() > display.bootingUntil + 300, 'boot to finish');
+      assert.deepEqual(
+        seen.filter((s) => !s.reachable || s.power !== true),
+        [],
+        'never showed unreachable or off on the way up',
+      );
+      assert.equal(client.state.reachable, true);
+      assert.equal(client.state.power, true);
+    } finally {
+      client.stop();
+      await display.stop();
+    }
+  });
+
+  test('a display that never comes back after power on ends up unreachable', async () => {
+    const display = new MockMdc(PORT, { bootMs: 60_000 });
+    await display.start();
+    const timing = { requestTimeoutMs: 150, settleStepMs: 100, powerOnSettleMs: 600 };
+    const client = new MdcClient({ id: 'room', host: `127.0.0.1:${PORT}`, displayId: 0, timing });
+    try {
+      assert.equal(await client.turnOn(), null);
+      assert.equal(client.state.reachable, true);
+      await waitFor(() => client.state.reachable === false, 'window to close', 3000);
+    } finally {
+      client.stop();
+      await display.stop();
+    }
+  });
+
   test('falls back to per-field reads when the status command is refused', async () => {
     const display = new MockMdc(PORT, { statusSupported: false });
     display.state = { power: 1, volume: 55, mute: 0, input: 0x25 };
