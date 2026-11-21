@@ -43,8 +43,8 @@ const log = logger('mdc');
 
 const DEFAULT_PORT = 1515;
 /** A display on the LAN answers in tens of milliseconds, or it is not going to. */
-const REQUEST_TIMEOUT_MS = 4000;
-const CONNECT_TIMEOUT_MS = 4000;
+const REQUEST_TIMEOUT_MS = 2500;
+const CONNECT_TIMEOUT_MS = 2500;
 /** Close the socket once it has been quiet this long. */
 const IDLE_CLOSE_MS = 20_000;
 /**
@@ -192,8 +192,22 @@ export interface MdcTiming {
   settleStepMs: number;
 }
 
+/**
+ * A read that gave way to a command. Not a failure of the display: the state
+ * it would have read is about to be changed anyway.
+ */
+class Superseded extends Error {
+  constructor() {
+    super('Superseded by a command');
+  }
+}
+
 interface Waiter {
   cmd: number;
+  /** A read (no data) — may be cut short so a command can go first. */
+  read: boolean;
+  /** The socket the frame went out on; only its close may fail this request. */
+  socket: Socket;
   resolve: (reply: MdcReply) => void;
   reject: (err: Error) => void;
   timer: ReturnType<typeof setTimeout>;
@@ -209,6 +223,8 @@ export class MdcClient {
   #waiter: Waiter | undefined;
   /** Serialises requests: one frame in flight on the socket at a time. */
   #queue: Promise<unknown> = Promise.resolve();
+  /** Commands waiting their turn. While any are, reads stand aside. */
+  #commandsWaiting = 0;
   #idle: ReturnType<typeof setTimeout> | undefined;
   #onChange: (() => void) | undefined;
   #stopped = false;
@@ -295,6 +311,8 @@ export class MdcClient {
       if (t) this.#transition = undefined;
       return this.#apply({ ...next, reachable: true });
     } catch (err) {
+      // A command cut in; it re-reads for itself.
+      if (err instanceof Superseded) return false;
       // Booting or going to standby: silence is expected, not a fault.
       if (this.#activeTransition()) return false;
       this.#problem(err instanceof Error ? err.message : String(err));
@@ -469,9 +487,33 @@ export class MdcClient {
 
   /* ── Transport ─────────────────────────────────────────────────────────*/
 
+  /**
+   * Send one frame and wait for its reply, in turn.
+   *
+   * A COMMAND (a frame with data) goes ahead of reads. Without this, a tap on
+   * power queued behind the poll's status read — and a display in standby
+   * that is slow to answer, or does not answer at all, held the tap for the
+   * whole read timeout before the TV was even asked. Now a read in flight is
+   * abandoned (it is only a read; the command re-reads after) and reads
+   * queued behind it stand aside until the command has gone.
+   */
   #request(cmd: number, data: number[] = []): Promise<MdcReply> {
+    const read = data.length === 0;
+    if (!read) {
+      this.#commandsWaiting++;
+      const w = this.#waiter;
+      if (w?.read) {
+        this.#waiter = undefined;
+        clearTimeout(w.timer);
+        // Its reply may still arrive; a fresh socket keeps it from being
+        // mistaken for the command's.
+        this.#close();
+        w.reject(new Superseded());
+      }
+    }
     const run = async (): Promise<MdcReply> => {
       if (this.#stopped) throw new Error('Stopped');
+      if (read && this.#commandsWaiting > 0) throw new Superseded();
       const socket = await this.#connect();
       this.#armIdle();
       return new Promise<MdcReply>((resolve, reject) => {
@@ -482,11 +524,16 @@ export class MdcClient {
           this.#close();
           reject(new Error('Display did not answer'));
         }, this.#timing.requestTimeoutMs);
-        this.#waiter = { cmd, resolve, reject, timer };
+        this.#waiter = { cmd, read, socket, resolve, reject, timer };
         socket.write(encodeFrame(cmd, this.#opts.displayId, data));
       });
     };
-    const next = this.#queue.then(run, run);
+    const started = Date.now();
+    const next = this.#queue.then(run, run).finally(() => {
+      if (read) return;
+      this.#commandsWaiting--;
+      log.debug(`${this.#opts.id}: command 0x${cmd.toString(16)} answered in ${Date.now() - started}ms`);
+    });
     this.#queue = next.catch(() => undefined);
     return next;
   }
@@ -530,8 +577,11 @@ export class MdcClient {
     socket.on('error', () => undefined);
     socket.on('close', () => {
       if (this.#socket === socket) this.#socket = undefined;
+      // Only this socket's own request. A socket closed on purpose — a read
+      // cut short for a command — closes asynchronously, after the command
+      // has already gone out on a new one.
       const w = this.#waiter;
-      if (w) {
+      if (w && w.socket === socket) {
         this.#waiter = undefined;
         clearTimeout(w.timer);
         w.reject(new Error('Display closed the connection'));
