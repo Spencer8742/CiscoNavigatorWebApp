@@ -94,3 +94,9 @@ export { NotificationRules, inQuietHours, isAway, isInsecure } from '~/push/rule
 export { streamUpstream } from '~/http/stream.ts';
 export { StaticFiles, preferredEncoding } from '~/http/static.ts';
 export { Hub } from '~/hub/index.ts';
+
+/*
+ * The Samsung MDC client: framing, the status read and its per-field
+ * fallback, Secure MDC's PIN handshake, and power/volume/mute/input.
+ */
+export { MdcClient, encodeFrame as mdcEncode, decodeFrame as mdcDecode, sourceName as mdcSourceName } from '~/display/mdc.ts';

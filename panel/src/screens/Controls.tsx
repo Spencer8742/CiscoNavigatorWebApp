@@ -5,13 +5,14 @@ import { Pressable } from '~/components/Pressable.tsx';
 import { Slider } from '~/components/Slider.tsx';
 import { controlPage, kiosk, markActivity, openSources } from '~/state/ui.ts';
 import { entity } from '~/state/entities.ts';
-import { keyLightFor, liveLabelOf, pressed, roomosStateOf } from '~/state/controls.ts';
-import { pressControl, setKeyLight, setRoomosVolume } from '~/net/socket.ts';
+import { displayStateOf, keyLightFor, liveLabelOf, pressed, roomosStateOf } from '~/state/controls.ts';
+import { pressControl, setDisplay, setKeyLight, setRoomosVolume } from '~/net/socket.ts';
 import { KEY_LIGHT_MAX_KELVIN, KEY_LIGHT_MIN_KELVIN } from '@shared/protocol.ts';
 import { DeviceTile } from '~/components/DeviceTile.tsx';
 import type {
   ControlButton,
   ControlDevice,
+  ControlDisplay,
   ControlLight,
   ControlPage,
   ControlSources,
@@ -61,7 +62,7 @@ export function Controls() {
           <Empty icon="grid" title="No control pages configured">
             Add a <code>controls:</code> section to <code>config/dashboard.yaml</code>.
             A page is a list of buttons, each one a command to a Cisco device, a
-            TV, an Apple TV or a Mac, a Home Assistant scene or webhook, or an
+            TV or Samsung display, an Apple TV or a Mac, a Home Assistant scene or webhook, or an
             Elgato Key Light.
           </Empty>
         </div>
@@ -176,8 +177,8 @@ function Page({ page }: { page: ControlPage }) {
   // Volume controls sit in the grid too, filling the rest of their row — so
   // a card beside the last key uses the space instead of leaving a gap and
   // adding another block below.
-  const keys = page.items.filter((i): i is ControlButton | ControlSources | ControlVolume =>
-    i.type === 'button' || i.type === 'sources' || i.type === 'volume',
+  const keys = page.items.filter((i): i is GridItem =>
+    i.type === 'button' || i.type === 'sources' || i.type === 'volume' || i.type === 'display',
   );
   const spans = volumeSpans(keys, page.columns);
   const lights = page.items.filter(isLight);
@@ -215,6 +216,13 @@ function Page({ page }: { page: ControlPage }) {
           {keys.map((item) =>
             item.type === 'sources' ? (
               <SourcesButton key={item.id} item={item} />
+            ) : item.type === 'display' ? (
+              <DisplayCard
+                key={item.id}
+                item={item}
+                span={spans.get(item.id) ?? 0}
+                large={page.size === 'lg'}
+              />
             ) : item.type === 'volume' ? (
               <VolumeCard
                 key={item.id}
@@ -430,14 +438,13 @@ function SourcesButton({ item }: { item: ControlSources }) {
  * or the whole row when it starts one. 0 means the whole row regardless —
  * the page has no fixed column count, so where a row ends is not known.
  */
-function volumeSpans(
-  keys: (ControlButton | ControlSources | ControlVolume)[],
-  columns: number,
-): Map<string, number> {
+type GridItem = ControlButton | ControlSources | ControlVolume | ControlDisplay;
+
+function volumeSpans(keys: GridItem[], columns: number): Map<string, number> {
   const spans = new Map<string, number>();
   let at = 0;
   for (const item of keys) {
-    if (item.type === 'volume') {
+    if (item.type === 'volume' || item.type === 'display') {
       if (columns <= 0) {
         spans.set(item.id, 0);
         continue;
@@ -507,6 +514,113 @@ function VolumeCard({ item, span, large }: { item: ControlVolume; span: number; 
       />
     </div>
   );
+}
+
+/**
+ * A Samsung display over MDC: power toggle, mute, volume — the Room Kit
+ * Mini's volume card with the screen's power in front of it.
+ *
+ * Every value is the display's own answer. The backend re-reads it after
+ * each command, so the toggle shows whether the screen IS on, not whether
+ * the panel asked; a change from the display's own remote shows up at the
+ * next poll.
+ *
+ * Volume is sent on release only, like the other sliders here: every step of
+ * a drag would be a frame to a device that answers one at a time.
+ */
+function DisplayCard({ item, span, large }: { item: ControlDisplay; span: number; large: boolean }) {
+  const state = displayStateOf(item.display);
+  const reachable = state?.reachable === true;
+  const on = reachable && state?.power === true;
+  const level = state?.volume ?? 0;
+  const muted = state?.muted === true;
+  const hasAudio = state?.volume !== null && state?.volume !== undefined;
+
+  const status = !state
+    ? 'Not configured'
+    : !reachable
+      ? 'Unreachable'
+      : !on
+        ? 'Off'
+        : [
+            muted ? 'Muted' : null,
+            hasAudio ? `Vol ${level}` : null,
+            state.input ? inputLabel(item.display, state.input) : null,
+          ]
+            .filter(Boolean)
+            .join(' · ') || 'On';
+
+  return (
+    <div
+      class="card keylight is-volume is-display macro-volume"
+      data-off={!on ? '' : undefined}
+      style={{ gridColumn: span > 0 ? `span ${span}` : '1 / -1' }}
+    >
+      <div class="keylight-head">
+        {/* Power is enabled whenever the display answers at all — including
+            in standby, which is exactly when it is needed. */}
+        <Pressable
+          class="keylight-power display-power"
+          onPress={() => {
+            setDisplay(item.id, on ? 'off' : 'on');
+            markActivity();
+          }}
+          ariaLabel={`${item.name}: turn ${on ? 'off' : 'on'}`}
+          ariaPressed={on}
+          disabled={!state}
+        >
+          <Icon name="power" size="1.5rem" weight={1.9} />
+        </Pressable>
+
+        <div class="keylight-titles">
+          <div class="keylight-name truncate">{item.name}</div>
+          <div class="keylight-state truncate">{status}</div>
+        </div>
+
+        <Pressable
+          class="keylight-power display-mute"
+          onPress={() => {
+            setDisplay(item.id, muted ? 'unmute' : 'mute');
+            markActivity();
+          }}
+          ariaLabel={`${item.name}: ${muted ? 'unmute' : 'mute'}`}
+          ariaPressed={muted}
+          disabled={!on || !hasAudio}
+        >
+          <Icon name={muted ? 'mute' : 'volume'} size="1.5rem" weight={1.9} />
+        </Pressable>
+      </div>
+
+      <Slider
+        value={level}
+        min={0}
+        max={100}
+        size={large ? 'lg' : undefined}
+        disabled={!on || !hasAudio}
+        readout={String(level)}
+        ariaLabel={`${item.name} volume`}
+        icon={<Icon name="volume" size="1.125rem" />}
+        onChange={(value, final) => {
+          if (final) {
+            setDisplay(item.id, 'level', value);
+            markActivity();
+          }
+        }}
+      />
+    </div>
+  );
+}
+
+/** The configured name for an input, else `HDMI1` → `HDMI 1`, `DISPLAY_PORT_1` → `DisplayPort 1`. */
+function inputLabel(displayId: string, source: string): string {
+  const squash = (s: string) => s.toUpperCase().replace(/[\s_-]/g, '');
+  const cfg = controlsConfig.value.displays.find((d) => d.id === displayId);
+  const named = cfg?.inputs.find((i) => squash(i.source) === squash(source))?.name;
+  if (named) return named;
+  return source
+    .replace(/^HDMI(\d)/, 'HDMI $1')
+    .replace(/^DISPLAY_PORT_(\d)/, 'DisplayPort $1')
+    .replace(/_/g, ' ');
 }
 
 function describe(light: KeyLightState): string {

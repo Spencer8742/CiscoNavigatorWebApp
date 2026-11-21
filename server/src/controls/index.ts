@@ -2,6 +2,7 @@ import { logger } from '~/lib/log.ts';
 import { KeyLight } from '~/controls/keylight.ts';
 import { WebosClient } from '~/tv/webos.ts';
 import { RoomosClient } from '~/roomos/xapi.ts';
+import { MdcClient, sourceName } from '~/display/mdc.ts';
 import { SshRunner } from '~/ssh/runner.ts';
 import type {
   AppleTvKeyOp,
@@ -10,7 +11,13 @@ import type {
   DashboardConfig,
   KeyLightOp,
 } from '@shared/config.ts';
-import type { EntityState, KeyLightState, RoomosState, TvState } from '@shared/protocol.ts';
+import type {
+  DisplayState,
+  EntityState,
+  KeyLightState,
+  RoomosState,
+  TvState,
+} from '@shared/protocol.ts';
 
 const log = logger('controls');
 
@@ -57,6 +64,13 @@ export interface ControlsDeps {
   onTvs: (tvs: TvState[]) => void;
   /** Called whenever a RoomOS device's presentation or reachability changes. */
   onRoomos: (devices: RoomosState[]) => void;
+  /** Called whenever a Samsung MDC display's power, volume, mute or input changes. */
+  onDisplays?: (displays: DisplayState[]) => void;
+  /**
+   * The Secure MDC PIN for one `controls.displays` display, from the
+   * environment, or '' when the display does not use one.
+   */
+  mdcPin?: (id: string) => string;
   /**
    * The xAPI password for one `controls.roomos` device, from the environment.
    * Never in dashboard.yaml: that file is sent to every panel.
@@ -104,6 +118,8 @@ function laneOf(action: ControlAction): string {
     case 'roomos':
     case 'xcommand':
       return `roomos:${action.device}`;
+    case 'display':
+      return `display:${action.display}`;
     case 'ssh':
       return `ssh:${action.host}`;
     case 'appletv':
@@ -123,6 +139,7 @@ export class Controls {
   #lights = new Map<string, KeyLight>();
   #tvs = new Map<string, WebosClient>();
   #roomos = new Map<string, RoomosClient>();
+  #displays = new Map<string, MdcClient>();
   #poll: ReturnType<typeof setInterval> | undefined;
   /** The interval currently armed, so a config edit only re-arms on a change. */
   #pollSeconds = 0;
@@ -270,12 +287,54 @@ export class Controls {
     this.#roomos = nextRoomos;
     if (roomosChanged) this.#deps.onRoomos(this.roomosSnapshot());
 
+    /*
+     * Samsung MDC displays. Kept across unrelated edits like the RoomOS
+     * clients, and read once at load so a panel that connects finds the card
+     * already right. MDC pushes nothing, so after that they are polled with
+     * the key lights, while a panel is looking.
+     */
+    const nextDisplays = new Map<string, MdcClient>();
+    for (const d of cfg.displays) {
+      const pin = this.#deps.mdcPin?.(d.id) ?? '';
+      const opts = {
+        id: d.id,
+        host: d.host,
+        displayId: d.displayId,
+        ...(pin ? { pin } : {}),
+        ...(d.mac ? { mac: d.mac } : {}),
+        ...(d.broadcast ? { broadcast: d.broadcast } : {}),
+      };
+      const existing = this.#displays.get(d.id);
+      if (existing?.matches(opts)) {
+        nextDisplays.set(d.id, existing);
+        continue;
+      }
+      existing?.stop();
+      const client = new MdcClient(opts);
+      client.onChange(() => this.#deps.onDisplays?.(this.displaySnapshot()));
+      void client.refresh();
+      nextDisplays.set(d.id, client);
+    }
+    for (const [id, client] of this.#displays) {
+      if (!nextDisplays.has(id)) client.stop();
+    }
+    const displaysChanged =
+      nextDisplays.size !== this.#displays.size ||
+      [...nextDisplays].some(([id, c]) => this.#displays.get(id) !== c);
+    this.#displays = nextDisplays;
+    if (displaysChanged) this.#deps.onDisplays?.(this.displaySnapshot());
+
     this.#arm(cfg.pollSeconds);
     // Only a change to the LIST — a light added, removed or renamed — is
     // worth a push from here. Each light's own state is pushed by the poll,
     // so broadcasting on every unrelated config edit would be noise.
     if (changed) this.#publish();
-    if (next.size > 0) void this.#refreshAll();
+    if (next.size > 0) {
+      const results = Promise.all([...next.values()].map((l) => l.read()));
+      void results.then((r) => {
+        if (r.some(Boolean)) this.#publish();
+      });
+    }
   }
 
   /** Every light's current state, for `hello`. */
@@ -295,6 +354,11 @@ export class Controls {
     });
   }
 
+  /** Every Samsung display's state, for `hello`. */
+  displaySnapshot(): DisplayState[] {
+    return [...this.#displays.values()].map((d) => d.state);
+  }
+
   /** Every RoomOS device's presentation, for `hello`. */
   roomosSnapshot(): RoomosState[] {
     return [...this.#roomos.values()].map((d) => d.state);
@@ -304,6 +368,7 @@ export class Controls {
     clearInterval(this.#poll);
     this.#poll = undefined;
     for (const d of this.#roomos.values()) d.stop();
+    for (const d of this.#displays.values()) d.stop();
   }
 
   /* ── Running a button ──────────────────────────────────────────────────*/
@@ -399,6 +464,80 @@ export class Controls {
 
     log.debug(`TV ${tvId}: ${want}`);
     return want === 'on' ? tv.turnOn() : tv.turnOff();
+  }
+
+  /* ── Samsung displays ──────────────────────────────────────────────────*/
+
+  /**
+   * Power, mute or set the volume of the display behind a `display:` card.
+   *
+   * The panel names the ITEM; the display comes from the config. Power on
+   * and off are explicit from the card (it shows the state it is toggling);
+   * `toggle` is accepted too and decided from a fresh read.
+   */
+  async displayControl(
+    itemId: string,
+    op: 'on' | 'off' | 'toggle' | 'level' | 'mute' | 'unmute',
+    value?: number,
+  ): Promise<string | null> {
+    const item = this.#find(itemId);
+    if (!item || item.type !== 'display') {
+      log.warn(`Refused display "${itemId}": not a display item in dashboard.yaml`);
+      return 'Unknown control';
+    }
+    if (op === 'level') {
+      if (typeof value !== 'number' || !Number.isFinite(value)) return 'No level given';
+      return this.#displayAction(item.display, 'volume', undefined, value);
+    }
+    return this.#displayAction(item.display, op);
+  }
+
+  async #displayAction(
+    displayId: string,
+    op: 'on' | 'off' | 'toggle' | 'input' | 'next' | 'mute' | 'unmute' | 'volume',
+    input?: string,
+    value?: number,
+  ): Promise<string | null> {
+    const cfg = this.#deps.getConfig().controls.displays.find((d) => d.id === displayId);
+    const dev = this.#displays.get(displayId);
+    if (!cfg || !dev) {
+      log.warn(`Refused display "${displayId}": not in controls.displays`);
+      return 'Unknown display';
+    }
+
+    switch (op) {
+      case 'toggle':
+        return (await dev.isOn()) ? dev.turnOff() : dev.turnOn();
+      case 'on':
+        return dev.turnOn();
+      case 'off':
+        return dev.turnOff();
+      case 'mute':
+        return dev.setMute(true);
+      case 'unmute':
+        return dev.setMute(false);
+      case 'volume':
+        return dev.setVolume(value ?? 0);
+      case 'input': {
+        if (!input) return 'No input named';
+        const wanted = sourceName(input);
+        if (
+          cfg.inputs.length > 0 &&
+          !cfg.inputs.some((i) => i.source === input || sourceName(i.source) === wanted)
+        ) {
+          log.warn(`Refused input "${input}" for ${displayId}: not one it offers`);
+          return 'Not an input this display offers';
+        }
+        return dev.setInput(input);
+      }
+      case 'next': {
+        if (cfg.inputs.length === 0) return 'No inputs configured for this display';
+        const current = dev.state.input;
+        const at = current ? cfg.inputs.findIndex((i) => sourceName(i.source) === current) : -1;
+        const next = cfg.inputs[(at + 1) % cfg.inputs.length]!;
+        return dev.setInput(next.source);
+      }
+    }
   }
 
   /* ── RoomOS volume ─────────────────────────────────────────────────────*/
@@ -612,6 +751,9 @@ export class Controls {
         return dev.xcommand(action.command, action.params);
       }
 
+      case 'display':
+        return this.#displayAction(action.display, action.op, action.input, action.value);
+
       case 'ssh':
         return this.runSsh(action.host, action.run);
 
@@ -734,6 +876,8 @@ export class Controls {
   }
 
   async #refreshAll(): Promise<void> {
+    // Displays publish their own changes through onChange.
+    for (const d of this.#displays.values()) void d.refresh();
     if (this.#lights.size === 0) return;
     const results = await Promise.all([...this.#lights.values()].map((l) => l.read()));
     if (results.some(Boolean)) this.#publish();

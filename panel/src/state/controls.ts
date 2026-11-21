@@ -1,5 +1,12 @@
 import { signal, computed } from '@preact/signals';
-import type { AppleTvState, IinaState, KeyLightState, RoomosState, TvState } from '@shared/protocol.ts';
+import type {
+  AppleTvState,
+  DisplayState,
+  IinaState,
+  KeyLightState,
+  RoomosState,
+  TvState,
+} from '@shared/protocol.ts';
 import type { ControlButton } from '@shared/config.ts';
 import { controlsConfig } from '~/config/index.ts';
 
@@ -92,6 +99,17 @@ export const roomosById = computed(() => new Map(roomos.value.map((d) => [d.id, 
 
 export function roomosStateOf(id: string): RoomosState | null {
   return roomosById.value.get(id) ?? null;
+}
+
+/**
+ * Each Samsung MDC display in `controls.displays`, by config id. Polled by
+ * the backend (MDC pushes nothing) and re-read after every command.
+ */
+export const displays = signal<DisplayState[]>([]);
+export const displaysById = computed(() => new Map(displays.value.map((d) => [d.id, d])));
+
+export function displayStateOf(id: string): DisplayState | null {
+  return displaysById.value.get(id) ?? null;
 }
 
 /** Resolve what a `light:` item addresses — one light, or all of them. */

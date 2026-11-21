@@ -20,6 +20,7 @@ import type {
   KeyLightState,
   TvState,
   RoomosState,
+  DisplayState,
   Player,
   PlayerQueue,
   MusicCommand,
@@ -101,6 +102,8 @@ export interface HubDeps {
   getKeyLights: () => KeyLightState[];
   getTvs: () => TvState[];
   getRoomos: () => RoomosState[];
+  /** Samsung MDC displays, sent in `hello`. Optional so older test wiring still builds. */
+  getDisplays?: () => DisplayState[];
   getAppleTvs: () => AppleTvState[];
   onAppleTv?: (device: string, op: AppleTvCommand) => Promise<string | null>;
   onAppleTvSwipe?: (device: string, gesture: AppleTvSwipe) => Promise<string | null>;
@@ -130,6 +133,12 @@ export interface HubDeps {
   onRoomosVolume?: (
     item: string,
     op: 'level' | 'mute' | 'unmute',
+    value?: number,
+  ) => Promise<string | null>;
+  /** Power, mute or set the volume of a `display:` card's display. */
+  onDisplay?: (
+    item: string,
+    op: 'on' | 'off' | 'toggle' | 'level' | 'mute' | 'unmute',
     value?: number,
   ) => Promise<string | null>;
 }
@@ -250,6 +259,7 @@ export class Hub {
       keylights: this.#deps.getKeyLights(),
       tvs: this.#deps.getTvs(),
       roomos: this.#deps.getRoomos(),
+      displays: this.#deps.getDisplays?.() ?? [],
       appleTvs: this.#deps.getAppleTvs(),
       iina: this.#deps.getIina(),
       sources: this.#deps.getSources(),
@@ -485,6 +495,15 @@ export class Hub {
         break;
       }
 
+      case 'display': {
+        if (!this.#deps.onDisplay) return;
+        const problem = await this.#deps.onDisplay(msg.item, msg.op, msg.value);
+        if (problem) {
+          this.#send(panel, { t: 'error', ref: msg.id, code: 'display_failed', message: problem });
+        }
+        break;
+      }
+
       case 'photos': {
         if (!this.#deps.onPhotos) {
           this.#send(panel, { t: 'photos', photos: [] });
@@ -588,6 +607,10 @@ export class Hub {
 
   broadcastRoomos(devices: RoomosState[]): void {
     this.broadcast({ t: 'roomos', devices });
+  }
+
+  broadcastDisplays(displays: DisplayState[]): void {
+    this.broadcast({ t: 'displays', displays });
   }
 
   broadcastAppleTvs(appleTvs: AppleTvState[]): void {

@@ -3,7 +3,16 @@ import { Backoff } from '@shared/backoff.ts';
 import { authHeaders, socketUrl } from '~/net/auth.ts';
 import { applyPatch, applySnapshot } from '~/state/entities.ts';
 import { setPlayers, sources } from '~/state/players.ts';
-import { appleTvs, clearPressed, iinaPlayers, keyLights, markPressed, roomos, tvs } from '~/state/controls.ts';
+import {
+  appleTvs,
+  clearPressed,
+  displays,
+  iinaPlayers,
+  keyLights,
+  markPressed,
+  roomos,
+  tvs,
+} from '~/state/controls.ts';
 import { setConfig } from '~/config/index.ts';
 import { connectionProblem, health, prefs, ready, showToast, socketState } from '~/state/ui.ts';
 import { diagnose } from '~/net/diagnose.ts';
@@ -215,6 +224,7 @@ function handle(msg: ServerMessage): void {
       keyLights.value = msg.keylights;
       tvs.value = msg.tvs;
       roomos.value = msg.roomos ?? [];
+      displays.value = msg.displays ?? [];
       appleTvs.value = msg.appleTvs;
       iinaPlayers.value = msg.iina ?? [];
       sources.value = msg.sources;
@@ -252,6 +262,10 @@ function handle(msg: ServerMessage): void {
 
     case 'roomos':
       roomos.value = msg.devices;
+      break;
+
+    case 'displays':
+      displays.value = msg.displays;
       break;
 
     case 'apple-tvs':
@@ -544,6 +558,15 @@ export function setRoomosVolume(
   value?: number,
 ): boolean {
   return send({ t: 'roomos-volume', id: nextId(), item, op, value });
+}
+
+/** Power, mute or set the volume of the Samsung display behind a `display:` card. */
+export function setDisplay(
+  item: string,
+  op: 'on' | 'off' | 'toggle' | 'level' | 'mute' | 'unmute',
+  value?: number,
+): boolean {
+  return send({ t: 'display', id: nextId(), item, op, value });
 }
 
 export function appleTvCommand(appleTv: string, op: import('@shared/protocol.ts').AppleTvCommand): boolean {

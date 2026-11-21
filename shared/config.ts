@@ -371,6 +371,23 @@ export type ControlAction =
    */
   | { kind: 'xcommand'; device: string; command: string[]; params: Record<string, unknown> }
   /**
+   * Drive a Samsung commercial display listed in `controls.displays`, over
+   * MDC (Samsung's Multiple Display Control protocol) on its own IP — the
+   * same protocol the Home Assistant `ha-samsungtv-mdc` integration speaks,
+   * with Home Assistant no longer in between.
+   *
+   * `toggle` reads the display's power state and does the opposite; `input`
+   * switches to a named MDC source (HDMI1, DISPLAY_PORT_1...), `next` cycles
+   * the configured inputs.
+   */
+  | {
+      kind: 'display';
+      display: string;
+      op: 'on' | 'off' | 'toggle' | 'input' | 'next' | 'mute' | 'unmute' | 'volume';
+      input?: string;
+      value?: number;
+    }
+  /**
    * Run a command over SSH on a host in `controls.ssh` — `caffeinate -u -t 1`
    * on the Mac, to light its display after it wakes.
    *
@@ -669,12 +686,29 @@ export interface ControlVolume {
   name: string;
 }
 
+/**
+ * A Samsung MDC display as one card: a power toggle, a mute key and a
+ * volume slider, all read back from the display itself.
+ *
+ * Drawn like a `volume:` card — it is the same kind of control — with the
+ * display's power where the volume card has nothing, because "is the screen
+ * on" is the first thing anybody walking into the room wants to change.
+ */
+export interface ControlDisplay {
+  type: 'display';
+  id: string;
+  /** A display id from `controls.displays`. */
+  display: string;
+  name: string;
+}
+
 export type ControlItem =
   | ControlButton
   | ControlLight
   | ControlSources
   | ControlDevice
-  | ControlVolume;
+  | ControlVolume
+  | ControlDisplay;
 
 export interface ControlPage {
   id: string;
@@ -800,6 +834,46 @@ export interface RoomosInputRef {
 }
 
 /**
+ * A Samsung commercial display (QM/QB/QH series, Smart Signage, the Flip...)
+ * spoken to over MDC on TCP 1515.
+ *
+ * This replaces the Home Assistant `ha-samsungtv-mdc` integration: the
+ * protocol is a handful of fixed binary frames, so there is nothing Home
+ * Assistant adds except a hop where a press can die.
+ *
+ * The display must have MDC enabled over the network (Menu > System >
+ * MDC / "Connection" set to RJ45/LAN on most models), and "Network Standby"
+ * ON, or it stops listening once it is turned off and cannot be turned back
+ * on over the network.
+ *
+ * Secure MDC's PIN is not here — this object is sent to every panel — but in
+ * the environment: MDC_PIN_<ID>, or MDC_PIN for every display.
+ */
+export interface DisplayConfig {
+  id: string;
+  name: string;
+  /** `192.168.1.159` or `192.168.1.159:1515`. Port defaults to 1515. */
+  host: string;
+  /**
+   * The display's MDC ID (Menu > System > ID Settings). 0 on most sets out
+   * of the box, 1 on some. Wrong, and the display ignores every frame.
+   */
+  displayId: number;
+  /**
+   * Optional MAC, for a Wake-on-LAN packet before power on. Only needed on a
+   * set whose Network Standby is off — with it on, MDC itself turns the
+   * display on.
+   */
+  mac?: string;
+  broadcast?: string;
+  /**
+   * The inputs a `next` key steps through, in order, optionally renamed. MDC
+   * source names: HDMI1, HDMI2, HDMI3, HDMI4, DISPLAY_PORT_1, DVI, PC...
+   */
+  inputs: SourceRef[];
+}
+
+/**
  * A host the backend may run fixed commands on over SSH.
  *
  * The credential is not here — this object is sent to every panel. It comes
@@ -863,6 +937,7 @@ export interface ControlsConfig {
   keylights: KeyLightConfig[];
   tvs: TvConfig[];
   roomos: RoomosConfig[];
+  displays: DisplayConfig[];
   ssh: SshHostConfig[];
   appleTvs: AppleTvConfig[];
   /**

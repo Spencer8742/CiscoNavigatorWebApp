@@ -200,6 +200,17 @@
     Mask="true"/>
 
   <Config
+    Name="Samsung MDC PIN"
+    Target="MDC_PIN"
+    Default=""
+    Mode=""
+    Description="Only for a Samsung display under controls.displays with Secure MDC turned on: its 4-digit PIN. Leave empty for plain MDC (most displays)."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="true"/>
+
+  <Config
     Name="SSH key file (Mac Studio)"
     Target="SSH_KEY_FILE_MAC_STUDIO"
     Default=""

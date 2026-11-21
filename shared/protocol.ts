@@ -693,6 +693,27 @@ export interface RoomosState {
   muted: boolean | null;
 }
 
+/**
+ * A Samsung MDC display in `controls.displays`, as it last answered.
+ *
+ * Polled rather than pushed — MDC has no notifications — so this is at most
+ * one poll interval stale for a change made with the display's own remote,
+ * and exact for a change made from the panel, which re-reads after every
+ * command.
+ */
+export interface DisplayState {
+  id: string;
+  /** False when the display did not answer; every other field is then last-known. */
+  reachable: boolean;
+  /** True on, false in standby, null when never read. */
+  power: boolean | null;
+  /** 0–100, or null when unknown or the model has no audio. */
+  volume: number | null;
+  muted: boolean | null;
+  /** The MDC source name — HDMI1, DISPLAY_PORT_1 — or null when unknown. */
+  input: string | null;
+}
+
 export type AppleTvPairingState = 'idle' | 'starting' | 'pin' | 'paired' | 'error';
 
 /** Live state from a configured Apple TV. Credentials never leave the backend. */
@@ -917,6 +938,8 @@ export type ServerMessage =
       keylights: KeyLightState[];
       tvs: TvState[];
       roomos: RoomosState[];
+      /** Every Samsung MDC display named in `controls.displays`. */
+      displays: DisplayState[];
       appleTvs: AppleTvState[];
       /** IINA on each Mac marked `iina: true`. */
       iina: IinaState[];
@@ -952,6 +975,7 @@ export type ServerMessage =
   | { t: 'link'; ref: number; link: ServiceLink }
   | { t: 'tvs'; tvs: TvState[] }
   | { t: 'roomos'; devices: RoomosState[] }
+  | { t: 'displays'; displays: DisplayState[] }
   | { t: 'apple-tvs'; appleTvs: AppleTvState[] }
   | { t: 'iina'; players: IinaState[] }
   /** Config file changed on disk and revalidated. */
@@ -1100,6 +1124,18 @@ export type ClientMessage =
    * page put a volume control on.
    */
   | { t: 'roomos-volume'; id: number; item: string; op: 'level' | 'mute' | 'unmute'; value?: number }
+  /**
+   * Power, mute or set the volume of a `display:` item's Samsung display.
+   * Names the ITEM, like `roomos-volume`, so a panel can only reach a display
+   * some page put a card for.
+   */
+  | {
+      t: 'display';
+      id: number;
+      item: string;
+      op: 'on' | 'off' | 'toggle' | 'level' | 'mute' | 'unmute';
+      value?: number;
+    }
   /** Heartbeat. Detects half-open sockets that TCP will not report. */
   | { t: 'ping'; id: number }
   /**
