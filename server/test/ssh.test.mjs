@@ -22,8 +22,16 @@ const ran = [];
 /** Passwords the server was offered. */
 const offered = [];
 
+/*
+ * ssh2's ed25519 generator occasionally (about 1 in 250) writes a key its own
+ * parser rejects as "Malformed OpenSSH private key", which failed every test
+ * here through the hooks. Keep generating until the key reads back.
+ */
 function makeHostKey() {
-  return ssh2.utils.generateKeyPairSync('ed25519').private;
+  for (;;) {
+    const key = ssh2.utils.generateKeyPairSync('ed25519').private;
+    if (!(ssh2.utils.parseKey(key) instanceof Error)) return key;
+  }
 }
 
 async function startServer(key) {
