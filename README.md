@@ -44,6 +44,7 @@ Room Navigator ──── one origin, HTTPS ────▶ navigator-panel (N
                                               ├──▶ Plex            (REST + Companion)
                                               ├──▶ Cisco RoomOS    (xAPI WebSocket)
                                               ├──▶ LG webOS TVs    (SSAP WebSocket)
+                                              ├──▶ Samsung displays (MDC, TCP 1515)
                                               ├──▶ Hosts over SSH  (fixed commands)
                                               └──▶ Elgato Key Lights
 ```
@@ -199,11 +200,13 @@ controls:
 ```
 
 A button reaches a Cisco device's xAPI (any xCommand, or the presentation),
-an LG television, an Apple TV, a fixed command on a host over SSH, a Home
+an LG television, a Samsung display over MDC, an Apple TV, a fixed command on a host over SSH, a Home
 Assistant webhook or service call, or an Elgato Key Light — or several of
 those in order, with `wait:` between them. Every step of a multi-step key runs
 even if an earlier one fails, and the key reports what failed. A bare `light:`
-item is not a button at all — it is the full light control, with live state.
+item is not a button at all — it is the full light control, with live state —
+and a bare `display:` item is a Samsung display's power toggle, mute and
+volume slider, read back from the display.
 Passwords and SSH keys come from `.env`, never this file, because this file is
 sent to the panel.
 

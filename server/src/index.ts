@@ -574,6 +574,7 @@ async function main(): Promise<void> {
     getKeyLights: () => controls.snapshot(),
     getTvs: () => controls.tvSnapshot(),
     getRoomos: () => controls.roomosSnapshot(),
+    getDisplays: () => controls.displaySnapshot(),
     getAppleTvs: () => appleTv.snapshot,
     onAppleTv: (device, op) => appleTv.command(device, op),
     onAppleTvSwipe: (device, gesture) => appleTv.swipe(device, gesture),
@@ -585,6 +586,7 @@ async function main(): Promise<void> {
     onKeyLight: (light, op, value) => controls.keyLight(light, op, value),
     onSource: (item, value) => controls.selectSource(item, value),
     onRoomosVolume: (item, op, value) => controls.roomosVolume(item, op, value),
+    onDisplay: (item, op, value) => controls.displayControl(item, op, value),
 
     onPhotos: async (count) => {
       const photos = await playlist.take(count);
@@ -596,7 +598,7 @@ async function main(): Promise<void> {
   });
 
   /* ── Macro pages ─────────────────────────────────────────────────────────
-     The Controls screen: RoomOS xAPI, webOS, Apple TV, SSH, Home Assistant
+     The Controls screen: RoomOS xAPI, webOS, Samsung MDC, Apple TV, SSH, Home Assistant
      and Elgato Key Lights, each spoken to directly, driven from
      dashboard.yaml. This is what replaced the on-device RoomOS macro and
      Bitfocus Companion — see controls/index.ts.
@@ -615,6 +617,9 @@ async function main(): Promise<void> {
     onLights: (lights) => hub.broadcastKeyLights(lights),
     onTvs: (tvs) => hub.broadcastTvs(tvs),
     onRoomos: (devices) => hub.broadcastRoomos(devices),
+    onDisplays: (displays) => hub.broadcastDisplays(displays),
+    // Secure MDC only; most displays need no PIN at all.
+    mdcPin: (id) => process.env[`MDC_PIN_${id.toUpperCase()}`] || process.env['MDC_PIN'] || '',
     // Per device first, so two devices with different passwords can coexist;
     // the shared one covers the usual case of a single device.
     roomosPassword: (id) =>

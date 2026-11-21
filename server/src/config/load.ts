@@ -25,6 +25,7 @@ import type {
   AppleTvShortcutConfig,
   TvConfig,
   RoomosConfig,
+  DisplayConfig,
   SshHostConfig,
   SshScreenConfig,
   AppleTvKeyOp,
@@ -112,6 +113,7 @@ export const FALLBACK_CONFIG: DashboardConfig = {
     keylights: [],
     tvs: [],
     roomos: [],
+    displays: [],
     ssh: [],
     appleTvs: [],
     pollSeconds: 15,
@@ -421,6 +423,7 @@ function validate(raw: unknown): DashboardConfig {
       keylights: keyLightList(controlsRaw['keylights']),
       tvs: tvsParsed,
       roomos: roomosList(controlsRaw['roomos']),
+      displays: mdcDisplayList(controlsRaw['displays']),
       ssh: sshHostList(controlsRaw['ssh']),
       appleTvs: appleTvList(controlsRaw['appleTvs']),
       pages: controlPages(controlsRaw['pages']),
@@ -730,6 +733,73 @@ function roomosList(v: unknown): RoomosConfig[] {
       username: str(raw['username'], 'admin', `${path}.username`),
       inputs: roomosInputList(raw['inputs'], `${path}.inputs`),
     });
+  });
+
+  return out;
+}
+
+/**
+ * Samsung commercial displays spoken to over MDC. Same shape as `tvs:` — an
+ * address, an id, and the inputs a `next` key steps through — plus the MDC
+ * display ID. The Secure MDC PIN is refused here, like every other secret:
+ * this object is sent to every panel.
+ */
+function mdcDisplayList(v: unknown): DisplayConfig[] {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v)) {
+    warn('controls.displays', 'list', v);
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const out: DisplayConfig[] = [];
+
+  v.forEach((item, i) => {
+    const path = `controls.displays[${i}]`;
+    const raw = typeof item === 'string' ? { host: item } : obj(item);
+
+    const host = str(raw['host'] ?? raw['ip'], '', `${path}.host`);
+    if (!host || host.includes('/') || /\s/.test(host)) {
+      warn(`${path}.host`, 'a bare address like 192.168.1.159', host || item);
+      return;
+    }
+
+    const id = str(raw['id'], `display${i + 1}`, `${path}.id`);
+    if (!/^[A-Za-z0-9_]+$/.test(id)) {
+      // The id names its PIN variable, MDC_PIN_<ID>.
+      warn(`${path}.id`, 'letters, digits and _', id);
+      return;
+    }
+    if (seen.has(id)) {
+      log.warn(`${path}: duplicate id "${id}" — skipping`);
+      return;
+    }
+    seen.add(id);
+
+    if (raw['pin'] !== undefined) {
+      log.warn(
+        `${path}.pin is ignored — the config is sent to the panel. ` +
+          `Set MDC_PIN (or MDC_PIN_${id.toUpperCase()}) in .env instead.`,
+      );
+    }
+
+    const cfg: DisplayConfig = {
+      id,
+      name: str(raw['name'], id, `${path}.name`),
+      host,
+      displayId: num(raw['displayId'] ?? raw['display_id'], 0, `${path}.displayId`, 0, 255),
+      inputs: sourceRefList(raw['inputs'], `${path}.inputs`),
+    };
+
+    const mac = str(raw['mac'], '', `${path}.mac`);
+    if (mac) {
+      if (/^[0-9a-f]{12}$/i.test(mac.replace(/[^0-9a-f]/gi, ''))) cfg.mac = mac;
+      else warn(`${path}.mac`, 'a MAC like a8:23:fe:00:11:22', mac);
+    }
+    const broadcast = str(raw['broadcast'], '', `${path}.broadcast`);
+    if (broadcast) cfg.broadcast = broadcast;
+
+    out.push(cfg);
   });
 
   return out;
@@ -1099,6 +1169,29 @@ function controlItems(
       return;
     }
 
+    /*
+     * `display:` on its own is a Samsung display's full card — power, mute,
+     * volume. With an `action:` or `input:` it is a key instead, and falls
+     * through to the action parser below.
+     */
+    const display = raw['display'];
+    if (
+      typeof display === 'string' &&
+      display.trim() &&
+      raw['action'] === undefined &&
+      raw['input'] === undefined &&
+      raw['actions'] === undefined
+    ) {
+      seen.add(id);
+      out.push({
+        type: 'display',
+        id,
+        display: display.trim(),
+        name: str(raw['name'], 'Display', `${itemPath}.name`),
+      });
+      return;
+    }
+
     // `light:` (with no op) means the full light control rather than a button.
     const light = raw['light'];
     if (typeof light === 'string' && light.trim() && raw['keylight'] === undefined) {
@@ -1156,6 +1249,8 @@ function defaultIcon(action: ControlAction | undefined): string {
       return 'tv';
     case 'roomos':
       return 'share';
+    case 'display':
+      return action.op === 'input' || action.op === 'next' ? 'input' : action.op.includes('mute') || action.op === 'volume' ? 'volume' : 'tv';
     case 'xcommand':
       return 'grid';
     case 'appletv':
@@ -1266,6 +1361,32 @@ function controlAction(raw: Raw, path: string): ControlAction | null {
   }
 
   /*
+   * A Samsung display from `controls.displays`, over MDC.
+   *
+   *   { display: room_samsung, action: toggle }          power: toggle | on | off
+   *   { display: room_samsung, action: next }            step through the inputs
+   *   { display: room_samsung, input: HDMI2 }            one named input
+   *   { display: room_samsung, action: mute }            mute | unmute
+   *   { display: room_samsung, action: volume, value: 20 }
+   */
+  const displayRef = raw['display'];
+  if (typeof displayRef === 'string' && displayRef.trim()) {
+    const display = displayRef.trim();
+    const input = str(raw['input'], '', `${path}.input`);
+    if (input) return { kind: 'display', display, op: 'input', input };
+    const op = oneOf(
+      raw['action'],
+      ['toggle', 'on', 'off', 'next', 'mute', 'unmute', 'volume'] as const,
+      'toggle',
+      `${path}.action`,
+    );
+    if (op === 'volume') {
+      return { kind: 'display', display, op, value: num(raw['value'], 20, `${path}.value`, 0, 100) };
+    }
+    return { kind: 'display', display, op };
+  }
+
+  /*
    * A Cisco device from `controls.roomos`, over its own xAPI.
    *
    *   { roomos: desk_pro, action: next }    step through the inputs
@@ -1352,7 +1473,7 @@ function controlAction(raw: Raw, path: string): ControlAction | null {
     return action;
   }
 
-  log.warn(`${path}: no action (roomos, tv, appletv, ssh, keylight, entity, webhook or wait) — skipping`);
+  log.warn(`${path}: no action (roomos, tv, display, appletv, ssh, keylight, entity, webhook or wait) — skipping`);
   return null;
 }
 

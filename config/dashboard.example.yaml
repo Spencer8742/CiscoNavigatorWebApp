@@ -612,6 +612,53 @@ controls:
   # the key's name. Switching keeps the presentation's sending mode, so it
   # does not stop sharing into a call; starting from nothing is local only.
 
+  # ── Samsung displays, spoken to directly (MDC) ─────────────────────────
+  #
+  # A Samsung commercial display (QM/QB/QH, Smart Signage, the Flip) over
+  # MDC — Multiple Display Control, TCP 1515 — the same protocol the Home
+  # Assistant `ha-samsungtv-mdc` integration speaks, with Home Assistant no
+  # longer in between. Remove the display from that integration once it is
+  # here: many sets accept only one MDC connection at a time.
+  #
+  # On the display:
+  #   - MDC over the network on (Menu > System > MDC / Connection: RJ45/LAN)
+  #   - Network Standby ON, or it stops listening when turned off and cannot
+  #     be turned back on remotely
+  #   - Note its ID (Menu > System > ID Settings): 0 on most sets, 1 on some
+  #
+  # Secure MDC's PIN, if the set uses one, goes in .env as MDC_PIN (or
+  # MDC_PIN_<ID>) — never here, this file is sent to the panel.
+  displays: []
+  #  - id: room_samsung
+  #    name: Samsung
+  #    host: 192.168.1.159         # port defaults to 1515
+  #    displayId: 0
+  #    # mac: only needed if Network Standby is off (sends Wake-on-LAN first)
+  #    # MDC source names: HDMI1 HDMI2 HDMI3 HDMI4 DISPLAY_PORT_1 DVI PC ...
+  #    inputs:
+  #      - { source: HDMI1, name: Room Kit }
+  #      - { source: HDMI2, name: Laptop }
+  #
+  # On a page, `display:` on its own is a CARD — power toggle, mute and a
+  # volume slider, all read back from the display, laid out like a `volume:`
+  # card:
+  #
+  #   - { display: room_samsung, name: Samsung TV }
+  #
+  # With `action:` or `input:` it is a KEY, usable in an `actions:` list too:
+  #
+  #   - { name: TV Power, display: room_samsung, action: toggle }   # on | off | toggle
+  #   - { name: TV Input, display: room_samsung, action: next }
+  #   - { name: Laptop,   display: room_samsung, input: HDMI2 }
+  #   - { name: TV Mute,  display: room_samsung, action: mute }     # mute | unmute
+  #   - { name: TV 20,    display: room_samsung, action: volume, value: 20 }
+  #
+  # Migrating from Home Assistant: replace
+  #   { entity: media_player.<samsung>, service: turn_on }   → { display: room_samsung, action: on }
+  #   { entity: media_player.<samsung>, service: turn_off }  → { display: room_samsung, action: off }
+  #   { entity: media_player.<samsung>, service: toggle }    → { display: room_samsung, action: toggle }
+  #   sources: media_player.<samsung>                         → keys with `input:`, or `action: next`
+
   # ── Hosts a key may run a command on, over SSH ─────────────────────────
   #
   # For the one step no API covers — `caffeinate -u -t 1` on a Mac, to light

@@ -2589,6 +2589,21 @@
   color: var(--text-faint);
 }
 
+/* A display card has two round keys in its head: power on the left, mute on
+   the right. A muted speaker is the quiet state too. */
+.keylight.is-display .display-mute[aria-pressed='true'] {
+  background: var(--surface-3);
+  color: var(--text-dim);
+}
+.keylight.is-display .keylight-power:disabled {
+  opacity: 0.55;
+}
+/* Standard-size cards are one row; the head holds both keys and the title,
+   so it gets a little more of the width than a volume card's. */
+.macro-grid:not([data-size='lg']) .macro-volume.is-display .keylight-head {
+  max-width: 55%;
+}
+
 .keylight-titles {
   flex: 1 1 auto;
   min-width: 0;
