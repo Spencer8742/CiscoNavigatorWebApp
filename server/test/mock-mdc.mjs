@@ -6,7 +6,8 @@ import { readFileSync } from 'node:fs';
  * A Samsung display that speaks MDC on a TCP port.
  *
  * Holds power, volume, mute and input and answers the commands the client
- * uses. `statusSupported: false` NAKs the 0x00 status read, like some models;
+ * uses. `bootMs` makes it go silent for that long after power on, like a
+ * real set booting. `statusSupported: false` NAKs the 0x00 status read, like some models;
  * `standbyNaks: true` NAKs everything but power while off. With `pin` and a
  * cert/key, it runs the Secure MDC handshake first.
  */
@@ -74,6 +75,9 @@ export class MockMdc {
         buf = buf.subarray(end);
         this.frames.push({ cmd, id, data });
         if (id !== this.opts.displayId) continue; // wrong id: ignored, as a real set does
+        // Booting after power on: a real set ACKs the power command and then
+        // answers nothing at all for a few seconds.
+        if (this.bootingUntil && Date.now() < this.bootingUntil) continue;
         socket.write(this.#answer(cmd, data));
       }
     });
@@ -89,7 +93,12 @@ export class MockMdc {
         if (!this.opts.statusSupported) return nak();
         return ack([s.power, s.volume, s.mute, s.input, 0x10, 0, 0]);
       case 0x11:
-        if (data.length) s.power = data[0];
+        if (data.length) {
+          if (data[0] === 1 && s.power === 0 && this.opts.bootMs) {
+            this.bootingUntil = Date.now() + this.opts.bootMs;
+          }
+          s.power = data[0];
+        }
         return ack([s.power]);
       case 0x12:
         if (data.length) s.volume = data[0];

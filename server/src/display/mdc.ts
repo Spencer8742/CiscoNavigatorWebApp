@@ -48,11 +48,17 @@ const CONNECT_TIMEOUT_MS = 4000;
 /** Close the socket once it has been quiet this long. */
 const IDLE_CLOSE_MS = 20_000;
 /**
- * After power on, how long to keep asking until the display says it is on.
- * A panel coming out of standby takes several seconds, and some refuse
- * every command but power for part of that.
+ * After power on, how long the display may take to finish waking. A panel
+ * coming out of standby ACKs the command at once and then goes quiet —
+ * no answer at all, or NAKs for everything but power — for several seconds
+ * while it boots. Inside this window silence is "still starting", not
+ * "unreachable", and the card keeps showing the state it was sent to.
  */
-const POWER_ON_SETTLE_MS = 15_000;
+const POWER_ON_SETTLE_MS = 20_000;
+/** The same for power off: shorter, a set going to standby settles faster. */
+const POWER_OFF_SETTLE_MS = 8_000;
+/** How often to re-read while a power change settles. */
+const SETTLE_STEP_MS = 1500;
 
 const CMD = {
   status: 0x00,
@@ -175,6 +181,15 @@ export interface MdcOptions {
   pin?: string;
   mac?: string;
   broadcast?: string;
+  /** Timing overrides, for tests. Production uses the constants above. */
+  timing?: Partial<MdcTiming>;
+}
+
+export interface MdcTiming {
+  requestTimeoutMs: number;
+  powerOnSettleMs: number;
+  powerOffSettleMs: number;
+  settleStepMs: number;
 }
 
 interface Waiter {
@@ -201,11 +216,27 @@ export class MdcClient {
   #lastProblem = '';
   /** Some models NAK the 0x00 status read; fall back to one read per field. */
   #statusUnsupported = false;
+  readonly #timing: MdcTiming;
+  /**
+   * A power change the display ACKed but may not have finished: the state it
+   * is going to and when to stop waiting for it. While set, a read that
+   * fails or still reports the old power does not overrule it.
+   */
+  #transition: { power: boolean; until: number } | undefined;
+  /** Bumped per power command, so an older settle loop knows to stop. */
+  #transitionGen = 0;
 
   #state: DisplayState;
 
   constructor(opts: MdcOptions) {
     this.#opts = opts;
+    this.#timing = {
+      requestTimeoutMs: REQUEST_TIMEOUT_MS,
+      powerOnSettleMs: POWER_ON_SETTLE_MS,
+      powerOffSettleMs: POWER_OFF_SETTLE_MS,
+      settleStepMs: SETTLE_STEP_MS,
+      ...opts.timing,
+    };
     const [address, port] = splitHostPort(opts.host);
     this.#address = address;
     this.#port = port;
@@ -256,11 +287,45 @@ export class MdcClient {
     try {
       const next = await this.#readStatus();
       this.#problem('');
+      const t = this.#activeTransition();
+      if (t && next.power !== t.power) {
+        // Still on its way. Take the other fields, keep the power it was sent to.
+        return this.#apply({ ...next, power: t.power, reachable: true });
+      }
+      if (t) this.#transition = undefined;
       return this.#apply({ ...next, reachable: true });
     } catch (err) {
+      // Booting or going to standby: silence is expected, not a fault.
+      if (this.#activeTransition()) return false;
       this.#problem(err instanceof Error ? err.message : String(err));
       return this.#apply({ reachable: false });
     }
+  }
+
+  #activeTransition(): { power: boolean; until: number } | undefined {
+    const t = this.#transition;
+    if (t && Date.now() >= t.until) this.#transition = undefined;
+    return this.#transition;
+  }
+
+  /**
+   * Hold the card at `power` while the display settles, re-reading until it
+   * agrees or the window closes. The last read, outside the window, is an
+   * ordinary one: a display that never came back IS unreachable.
+   */
+  #beginTransition(power: boolean): void {
+    const window = power ? this.#timing.powerOnSettleMs : this.#timing.powerOffSettleMs;
+    this.#transition = { power, until: Date.now() + window };
+    const gen = ++this.#transitionGen;
+    this.#apply({ reachable: true, power });
+    void (async () => {
+      while (!this.#stopped && gen === this.#transitionGen && this.#activeTransition()) {
+        await delay(this.#timing.settleStepMs);
+        if (this.#stopped || gen !== this.#transitionGen) return;
+        await this.refresh();
+      }
+      if (!this.#stopped && gen === this.#transitionGen) await this.refresh();
+    })();
   }
 
   async #readStatus(): Promise<Omit<DisplayState, 'id' | 'reachable'>> {
@@ -333,18 +398,20 @@ export class MdcClient {
       await this.refresh();
       return problem;
     }
-    // The ACK comes before the picture does. Optimistically say "on" so the
-    // toggle flips at once, then let the re-read confirm.
-    this.#apply({ reachable: true, power: true });
-    void this.refresh();
+    // The ACK comes before the picture does. Show "on" at once and hold it
+    // while the set boots, rather than re-reading straight into its silence.
+    this.#beginTransition(true);
     return null;
   }
 
   async turnOff(): Promise<string | null> {
     const problem = await this.#set(CMD.power, [0x00], 'power off');
-    if (!problem) this.#apply({ reachable: true, power: false });
-    void this.refresh();
-    return problem;
+    if (problem) {
+      void this.refresh();
+      return problem;
+    }
+    this.#beginTransition(false);
+    return null;
   }
 
   async setVolume(level: number): Promise<string | null> {
@@ -373,21 +440,30 @@ export class MdcClient {
   }
 
   async #set(cmd: number, data: number[], what: string): Promise<string | null> {
-    try {
-      const reply = await this.#request(cmd, data);
-      this.#problem('');
-      if (!reply.ack) {
+    for (;;) {
+      let problem: string;
+      try {
+        const reply = await this.#request(cmd, data);
+        this.#problem('');
+        if (reply.ack) return null;
         // A NAK most often means the set is in standby and refusing
         // everything but power — worth saying in those words.
         const standby = this.#state.power === false && cmd !== CMD.power;
-        return standby ? 'Display is off' : `Display refused ${what} (error ${reply.data[0] ?? '?'})`;
+        problem = standby ? 'Display is off' : `Display refused ${what} (error ${reply.data[0] ?? '?'})`;
+      } catch (err) {
+        problem = err instanceof Error ? err.message : String(err);
+        if (!this.#activeTransition()) {
+          this.#problem(problem);
+          this.#apply({ reachable: false });
+          return problem;
+        }
       }
-      return null;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.#problem(message);
-      this.#apply({ reachable: false });
-      return message;
+      // A volume or input sent while the display is still waking — the next
+      // step of a "Room On" key — is refused or ignored until it has booted.
+      // Keep trying until it has, rather than failing the step.
+      const t = this.#activeTransition();
+      if (!t || !t.power || cmd === CMD.power || this.#stopped) return problem;
+      await delay(this.#timing.settleStepMs);
     }
   }
 
@@ -405,7 +481,7 @@ export class MdcClient {
           // place; start the next request on a fresh socket.
           this.#close();
           reject(new Error('Display did not answer'));
-        }, REQUEST_TIMEOUT_MS);
+        }, this.#timing.requestTimeoutMs);
         this.#waiter = { cmd, resolve, reject, timer };
         socket.write(encodeFrame(cmd, this.#opts.displayId, data));
       });
