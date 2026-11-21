@@ -365,7 +365,6 @@ function isolated({ host, zones, swallowEvents = false, services = false, spotif
   const ctx = {};
 
   before(async () => {
-    ctx.port = await freePort();
     ctx.sonos = new MockSonos(zones ?? defaultZones());
     ctx.sonos.swallowEvents = swallowEvents;
     await ctx.sonos.start();
@@ -388,34 +387,48 @@ function isolated({ host, zones, swallowEvents = false, services = false, spotif
     // four addresses — has to come out of the topology it answers with.
     const seed = host === undefined ? ctx.sonos.address('RINCON_KITCHEN') : host;
 
-    ctx.backend = spawn(process.execPath, [SERVER], {
-      env: {
-        ...process.env,
-        PORT: String(ctx.port),
-        HOST: '127.0.0.1',
-        PANEL_TOKEN: TOKEN,
-        CONFIG_PATH: configPath,
-        HA_URL: '',
-        HA_TOKEN: '',
-        IMMICH_URL: '',
-        IMMICH_API_KEY: '',
-        SONOS_HOST: seed,
-        SPOTIFY_CLIENT_ID: spotify ? 'test-client-id' : '',
-        SPOTIFY_CLIENT_SECRET: spotify ? 'test-client-secret' : '',
-        LOG_LEVEL: 'warn',
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    ctx.backend.stdout.on('data', (d) => process.stderr.write(`[backend] ${d}`));
-    ctx.backend.stderr.on('data', (d) => process.stderr.write(`[backend] ${d}`));
+    /*
+     * freePort() can only say a port WAS free: it closes its probe before
+     * the backend binds, and with test files running in parallel another one
+     * can take the port in between. The backend then exits (see the
+     * EADDRINUSE handler in server/src/index.ts) and this suite used to wait
+     * out its timeout. So: start, and if it exits before it listens, start
+     * again on a fresh port.
+     */
+    for (let attempt = 1; ; attempt++) {
+      ctx.port = await freePort();
+      ctx.backend = spawn(process.execPath, [SERVER], {
+        env: {
+          ...process.env,
+          PORT: String(ctx.port),
+          HOST: '127.0.0.1',
+          PANEL_TOKEN: TOKEN,
+          CONFIG_PATH: configPath,
+          HA_URL: '',
+          HA_TOKEN: '',
+          IMMICH_URL: '',
+          IMMICH_API_KEY: '',
+          SONOS_HOST: seed,
+          SPOTIFY_CLIENT_ID: spotify ? 'test-client-id' : '',
+          SPOTIFY_CLIENT_SECRET: spotify ? 'test-client-secret' : '',
+          LOG_LEVEL: 'warn',
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      ctx.backend.stdout.on('data', (d) => process.stderr.write(`[backend] ${d}`));
+      ctx.backend.stderr.on('data', (d) => process.stderr.write(`[backend] ${d}`));
 
-    await waitFor(async () => {
-      try {
-        return (await fetch(`http://127.0.0.1:${ctx.port}/api/health`)).ok;
-      } catch {
-        return false;
-      }
-    }, 'backend to listen');
+      const outcome = await waitFor(async () => {
+        if (ctx.backend.exitCode !== null) return 'exited';
+        try {
+          return (await fetch(`http://127.0.0.1:${ctx.port}/api/health`)).ok && 'listening';
+        } catch {
+          return false;
+        }
+      }, 'backend to listen');
+      if (outcome === 'listening') break;
+      if (attempt >= 5) assert.fail(`backend exited before listening, ${attempt} times`);
+    }
   });
 
   after(async () => {
