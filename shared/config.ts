@@ -918,18 +918,6 @@ export interface DdcConfig {
   standby: number;
 }
 
-/** How a DDC monitor is reached. See DisplayConfig.ddc. */
-export interface DdcConfig {
-  /** The `controls.ssh` host the monitor is plugged into. */
-  ssh: string;
-  /** m1ddc on that host. Default /opt/homebrew/bin/m1ddc. */
-  m1ddc: string;
-  /** m1ddc's display selector (`1`, `serial=ABC123`) when the host has several. */
-  display?: string;
-  /** VCP 0xD6 value for off: 4 standby (default), 5 off. */
-  standby: number;
-}
-
 /**
  * A host the backend may run fixed commands on over SSH.
  *
