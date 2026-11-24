@@ -623,15 +623,20 @@ export function reloadAllPanels(): boolean {
 }
 
 /**
- * Switch a Cisco device in `controls.roomos` on or off, for every panel.
+ * Switch a Cisco device in `controls.roomos`, or a monitor in
+ * `controls.displays`, on or off, for every panel.
  *
  * Not optimistic, unlike a preference: the answer is a new config, which
  * redraws the switch and, with the device off, takes its tiles and key steps
  * off every page. Waiting the round trip keeps the switch from claiming a
  * state the backend has not taken.
  */
-export function setDeviceEnabled(device: string, enabled: boolean): boolean {
-  return send({ t: 'device-enabled', id: nextId(), device, enabled });
+export function setDeviceEnabled(
+  device: string,
+  enabled: boolean,
+  kind: 'roomos' | 'display' = 'roomos',
+): boolean {
+  return send({ t: 'device-enabled', id: nextId(), device, enabled, kind });
 }
 
 /**

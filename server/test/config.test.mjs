@@ -176,3 +176,59 @@ controls:
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('switching a monitor off hides its own page and its steps elsewhere', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'navigator-config-'));
+  const path = join(dir, 'dashboard.yaml');
+  await writeFile(path, `
+version: 1
+controls:
+  ssh:
+    - { id: mac_studio, host: 192.168.1.200, username: me }
+  displays:
+    - { id: dell, name: Dell, ddc: mac_studio }
+    - { id: room_samsung, name: Samsung, host: 192.168.1.159 }
+  roomos:
+    # Same id as the monitor: the two lists are switched separately.
+    - { id: dell, host: 192.168.1.50 }
+  pages:
+    - id: room
+      name: Room
+      items:
+        - name: Office Power
+          actions:
+            - { display: dell, action: on }
+            - { display: room_samsung, action: on }
+        - { display: room_samsung, name: Samsung TV }
+    - id: dell_monitor
+      name: Dell Monitor
+      items:
+        - { display: dell, name: Dell }
+        - { name: Laptop, display: dell, input: USB-C }
+`, 'utf8');
+
+  const config = new ConfigStore(path);
+  try {
+    assert.equal(await config.load(), true);
+    assert.deepEqual(config.current.controls.displays.map((d) => d.enabled), [true, true]);
+
+    assert.equal(config.setDeviceEnabled('dell', false, 'display'), null);
+    const cur = config.current.controls;
+    assert.deepEqual(cur.displays.map((d) => d.enabled), [false, true]);
+    assert.equal(cur.roomos[0].enabled, true, 'the Cisco device with the same id is untouched');
+    assert.deepEqual(cur.pages.map((p) => p.id), ['room'], 'the Dell Monitor page is gone');
+    assert.deepEqual(cur.pages[0].items[0].actions, [{ kind: 'display', display: 'room_samsung', op: 'on' }]);
+    assert.equal(cur.pages[0].items.length, 2);
+
+    const saved = JSON.parse(await readFile(join(dir, 'device-switches.json'), 'utf8'));
+    assert.deepEqual(saved.displays, { dell: false });
+    assert.deepEqual(saved.roomos, {});
+
+    assert.equal(config.setDeviceEnabled('dell', true, 'display'), null);
+    assert.deepEqual(config.current.controls.pages.map((p) => p.id), ['room', 'dell_monitor']);
+    assert.equal(config.setDeviceEnabled('nope', false, 'display'), 'Unknown device');
+  } finally {
+    config.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

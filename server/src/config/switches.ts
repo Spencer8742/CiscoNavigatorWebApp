@@ -1,7 +1,10 @@
 import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { logger } from '~/lib/log.ts';
-import type { ControlButton, ControlItem, DashboardConfig } from '@shared/config.ts';
+import type { ControlAction, ControlButton, ControlItem, DashboardConfig } from '@shared/config.ts';
+
+/** Which list a switched device is in. */
+export type DeviceKind = 'roomos' | 'display';
 
 const log = logger('switches');
 
@@ -21,6 +24,8 @@ export class DeviceSwitches {
   readonly #path: string;
   /** roomos device id → on/off, for the devices somebody has switched. */
   #roomos = new Map<string, boolean>();
+  /** `controls.displays` id → on/off. Kept apart: the two lists' ids may coincide. */
+  #displays = new Map<string, boolean>();
 
   constructor(configPath: string) {
     this.#path = join(dirname(configPath), 'device-switches.json');
@@ -31,10 +36,15 @@ export class DeviceSwitches {
     return this.#roomos;
   }
 
+  get displays(): ReadonlyMap<string, boolean> {
+    return this.#displays;
+  }
+
   /** Record a switch. Returns false when nothing changed. */
-  setRoomos(id: string, enabled: boolean): boolean {
-    if (this.#roomos.get(id) === enabled) return false;
-    this.#roomos.set(id, enabled);
+  set(kind: DeviceKind, id: string, enabled: boolean): boolean {
+    const map = kind === 'display' ? this.#displays : this.#roomos;
+    if (map.get(id) === enabled) return false;
+    map.set(id, enabled);
     this.#save();
     return true;
   }
@@ -42,12 +52,16 @@ export class DeviceSwitches {
   #load(): void {
     try {
       const raw: unknown = JSON.parse(readFileSync(this.#path, 'utf8'));
-      const roomos = raw && typeof raw === 'object' ? (raw as Record<string, unknown>)['roomos'] : null;
-      if (!roomos || typeof roomos !== 'object' || Array.isArray(roomos)) return;
-      for (const [id, value] of Object.entries(roomos as Record<string, unknown>)) {
-        if (typeof value === 'boolean') this.#roomos.set(id, value);
+      if (!raw || typeof raw !== 'object') return;
+      const file = raw as Record<string, unknown>;
+      for (const [key, map] of [['roomos', this.#roomos], ['displays', this.#displays]] as const) {
+        const section = file[key];
+        if (!section || typeof section !== 'object' || Array.isArray(section)) continue;
+        for (const [id, value] of Object.entries(section as Record<string, unknown>)) {
+          if (typeof value === 'boolean') map.set(id, value);
+        }
       }
-      const off = [...this.#roomos].filter(([, on]) => !on).map(([id]) => id);
+      const off = [...this.#roomos, ...this.#displays].filter(([, on]) => !on).map(([id]) => id);
       if (off.length > 0) log.info(`Switched off in Settings: ${off.join(', ')}`);
     } catch (err) {
       // Missing is the normal case: nothing has been switched yet.
@@ -58,7 +72,11 @@ export class DeviceSwitches {
   }
 
   #save(): void {
-    const file = { version: 1, roomos: Object.fromEntries(this.#roomos) };
+    const file = {
+      version: 1,
+      roomos: Object.fromEntries(this.#roomos),
+      displays: Object.fromEntries(this.#displays),
+    };
     try {
       mkdirSync(dirname(this.#path), { recursive: true });
       // Write-then-rename, as panel-prefs.json does: a container killed
@@ -86,30 +104,41 @@ export class DeviceSwitches {
  * What goes:
  *   - a `device:` tile linked to the device (see ControlDevice.roomos)
  *   - a `volume:` card for it
- *   - each key step on it (`roomos:` and `xcommand`) — the rest of a
- *     multi-device key still runs, so "Office Power" keeps the lights and TV
+ *   - a `display:` card for a monitor that is off
+ *   - each key step on it (`roomos:`, `xcommand`, `display:`) — the rest of
+ *     a multi-device key still runs, so "Office Power" keeps the lights and TV
  *   - a key left with no steps at all, and a page left with no items
  *
- * The device itself stays in `controls.roomos`, marked `enabled: false`:
+ * The device itself stays in `controls.roomos` / `controls.displays`, marked
+ * `enabled: false`:
  * that is what Settings lists so it can be switched back on.
  */
 export function applyDeviceSwitches(
   cfg: DashboardConfig,
-  roomosSwitches: ReadonlyMap<string, boolean>,
+  switches: { roomos: ReadonlyMap<string, boolean>; displays: ReadonlyMap<string, boolean> },
 ): DashboardConfig {
+  // `?? true`: a config object built without the field (older tests,
+  // hand-built fixtures) means a device that is in use.
   const roomos = cfg.controls.roomos.map((d) => ({
     ...d,
-    // `?? true`: a config object built without the field (older tests,
-    // hand-built fixtures) means a device that is in use.
-    enabled: roomosSwitches.get(d.id) ?? d.enabled ?? true,
+    enabled: switches.roomos.get(d.id) ?? d.enabled ?? true,
+  }));
+  const displays = cfg.controls.displays.map((d) => ({
+    ...d,
+    enabled: switches.displays.get(d.id) ?? d.enabled ?? true,
   }));
   const off = new Set(roomos.filter((d) => !d.enabled).map((d) => d.id));
-  if (off.size === 0) return { ...cfg, controls: { ...cfg.controls, roomos } };
+  const offDisplays = new Set(displays.filter((d) => !d.enabled).map((d) => d.id));
+  if (off.size === 0 && offDisplays.size === 0) {
+    return { ...cfg, controls: { ...cfg.controls, roomos, displays } };
+  }
+
+  const stepOff = (a: ControlAction): boolean =>
+    ((a.kind === 'roomos' || a.kind === 'xcommand') && off.has(a.device)) ||
+    (a.kind === 'display' && offDisplays.has(a.display));
 
   const keyWithout = (key: ControlButton): ControlButton | null => {
-    const actions = key.actions.filter(
-      (a) => !((a.kind === 'roomos' || a.kind === 'xcommand') && off.has(a.device)),
-    );
+    const actions = key.actions.filter((a) => !stepOff(a));
     if (actions.length === key.actions.length) return key;
     return actions.length > 0 ? { ...key, actions } : null;
   };
@@ -124,6 +153,8 @@ export function applyDeviceSwitches(
         };
       case 'volume':
         return off.has(item.device) ? null : item;
+      case 'display':
+        return offDisplays.has(item.display) ? null : item;
       case 'button':
         return keyWithout(item);
       default:
@@ -141,5 +172,5 @@ export function applyDeviceSwitches(
     .filter(({ page, items }) => items.length > 0 || page.items.length === 0)
     .map(({ page, items }) => ({ ...page, items }));
 
-  return { ...cfg, controls: { ...cfg.controls, roomos, pages } };
+  return { ...cfg, controls: { ...cfg.controls, roomos, displays, pages } };
 }
