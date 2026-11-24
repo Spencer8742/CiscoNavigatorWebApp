@@ -570,6 +570,12 @@ export interface ControlDevice {
   name: string;
   entities: DeviceEntities;
   /**
+   * The `controls.roomos` device this tile is, when it is one: `roomos:` on
+   * the tile, or its `prefix:` when that names a device. Turning that device
+   * off in Settings hides the tile.
+   */
+  roomos?: string;
+  /**
    * Extra keys drawn in the tile's toggle row.
    *
    * For the things the RoomOS integration does not expose but the device can
@@ -823,6 +829,17 @@ export interface RoomosConfig {
    * Empty = every input connector the device reports, except cameras.
    */
   inputs: RoomosInputRef[];
+  /**
+   * Whether this device is in use. When false the backend holds no
+   * connection to it, and every tile, card and key step that drives it is
+   * left out of `controls.pages` — so the panel, the meeting refresher and
+   * the notifications all stop seeing it at once.
+   *
+   * `enabled:` in dashboard.yaml sets the default; the Devices switch in the
+   * panel's Settings overrides it (device-switches.json, beside the YAML),
+   * because "the Desk Pro is out of the room this week" is a tap, not an edit.
+   */
+  enabled: boolean;
 }
 
 /** One video input connector, by the device's own id. */

@@ -623,6 +623,18 @@ export function reloadAllPanels(): boolean {
 }
 
 /**
+ * Switch a Cisco device in `controls.roomos` on or off, for every panel.
+ *
+ * Not optimistic, unlike a preference: the answer is a new config, which
+ * redraws the switch and, with the device off, takes its tiles and key steps
+ * off every page. Waiting the round trip keeps the switch from claiming a
+ * state the backend has not taken.
+ */
+export function setDeviceEnabled(device: string, enabled: boolean): boolean {
+  return send({ t: 'device-enabled', id: nextId(), device, enabled });
+}
+
+/**
  * Every boolean preference, taken from the shared list rather than spelled
  * out again — a new toggle added to the protocol is then a type error here
  * until it is handled, instead of silently unsendable.

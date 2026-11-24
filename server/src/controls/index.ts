@@ -255,6 +255,10 @@ export class Controls {
      */
     const nextRoomos = new Map<string, RoomosClient>();
     for (const dev of cfg.roomos) {
+      // Switched off in Settings (or `enabled: false`): no connection at all,
+      // so a device unplugged for the week is not retried and logged about
+      // every few seconds. Its client is stopped by the sweep below.
+      if (dev.enabled === false) continue;
       const opts = {
         id: dev.id,
         host: dev.host,

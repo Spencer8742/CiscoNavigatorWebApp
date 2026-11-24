@@ -587,6 +587,20 @@ controls:
   #    name: Room Kit Mini
   #    host: 192.168.1.77
   #    username: panel
+  #    # enabled: false   # start it switched off (see below)
+  #
+  # SWITCHING A DEVICE OFF. Settings → Cisco devices on the panel has an
+  # On/Off switch for each device here. Off — while a Desk Pro is swapped
+  # out for another screen, say — and the backend stops connecting to it,
+  # and its `device:` tile, its `volume:` card and every key step on it
+  # leave the pages. A key that also drives other things keeps doing those;
+  # a key or page left with nothing on it is hidden. On puts it all back.
+  # Shared by every panel, and kept in device-switches.json beside this
+  # file, so it survives restarts. `enabled: false` here is the default the
+  # switch starts from.
+  #
+  # A `device:` tile is tied to the device whose id matches its `prefix:`
+  # (desk_pro above). If they differ, write `roomos: desk_pro` in the tile.
   #
   # On a page, `roomos:` is an ACTION a key can take:
   #
