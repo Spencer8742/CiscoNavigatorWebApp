@@ -3,7 +3,7 @@ import { KeyLight } from '~/controls/keylight.ts';
 import { WebosClient } from '~/tv/webos.ts';
 import { RoomosClient } from '~/roomos/xapi.ts';
 import { MdcClient } from '~/display/mdc.ts';
-import { DdcClient } from '~/display/ddc.ts';
+import { DdcClient, ddcSourceName } from '~/display/ddc.ts';
 import { SshRunner } from '~/ssh/runner.ts';
 import type {
   AppleTvKeyOp,
@@ -322,6 +322,17 @@ export class Controls {
           m1ddc: d.ddc.m1ddc,
           standby: d.ddc.standby,
           ...(d.ddc.display ? { display: d.ddc.display } : {}),
+          ...(d.ddc.offInput
+            ? {
+                offInput: d.ddc.offInput,
+                // Where On goes when nothing else is known: the first
+                // configured input that is not the "off" one.
+                onInput:
+                  d.inputs
+                    .map((i) => ddcSourceName(i.source))
+                    .find((n): n is string => n !== null && n !== d.ddc!.offInput) ?? 'HDMI1',
+              }
+            : {}),
         };
         const existing = this.#displays.get(d.id);
         if (existing instanceof DdcClient && existing.matches(opts)) {

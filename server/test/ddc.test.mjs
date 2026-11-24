@@ -32,7 +32,8 @@ function fakeMac(initial = {}) {
     if (command.includes('caffeinate -u')) {
       mon.present = true;
       mon.standby = 1;
-      return { problem: null, lines: [] };
+      // Anything after the wake (a `set input`) still applies.
+      if (!/set input/.test(command)) return { problem: null, lines: [] };
     }
     const set = /set (standby|volume|mute|input) (\w+)/.exec(command);
     if (!set) return { problem: 'unexpected command', lines: [] };
@@ -129,6 +130,48 @@ describe('DdcClient', () => {
     c.stop();
   });
 
+  test('with offInput, off parks it on the empty input and on brings back what was showing', async () => {
+    // The P4326QEB drops off DDC entirely in standby, so it is turned off by
+    // switching to USB-C with nothing on it, where it sleeps but answers.
+    const mac = fakeMac({ input: 18 });
+    const c = client(mac, { offInput: 'USB_C', onInput: 'HDMI1' });
+    await c.refresh();
+    assert.equal(c.state.input, 'HDMI2');
+
+    assert.equal(await c.turnOff(), null);
+    assert.match(mac.commands.at(-1).command, /set input 27/);
+    assert.doesNotMatch(mac.commands.at(-1).command, /standby/);
+    await c.refresh();
+    assert.equal(c.state.power, false, 'parked on USB-C reads as off');
+    assert.equal(c.state.reachable, true);
+
+    assert.equal(await c.turnOn(), null);
+    assert.match(mac.commands.at(-1).command, /caffeinate -u -t 1; .* set input 18/, 'back to HDMI2, where it was');
+    await c.refresh();
+    assert.equal(c.state.power, true);
+    assert.equal(c.state.input, 'HDMI2');
+    c.stop();
+  });
+
+  test('with offInput, choosing the laptop on that same input is on, not off', async () => {
+    const mac = fakeMac({ input: 17 });
+    const c = client(mac, { offInput: 'USB_C', onInput: 'HDMI1' });
+    await c.turnOff();
+    assert.equal(c.state.power, false);
+    assert.equal(await c.setInput('USB-C'), null);
+    assert.equal(c.state.power, true);
+    await c.refresh();
+    assert.equal(c.state.power, true);
+    assert.equal(c.state.input, 'USB_C');
+
+    // From cold, nothing known: On goes to the configured onInput.
+    const cold = client(fakeMac({ input: 27 }), { offInput: 'USB_C', onInput: 'HDMI1' });
+    await cold.turnOn();
+    assert.equal(cold.state.input, 'HDMI1');
+    c.stop();
+    cold.stop();
+  });
+
   test("a failed write carries m1ddc's own words", async () => {
     const mac = fakeMac({ present: false });
     const c = client(mac);
@@ -157,12 +200,17 @@ controls:
     - { id: bad_path, ddc: mac_studio, m1ddc: "m1ddc; rm -rf ~" }
     - { id: bad_host, ddc: "mac studio" }
     - { id: odd_screen, ddc: mac_studio, screen: "1; reboot", standby: 5 }
+    - { id: parked, ddc: mac_studio, offInput: USB-C, volume: false, mute: false }
 `);
     const config = new ConfigStore(path);
     try {
       assert.equal(await config.load(), true);
       const displays = config.current.controls.displays;
-      assert.deepEqual(displays.map((d) => d.id), ['dell', 'odd_screen']);
+      assert.deepEqual(displays.map((d) => d.id), ['dell', 'odd_screen', 'parked']);
+      assert.equal(displays[2].ddc.offInput, 'USB_C');
+      assert.equal(displays[2].volume, false);
+      assert.equal(displays[2].mute, false);
+      assert.equal(displays[0].volume, true, 'volume and mute default on');
       assert.deepEqual(displays[0].ddc, { ssh: 'mac_studio', m1ddc: M, standby: 4, display: '1' });
       assert.equal(displays[0].host, '');
       assert.deepEqual(displays[1].ddc, { ssh: 'mac_studio', m1ddc: M, standby: 5 }, 'an unsafe selector is dropped');

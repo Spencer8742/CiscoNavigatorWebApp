@@ -274,6 +274,8 @@ controls:
       id: 'room_samsung', name: 'Samsung', host: `127.0.0.1:${PORT}`, displayId: 0,
       inputs: [{ source: 'HDMI1', name: 'Room Kit' }, { source: 'HDMI 2', name: 'Laptop' }],
       enabled: true,
+      volume: true,
+      mute: true,
     }]);
     const items = cfg.pages[0].items;
     assert.deepEqual(items[0], { type: 'display', id: 'tv', display: 'room_samsung', name: 'Samsung TV' });

@@ -80,6 +80,13 @@ export interface DdcOptions {
   display?: string;
   /** The VCP 0xD6 value that turns the monitor off: 4 (standby) or 5 (off). */
   standby: number;
+  /**
+   * Off by switching to this input rather than DDC standby (canonical name).
+   * See DdcConfig.offInput.
+   */
+  offInput?: string;
+  /** With `offInput`: where On goes when the input before Off is unknown. */
+  onInput?: string;
   /** Runs a shell command on `ssh` and returns what it printed. */
   run: (host: string, command: string) => Promise<DdcRunResult>;
   /** For tests. */
@@ -102,6 +109,15 @@ export class DdcClient {
   #hold: { power: boolean; until: number } | undefined;
   #timers = new Set<ReturnType<typeof setTimeout>>();
   #lastProblem = '';
+  /**
+   * With `offInput`: true while the monitor sits on the "off" input because
+   * WE put it there. The input alone cannot say off — the same input is
+   * also a laptop somebody chose to show — so it is off only while this
+   * holds, and it clears the moment the input is anything else.
+   */
+  #parked = false;
+  /** With `offInput`: the input to return to on On. */
+  #resume: string | undefined;
 
   constructor(opts: DdcOptions) {
     this.#opts = opts;
@@ -120,7 +136,9 @@ export class DdcClient {
       o.ssh === opts.ssh &&
       o.m1ddc === opts.m1ddc &&
       (o.display ?? '') === (opts.display ?? '') &&
-      o.standby === opts.standby
+      o.standby === opts.standby &&
+      (o.offInput ?? '') === (opts.offInput ?? '') &&
+      (o.onInput ?? '') === (opts.onInput ?? '')
     );
   }
 
@@ -187,6 +205,11 @@ export class DdcClient {
       };
     }
 
+    if (this.#opts.offInput && next.power !== false) {
+      if (this.#parked && next.input === this.#opts.offInput) next = { ...next, power: false };
+      else if (next.input && next.input !== this.#opts.offInput) this.#parked = false;
+    }
+
     const hold = this.#hold && Date.now() < this.#hold.until ? this.#hold : undefined;
     if (hold && next.power !== hold.power) next = { ...next, power: hold.power };
     else this.#hold = undefined;
@@ -207,6 +230,20 @@ export class DdcClient {
    * what `caffeinate -u` brings.
    */
   async turnOn(): Promise<string | null> {
+    const off = this.#opts.offInput;
+    if (off) {
+      // Back to what was showing before Off. Waking the Mac's output first
+      // costs nothing and covers a Mac whose display had gone to sleep.
+      const target = this.#resume ?? this.#opts.onInput ?? 'HDMI1';
+      const code = ddcCode(target);
+      if (code === undefined) return `Unknown input "${target}"`;
+      const problem = await this.#write(`/usr/bin/caffeinate -u -t 1; ${this.#base} set input ${code}`);
+      if (problem) return problem;
+      this.#parked = false;
+      this.#apply({ input: target });
+      this.#settle(true);
+      return null;
+    }
     const problem = await this.#write(
       `/usr/bin/caffeinate -u -t 2; ${this.#base} set standby 1 >/dev/null 2>&1; exit 0`,
     );
@@ -216,6 +253,19 @@ export class DdcClient {
   }
 
   async turnOff(): Promise<string | null> {
+    const off = this.#opts.offInput;
+    if (off) {
+      const code = ddcCode(off);
+      if (code === undefined) return `Unknown input "${off}"`;
+      const showing = this.#state.input;
+      if (showing && showing !== off) this.#resume = showing;
+      const problem = await this.#write(`${this.#base} set input ${code}`);
+      if (problem) return problem;
+      this.#parked = true;
+      this.#apply({ input: off });
+      this.#settle(false);
+      return null;
+    }
     const problem = await this.#write(`${this.#base} set standby ${this.#opts.standby}`);
     if (problem) return problem;
     this.#settle(false);
@@ -240,7 +290,12 @@ export class DdcClient {
     const code = name ? ddcCode(name) : undefined;
     if (!name || code === undefined) return `Unknown input "${input}"`;
     const problem = await this.#write(`${this.#base} set input ${code}`);
-    if (!problem) this.#apply({ reachable: true, input: name });
+    if (!problem) {
+      // Choosing an input — even the "off" one, as a laptop — is turning it on.
+      this.#parked = false;
+      this.#hold = undefined;
+      this.#apply({ reachable: true, input: name, power: true });
+    }
     return problem;
   }
 

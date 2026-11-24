@@ -904,6 +904,13 @@ export interface DisplayConfig {
    * and overridden by the switch in Settings — see RoomosConfig.enabled.
    */
   enabled: boolean;
+  /**
+   * Whether the card offers a volume slider / a mute key. Off for a monitor
+   * that shows its volume over DDC but ignores writes to it — a slider that
+   * moves and changes nothing is worse than none.
+   */
+  volume: boolean;
+  mute: boolean;
 }
 
 /** How a DDC monitor is reached. See DisplayConfig.ddc. */
@@ -916,6 +923,13 @@ export interface DdcConfig {
   display?: string;
   /** VCP 0xD6 value for off: 4 standby (default), 5 off. */
   standby: number;
+  /**
+   * Turn off by switching to this input instead of DDC standby, and on by
+   * switching back. For a monitor that drops off the DDC bus in standby (the
+   * Dell P4326QEB does) but sleeps by itself on an input with no signal, and
+   * stays reachable there. Canonical name: USB_C, HDMI1...
+   */
+  offInput?: string;
 }
 
 /**

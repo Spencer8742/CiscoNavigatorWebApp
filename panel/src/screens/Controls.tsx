@@ -530,11 +530,16 @@ function VolumeCard({ item, span, large }: { item: ControlVolume; span: number; 
  */
 function DisplayCard({ item, span, large }: { item: ControlDisplay; span: number; large: boolean }) {
   const state = displayStateOf(item.display);
+  const cfg = controlsConfig.value.displays.find((d) => d.id === item.display);
   const reachable = state?.reachable === true;
   const on = reachable && state?.power === true;
   const level = state?.volume ?? 0;
   const muted = state?.muted === true;
   const hasAudio = state?.volume !== null && state?.volume !== undefined;
+  // `volume: false` / `mute: false` in the YAML: a monitor that shows its
+  // volume but ignores writes to it gets no control that would do nothing.
+  const showVolume = cfg?.volume !== false;
+  const showMute = cfg?.mute !== false;
 
   const status = !state
     ? 'Not configured'
@@ -543,8 +548,8 @@ function DisplayCard({ item, span, large }: { item: ControlDisplay; span: number
       : !on
         ? 'Off'
         : [
-            muted ? 'Muted' : null,
-            hasAudio ? `Vol ${level}` : null,
+            showMute && muted ? 'Muted' : null,
+            showVolume && hasAudio ? `Vol ${level}` : null,
             state.input ? inputLabel(item.display, state.input) : null,
           ]
             .filter(Boolean)
@@ -577,36 +582,40 @@ function DisplayCard({ item, span, large }: { item: ControlDisplay; span: number
           <div class="keylight-state truncate">{status}</div>
         </div>
 
-        <Pressable
-          class="keylight-power display-mute"
-          onPress={() => {
-            setDisplay(item.id, muted ? 'unmute' : 'mute');
-            markActivity();
-          }}
-          ariaLabel={`${item.name}: ${muted ? 'unmute' : 'mute'}`}
-          ariaPressed={muted}
-          disabled={!on || !hasAudio}
-        >
-          <Icon name={muted ? 'mute' : 'volume'} size="1.5rem" weight={1.9} />
-        </Pressable>
+        {showMute ? (
+          <Pressable
+            class="keylight-power display-mute"
+            onPress={() => {
+              setDisplay(item.id, muted ? 'unmute' : 'mute');
+              markActivity();
+            }}
+            ariaLabel={`${item.name}: ${muted ? 'unmute' : 'mute'}`}
+            ariaPressed={muted}
+            disabled={!on || !hasAudio}
+          >
+            <Icon name={muted ? 'mute' : 'volume'} size="1.5rem" weight={1.9} />
+          </Pressable>
+        ) : null}
       </div>
 
-      <Slider
-        value={level}
-        min={0}
-        max={100}
-        size={large ? 'lg' : undefined}
-        disabled={!on || !hasAudio}
-        readout={String(level)}
-        ariaLabel={`${item.name} volume`}
-        icon={<Icon name="volume" size="1.125rem" />}
-        onChange={(value, final) => {
-          if (final) {
-            setDisplay(item.id, 'level', value);
-            markActivity();
-          }
-        }}
-      />
+      {showVolume ? (
+        <Slider
+          value={level}
+          min={0}
+          max={100}
+          size={large ? 'lg' : undefined}
+          disabled={!on || !hasAudio}
+          readout={String(level)}
+          ariaLabel={`${item.name} volume`}
+          icon={<Icon name="volume" size="1.125rem" />}
+          onChange={(value, final) => {
+            if (final) {
+              setDisplay(item.id, 'level', value);
+              markActivity();
+            }
+          }}
+        />
+      ) : null}
     </div>
   );
 }

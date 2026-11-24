@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { logger } from '~/lib/log.ts';
 import { DeviceSwitches, applyDeviceSwitches, type DeviceKind } from '~/config/switches.ts';
+import { ddcSourceName } from '~/display/ddc.ts';
 import {
   CAST_PANES,
   CAST_TARGETS,
@@ -798,6 +799,11 @@ function mdcDisplayList(v: unknown): DisplayConfig[] {
         return;
       }
       ddc = { ssh, m1ddc, standby: num(raw['standby'], 4, `${path}.standby`, 1, 5) };
+      if (raw['offInput'] !== undefined) {
+        const offInput = ddcSourceName(str(String(raw['offInput']), '', `${path}.offInput`));
+        if (offInput) ddc.offInput = offInput;
+        else warn(`${path}.offInput`, 'an input like USB-C or HDMI2', raw['offInput']);
+      }
       const screen = raw['screen'] === undefined ? '' : str(String(raw['screen']), '', `${path}.screen`);
       if (screen) {
         if (/^[A-Za-z0-9=._:-]+$/.test(screen)) ddc.display = screen;
@@ -837,6 +843,8 @@ function mdcDisplayList(v: unknown): DisplayConfig[] {
       displayId: num(raw['displayId'] ?? raw['display_id'], 0, `${path}.displayId`, 0, 255),
       inputs: sourceRefList(raw['inputs'], `${path}.inputs`),
       enabled: bool(raw['enabled'], true, `${path}.enabled`),
+      volume: bool(raw['volume'], true, `${path}.volume`),
+      mute: bool(raw['mute'], true, `${path}.mute`),
       ...(ddc ? { ddc } : {}),
     };
 
