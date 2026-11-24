@@ -4,7 +4,7 @@ import { health, linkStatus, prefs, socketState } from '~/state/ui.ts';
 import { Pressable } from '~/components/Pressable.tsx';
 import { WakeSettings } from '~/components/WakeSettings.tsx';
 import { NotificationSettings } from '~/components/NotificationSettings.tsx';
-import { reloadAllPanels, setPref } from '~/net/socket.ts';
+import { reloadAllPanels, setDeviceEnabled, setPref } from '~/net/socket.ts';
 import { getPanelId } from '~/net/auth.ts';
 import {
   BOOLEAN_PREFS,
@@ -203,6 +203,26 @@ export function Settings() {
           <code>overlays:</code> settings, so a line turned off there stays off
           whatever is chosen here.
         </p>
+
+        {cfg.controls.roomos.length > 0 ? (
+          <>
+            <div class="section-head">
+              <h2 class="section-title">Cisco devices</h2>
+            </div>
+            <div class="settings-page-grid" role="group" aria-label="Cisco devices">
+              {cfg.controls.roomos.map((dev) => (
+                <DeviceToggle key={dev.id} id={dev.id} name={dev.name} enabled={dev.enabled} />
+              ))}
+            </div>
+            <p class="settings-note">
+              Turn a device <strong>Off</strong> while it is out of use — swapped for
+              another screen, or away for repair. The panel stops connecting to it,
+              and its tile, volume card and key steps leave every page; a key that
+              also drives other things keeps doing those. Applies to every panel,
+              and turning it back on puts everything back.
+            </p>
+          </>
+        ) : null}
 
         <div class="section-head">
           <h2 class="section-title">Meetings</h2>
@@ -426,6 +446,21 @@ function PageToggle({ page }: { page: PanelPage }) {
     >
       <span>{PAGE_LABELS[page]}</span>
       <span class="settings-page-state">{active ? 'On' : 'Off'}</span>
+    </Pressable>
+  );
+}
+
+/** One Cisco device's on/off switch. Shared by every panel — see setDeviceEnabled. */
+function DeviceToggle({ id, name, enabled }: { id: string; name: string; enabled: boolean }) {
+  return (
+    <Pressable
+      class={enabled ? 'settings-page is-active' : 'settings-page'}
+      onPress={() => setDeviceEnabled(id, !enabled)}
+      ariaPressed={enabled}
+      ariaLabel={`${name} ${enabled ? 'on' : 'off'}`}
+    >
+      <span>{name}</span>
+      <span class="settings-page-state">{enabled ? 'On' : 'Off'}</span>
     </Pressable>
   );
 }

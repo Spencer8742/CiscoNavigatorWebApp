@@ -1195,7 +1195,16 @@ export type ClientMessage =
    * shared preferences already have (one panel can change what all of them
    * display), and the worst outcome is a second of blank screens.
    */
-  | { t: 'reload'; id: number };
+  | { t: 'reload'; id: number }
+  /**
+   * Switch a device in `controls.roomos` on or off for every panel.
+   *
+   * Not a preference: it is about the room, not about one screen, so it is
+   * shared by every panel and also changes what the backend connects to. The
+   * answer arrives as an ordinary `config` broadcast, with the device marked
+   * and its tiles and key steps left out — see server/src/config/switches.ts.
+   */
+  | { t: 'device-enabled'; id: number; device: string; enabled: boolean };
 
 /* ── Panel preferences ─────────────────────────────────────────────────── */
 

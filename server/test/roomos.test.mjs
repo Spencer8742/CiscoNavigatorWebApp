@@ -218,6 +218,7 @@ controls:
             { connector: 2, name: 'HDMI' },
             { connector: 3, name: 'USB-C' },
           ],
+          enabled: true,
         },
       ]);
       const [key] = config.current.controls.pages[0].items;
@@ -506,6 +507,68 @@ controls:
     } finally {
       controls.stop();
       config.close();
+    }
+  });
+});
+
+describe('a device switched off in Settings', () => {
+  test('closes its connection, refuses its controls, and reconnects when switched back on', async () => {
+    // Its own directory: the switch is persisted beside the YAML, and must
+    // not leak into the other tests' configs.
+    const own = await mkdtemp(join(tmpdir(), 'roomos-switch-'));
+    const path = join(own, 'dashboard.yaml');
+    await writeFile(path, `
+version: 1
+controls:
+  roomos:
+    - { id: rkm, name: Room Kit Mini, host: "127.0.0.1:${PORT}", username: panel }
+  pages:
+    - id: room
+      name: Room
+      items:
+        - { id: rkm_volume, volume: rkm, name: Room Kit Mini }
+        - { id: wake, name: Wake, roomos: rkm, command: Standby Deactivate }
+        - { id: hook, name: Hook, webhook: x }
+`);
+    const config = new ConfigStore(path);
+    assert.equal(await config.load(), true);
+    const pushes = [];
+    const controls = new Controls({
+      getConfig: () => config.current,
+      haUrl: '',
+      callService: async () => null,
+      getEntity: () => null,
+      onLights: () => {},
+      onTvs: () => {},
+      onRoomos: (devices) => pushes.push(devices),
+      roomosPassword: () => 'secret',
+      appleTvCommand: async () => null,
+      sshCredential: async () => ({}),
+      sshKnownHostsFile: join(own, 'ssh-known-hosts.json'),
+      hasPanels: () => false,
+      tvKeyFile: join(own, 'tv-keys.json'),
+    });
+    // As server/src/index.ts wires it.
+    config.onChange(() => controls.reload());
+    try {
+      await waitFor(() => pushes.at(-1)?.[0]?.reachable, 'connected');
+
+      assert.equal(config.setDeviceEnabled('rkm', false), null);
+      assert.deepEqual(pushes.at(-1), [], 'no device is reported once it is off');
+      assert.deepEqual(controls.roomosSnapshot(), []);
+      device.commands.length = 0;
+      assert.equal(await controls.press('wake'), 'Unknown button');
+      assert.equal(await controls.roomosVolume('rkm_volume', 'level', 10), 'Unknown control');
+      assert.equal(device.commands.length, 0, 'nothing reaches a device that is off');
+
+      assert.equal(config.setDeviceEnabled('rkm', true), null);
+      await waitFor(() => pushes.at(-1)?.[0]?.reachable, 'reconnected');
+      assert.equal(await controls.press('wake'), null);
+      assert.deepEqual(device.commands.at(-1), { path: 'Standby/Deactivate', params: {} });
+    } finally {
+      controls.stop();
+      config.close();
+      await rm(own, { recursive: true, force: true });
     }
   });
 });

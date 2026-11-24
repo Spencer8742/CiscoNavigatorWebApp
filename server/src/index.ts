@@ -547,6 +547,7 @@ async function main(): Promise<void> {
 
     getPrefs: (panelId) => prefs.for(panelId),
     onPref: (key, value, panelId) => prefs.set(key, value, panelId),
+    onDeviceEnabled: (device, enabled) => config.setDeviceEnabled(device, enabled),
     onLayout: (layout, panelId) =>
       prefs.setLayout(layout, config.current.media.sections, panelId),
 

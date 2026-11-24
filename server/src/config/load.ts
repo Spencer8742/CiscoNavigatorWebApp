@@ -3,6 +3,7 @@ import { watch, type FSWatcher } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { logger } from '~/lib/log.ts';
+import { DeviceSwitches, applyDeviceSwitches } from '~/config/switches.ts';
 import {
   CAST_PANES,
   CAST_TARGETS,
@@ -319,7 +320,7 @@ function validate(raw: unknown): DashboardConfig {
   const version = num(root['version'], 1, 'version', 1, 1);
   if (version !== 1) log.warn(`Unknown config version ${version}; treating as 1`);
 
-  return {
+  return linkDeviceTiles({
     version: 1,
 
     ui: {
@@ -434,7 +435,25 @@ function validate(raw: unknown): DashboardConfig {
     },
 
     notifications: notificationsConfig(root['notifications']),
-  };
+  });
+}
+
+/**
+ * Keep a device tile's `roomos` link only when it names a device in
+ * `controls.roomos`. A `prefix:` that happens not to be a device id is just
+ * a prefix, and a link to nothing would be a promise the Settings switch
+ * could never keep.
+ */
+function linkDeviceTiles(cfg: DashboardConfig): DashboardConfig {
+  const ids = new Set(cfg.controls.roomos.map((d) => d.id));
+  for (const page of cfg.controls.pages) {
+    for (const item of page.items) {
+      if (item.type === 'device' && item.roomos !== undefined && !ids.has(item.roomos)) {
+        delete item.roomos;
+      }
+    }
+  }
+  return cfg;
 }
 
 /**
@@ -732,6 +751,7 @@ function roomosList(v: unknown): RoomosConfig[] {
       host,
       username: str(raw['username'], 'admin', `${path}.username`),
       inputs: roomosInputList(raw['inputs'], `${path}.inputs`),
+      enabled: bool(raw['enabled'], true, `${path}.enabled`),
     });
   });
 
@@ -1117,11 +1137,20 @@ function controlItems(
         seen,
       ).filter((k): k is ControlButton => k.type === 'button');
 
+      /*
+       * Which `controls.roomos` device this tile is, so turning that device
+       * off can hide it. Written out, or guessed from `prefix:` — the
+       * example config names both `desk_pro`. Not checked here, where the
+       * device list is not to hand: linkDeviceTiles() drops a link that
+       * names no device once everything has been read.
+       */
+      const link = spec['roomos'] ?? spec['prefix'];
       out.push({
         type: 'device',
         id,
         name: str(spec['name'], 'Device', `${itemPath}.device.name`),
         entities,
+        ...(typeof link === 'string' && link.trim() ? { roomos: link.trim() } : {}),
         keys,
       });
       return;
@@ -1731,13 +1760,18 @@ function validHex(hex: string): string {
 
 export class ConfigStore {
   #path: string;
+  /** dashboard.yaml as read, before the Settings switches. */
+  #loaded: DashboardConfig = FALLBACK_CONFIG;
+  /** What everything else sees: #loaded with the switches applied. */
   #current: DashboardConfig = FALLBACK_CONFIG;
+  readonly #switches: DeviceSwitches;
   #watcher: FSWatcher | undefined;
   #debounce: ReturnType<typeof setTimeout> | undefined;
   #listeners = new Set<(cfg: DashboardConfig) => void>();
 
   constructor(path: string) {
     this.#path = resolve(path);
+    this.#switches = new DeviceSwitches(this.#path);
   }
 
   get current(): DashboardConfig {
@@ -1759,7 +1793,8 @@ export class ConfigStore {
       const text = await readFile(this.#path, 'utf8');
       const parsed = parseYaml(text) as unknown;
       const next = validate(parsed);
-      this.#current = next;
+      this.#loaded = next;
+      this.#current = applyDeviceSwitches(next, this.#switches.roomos);
       log.info(
         `Loaded ${this.#path}: ${next.rooms.length} rooms, ` +
           `${next.home.favorites.length} favourites, ${next.media.players.length} media players`,
@@ -1800,12 +1835,34 @@ export class ConfigStore {
     }
   }
 
+  /**
+   * Switch a `controls.roomos` device on or off, from the panel's Settings.
+   *
+   * Persisted beside the YAML and applied straight away: listeners get the
+   * new config exactly as they would after an edit to dashboard.yaml, so the
+   * backend drops or reopens its connection and every panel redraws.
+   * Returns an error for the panel, or null.
+   */
+  setDeviceEnabled(device: string, enabled: boolean): string | null {
+    const dev = this.#loaded.controls.roomos.find((d) => d.id === device);
+    if (!dev) return 'Unknown device';
+    if (!this.#switches.setRoomos(device, enabled)) return null;
+    log.info(`${dev.name} (${device}) switched ${enabled ? 'on' : 'off'} in Settings`);
+    this.#current = applyDeviceSwitches(this.#loaded, this.#switches.roomos);
+    this.#emit();
+    return null;
+  }
+
   async #reload(): Promise<void> {
     const before = JSON.stringify(this.#current);
     const ok = await this.load();
     if (!ok) return;
     if (JSON.stringify(this.#current) === before) return; // touched, not changed
     log.info('Configuration changed — pushing to connected panels');
+    this.#emit();
+  }
+
+  #emit(): void {
     for (const fn of this.#listeners) {
       try {
         fn(this.#current);
