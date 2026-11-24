@@ -229,6 +229,39 @@ describe('DdcClient', () => {
 });
 
 describe('a DDC monitor in dashboard.yaml', () => {
+  test('a valid offInput is taken without a warning; wakeSeconds stands on its own', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ddc-config-'));
+    const path = join(dir, 'dashboard.yaml');
+    await writeFile(path, `
+version: 1
+controls:
+  displays:
+    - { id: dell, ddc: mac_studio, offInput: USB-C }
+    - { id: slow, ddc: mac_studio, offInput: USB-C, wakeSeconds: 5 }
+    - { id: odd, ddc: mac_studio, offInput: Composite }
+`);
+    const warnings = [];
+    const original = console.warn;
+    console.warn = (...args) => warnings.push(args.join(' '));
+    const config = new ConfigStore(path);
+    try {
+      assert.equal(await config.load(), true);
+    } finally {
+      console.warn = original;
+      config.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+    const [dell, slow, odd] = config.current.controls.displays;
+    assert.equal(dell.ddc.offInput, 'USB_C');
+    assert.equal(dell.ddc.wakeSeconds, undefined);
+    assert.equal(slow.ddc.wakeSeconds, 5);
+    assert.equal(odd.ddc.offInput, undefined);
+    // Only the bad one is warned about — a missing wakeSeconds is not a bad offInput.
+    const offInputWarnings = warnings.filter((w) => w.includes('offInput'));
+    assert.equal(offInputWarnings.length, 1, offInputWarnings.join('\n'));
+    assert.match(offInputWarnings[0], /displays\[2\]/);
+  });
+
   test('parses under controls.displays, and refuses what is not safe in a shell', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'ddc-config-'));
     const path = join(dir, 'dashboard.yaml');
