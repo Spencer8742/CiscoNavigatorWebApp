@@ -78,6 +78,8 @@ export class MockMdc {
         // Booting after power on: a real set ACKs the power command and then
         // answers nothing at all for a few seconds.
         if (this.bootingUntil && Date.now() < this.bootingUntil) continue;
+        // `silentReadsInStandby`: a set that never answers a read while off.
+        if (this.opts.silentReadsInStandby && this.state.power === 0 && data.length === 0) continue;
         socket.write(this.#answer(cmd, data));
       }
     });

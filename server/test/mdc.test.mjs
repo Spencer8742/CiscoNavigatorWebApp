@@ -130,6 +130,30 @@ describe('MdcClient', () => {
     }
   });
 
+  test('a power tap is not held behind a status read the display is slow to answer', async () => {
+    const display = new MockMdc(PORT, { silentReadsInStandby: true });
+    await display.start();
+    const timing = { requestTimeoutMs: 2000, settleStepMs: 100, powerOnSettleMs: 500 };
+    const client = new MdcClient({ id: 'room', host: `127.0.0.1:${PORT}`, displayId: 0, timing });
+    try {
+      // A poll that will hang for the whole timeout...
+      const polling = client.refresh();
+      await new Promise((r) => setTimeout(r, 50));
+      // ...and the tap, mid-poll.
+      const started = Date.now();
+      assert.equal(await client.turnOn(), null);
+      const took = Date.now() - started;
+      assert.equal(display.state.power, 1);
+      assert.ok(took < 500, `power on took ${took}ms behind a hung read`);
+      // The poll it cut short is not reported as the display being unreachable.
+      await polling;
+      assert.equal(client.state.reachable, true);
+    } finally {
+      client.stop();
+      await display.stop();
+    }
+  });
+
   test('a display that never comes back after power on ends up unreachable', async () => {
     const display = new MockMdc(PORT, { bootMs: 60_000 });
     await display.start();
