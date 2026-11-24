@@ -611,7 +611,7 @@ function DisplayCard({ item, span, large }: { item: ControlDisplay; span: number
   );
 }
 
-/** The configured name for an input, else `HDMI1` → `HDMI 1`, `DISPLAY_PORT_1` → `DisplayPort 1`. */
+/** The configured name for an input, else `HDMI1` → `HDMI 1`, `DISPLAY_PORT_1` → `DisplayPort 1`, `USB_C` → `USB-C`. */
 function inputLabel(displayId: string, source: string): string {
   const squash = (s: string) => s.toUpperCase().replace(/[\s_-]/g, '');
   const cfg = controlsConfig.value.displays.find((d) => d.id === displayId);
@@ -620,6 +620,8 @@ function inputLabel(displayId: string, source: string): string {
   return source
     .replace(/^HDMI(\d)/, 'HDMI $1')
     .replace(/^DISPLAY_PORT_(\d)/, 'DisplayPort $1')
+    .replace(/^USB_C$/, 'USB-C')
+    .replace(/^INPUT_(\d+)$/, 'Input $1')
     .replace(/_/g, ' ');
 }
 

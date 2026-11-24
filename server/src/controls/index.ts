@@ -2,7 +2,8 @@ import { logger } from '~/lib/log.ts';
 import { KeyLight } from '~/controls/keylight.ts';
 import { WebosClient } from '~/tv/webos.ts';
 import { RoomosClient } from '~/roomos/xapi.ts';
-import { MdcClient, sourceName } from '~/display/mdc.ts';
+import { MdcClient } from '~/display/mdc.ts';
+import { DdcClient } from '~/display/ddc.ts';
 import { SshRunner } from '~/ssh/runner.ts';
 import type {
   AppleTvKeyOp,
@@ -139,7 +140,7 @@ export class Controls {
   #lights = new Map<string, KeyLight>();
   #tvs = new Map<string, WebosClient>();
   #roomos = new Map<string, RoomosClient>();
-  #displays = new Map<string, MdcClient>();
+  #displays = new Map<string, MdcClient | DdcClient>();
   #poll: ReturnType<typeof setInterval> | undefined;
   /** The interval currently armed, so a config edit only re-arms on a change. */
   #pollSeconds = 0;
@@ -163,6 +164,19 @@ export class Controls {
     }
     const credential = await this.#deps.sshCredential(cfg.id);
     return this.#ssh.run({ ...cfg, ...credential }, command);
+  }
+
+  /**
+   * Run a command on a `controls.ssh` host and collect what it prints — for
+   * a DDC monitor's reads. Bounded, unlike `streamSsh` on its own: a Mac that
+   * stops answering mid-command must not hold the monitor's queue forever.
+   */
+  async #sshOutput(hostId: string, command: string): Promise<{ problem: string | null; lines: string[] }> {
+    const lines: string[] = [];
+    const signal = AbortSignal.timeout(15_000);
+    const problem = await this.streamSsh(hostId, command, (line) => lines.push(line), signal);
+    if (!problem && signal.aborted) return { problem: `${hostId}: the command did not finish`, lines };
+    return { problem, lines };
   }
 
   /** `runSsh`, for a command that keeps reporting: see `SshRunner.stream`. */
@@ -297,8 +311,28 @@ export class Controls {
      * already right. MDC pushes nothing, so after that they are polled with
      * the key lights, while a panel is looking.
      */
-    const nextDisplays = new Map<string, MdcClient>();
+    const nextDisplays = new Map<string, MdcClient | DdcClient>();
     for (const d of cfg.displays) {
+      if (d.ddc) {
+        const opts = {
+          id: d.id,
+          ssh: d.ddc.ssh,
+          m1ddc: d.ddc.m1ddc,
+          standby: d.ddc.standby,
+          ...(d.ddc.display ? { display: d.ddc.display } : {}),
+        };
+        const existing = this.#displays.get(d.id);
+        if (existing instanceof DdcClient && existing.matches(opts)) {
+          nextDisplays.set(d.id, existing);
+          continue;
+        }
+        existing?.stop();
+        const client = new DdcClient({ ...opts, run: (host, command) => this.#sshOutput(host, command) });
+        client.onChange(() => this.#deps.onDisplays?.(this.displaySnapshot()));
+        void client.refresh();
+        nextDisplays.set(d.id, client);
+        continue;
+      }
       const pin = this.#deps.mdcPin?.(d.id) ?? '';
       const opts = {
         id: d.id,
@@ -309,7 +343,7 @@ export class Controls {
         ...(d.broadcast ? { broadcast: d.broadcast } : {}),
       };
       const existing = this.#displays.get(d.id);
-      if (existing?.matches(opts)) {
+      if (existing instanceof MdcClient && existing.matches(opts)) {
         nextDisplays.set(d.id, existing);
         continue;
       }
@@ -524,10 +558,10 @@ export class Controls {
         return dev.setVolume(value ?? 0);
       case 'input': {
         if (!input) return 'No input named';
-        const wanted = sourceName(input);
+        const wanted = dev.inputName(input);
         if (
           cfg.inputs.length > 0 &&
-          !cfg.inputs.some((i) => i.source === input || sourceName(i.source) === wanted)
+          !cfg.inputs.some((i) => i.source === input || dev.inputName(i.source) === wanted)
         ) {
           log.warn(`Refused input "${input}" for ${displayId}: not one it offers`);
           return 'Not an input this display offers';
@@ -537,7 +571,7 @@ export class Controls {
       case 'next': {
         if (cfg.inputs.length === 0) return 'No inputs configured for this display';
         const current = dev.state.input;
-        const at = current ? cfg.inputs.findIndex((i) => sourceName(i.source) === current) : -1;
+        const at = current ? cfg.inputs.findIndex((i) => dev.inputName(i.source) === current) : -1;
         const next = cfg.inputs[(at + 1) % cfg.inputs.length]!;
         return dev.setInput(next.source);
       }

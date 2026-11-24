@@ -271,6 +271,11 @@ export class MdcClient {
     this.#onChange = fn;
   }
 
+  /** The canonical name for an input as MDC names them. Shared with DdcClient. */
+  inputName(input: string): string | null {
+    return sourceName(input);
+  }
+
   stop(): void {
     this.#stopped = true;
     this.#close();
