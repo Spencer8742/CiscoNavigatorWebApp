@@ -869,8 +869,18 @@ export interface RoomosInputRef {
 export interface DisplayConfig {
   id: string;
   name: string;
-  /** `192.168.1.159` or `192.168.1.159:1515`. Port defaults to 1515. */
+  /**
+   * `192.168.1.159` or `192.168.1.159:1515`. Port defaults to 1515. Empty
+   * for a monitor driven over DDC (`ddc` below), which has no address of its
+   * own on the network.
+   */
   host: string;
+  /**
+   * A desktop monitor reached over DDC/CI from the computer it is plugged
+   * into — `m1ddc` on a Mac, over SSH — rather than a Samsung over MDC. Same
+   * card, same keys; only the way the commands travel differs.
+   */
+  ddc?: DdcConfig;
   /**
    * The display's MDC ID (Menu > System > ID Settings). 0 on most sets out
    * of the box, 1 on some. Wrong, and the display ignores every frame.
@@ -888,6 +898,18 @@ export interface DisplayConfig {
    * source names: HDMI1, HDMI2, HDMI3, HDMI4, DISPLAY_PORT_1, DVI, PC...
    */
   inputs: SourceRef[];
+}
+
+/** How a DDC monitor is reached. See DisplayConfig.ddc. */
+export interface DdcConfig {
+  /** The `controls.ssh` host the monitor is plugged into. */
+  ssh: string;
+  /** m1ddc on that host. Default /opt/homebrew/bin/m1ddc. */
+  m1ddc: string;
+  /** m1ddc's display selector (`1`, `serial=ABC123`) when the host has several. */
+  display?: string;
+  /** VCP 0xD6 value for off: 4 standby (default), 5 off. */
+  standby: number;
 }
 
 /**

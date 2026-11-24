@@ -26,6 +26,7 @@ import type {
   AppleTvShortcutConfig,
   TvConfig,
   RoomosConfig,
+  DdcConfig,
   DisplayConfig,
   SshHostConfig,
   SshScreenConfig,
@@ -778,9 +779,35 @@ function mdcDisplayList(v: unknown): DisplayConfig[] {
     const path = `controls.displays[${i}]`;
     const raw = typeof item === 'string' ? { host: item } : obj(item);
 
-    const host = str(raw['host'] ?? raw['ip'], '', `${path}.host`);
-    if (!host || host.includes('/') || /\s/.test(host)) {
-      warn(`${path}.host`, 'a bare address like 192.168.1.159', host || item);
+    /*
+     * `ddc:` names the SSH host a desktop monitor is plugged into, and makes
+     * this a DDC monitor rather than a Samsung: it has no address of its
+     * own. Everything that goes into the command line is checked to a
+     * narrow alphabet here, because it is run in a shell on that host.
+     */
+    let ddc: DdcConfig | undefined;
+    if (raw['ddc'] !== undefined) {
+      const ssh = str(raw['ddc'], '', `${path}.ddc`);
+      if (!/^[A-Za-z0-9_]+$/.test(ssh)) {
+        warn(`${path}.ddc`, 'the id of a host in controls.ssh', raw['ddc']);
+        return;
+      }
+      const m1ddc = str(raw['m1ddc'], '/opt/homebrew/bin/m1ddc', `${path}.m1ddc`);
+      if (!/^\/[A-Za-z0-9._/-]+$/.test(m1ddc)) {
+        warn(`${path}.m1ddc`, 'an absolute path like /opt/homebrew/bin/m1ddc', m1ddc);
+        return;
+      }
+      ddc = { ssh, m1ddc, standby: num(raw['standby'], 4, `${path}.standby`, 1, 5) };
+      const screen = raw['screen'] === undefined ? '' : str(String(raw['screen']), '', `${path}.screen`);
+      if (screen) {
+        if (/^[A-Za-z0-9=._:-]+$/.test(screen)) ddc.display = screen;
+        else warn(`${path}.screen`, 'an m1ddc display selector like 1 or serial=ABC123', screen);
+      }
+    }
+
+    const host = ddc ? '' : str(raw['host'] ?? raw['ip'], '', `${path}.host`);
+    if (!ddc && (!host || host.includes('/') || /\s/.test(host))) {
+      warn(`${path}.host`, 'a bare address like 192.168.1.159, or ddc: <ssh host>', host || item);
       return;
     }
 
@@ -809,6 +836,7 @@ function mdcDisplayList(v: unknown): DisplayConfig[] {
       host,
       displayId: num(raw['displayId'] ?? raw['display_id'], 0, `${path}.displayId`, 0, 255),
       inputs: sourceRefList(raw['inputs'], `${path}.inputs`),
+      ...(ddc ? { ddc } : {}),
     };
 
     const mac = str(raw['mac'], '', `${path}.mac`);

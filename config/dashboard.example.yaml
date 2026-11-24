@@ -653,6 +653,36 @@ controls:
   #      - { source: HDMI1, name: Room Kit }
   #      - { source: HDMI2, name: Laptop }
   #
+  # ── A desktop monitor, over DDC from the computer it is plugged into ────
+  #
+  # A monitor like the Dell P4326QEB has no network control: its RJ45 port
+  # is a network adapter for the computer on its USB-C, and its settings are
+  # reached over the video cable (DDC/CI). So it is driven from that
+  # computer — `m1ddc` on an Apple Silicon Mac, over the same SSH login as
+  # an `ssh:` key (see `ssh:` below; the Mac must be listed there).
+  #
+  # On the Mac: `brew install m1ddc`, then check `m1ddc get volume` works
+  # in Terminal. Works with the Mac locked; it needs the Mac awake enough to
+  # be sending the monitor a picture — turn on "Prevent automatic sleeping
+  # when the display is off" (System Settings > Energy).
+  #
+  #  - id: dell
+  #    name: Dell
+  #    ddc: mac_studio             # an id from controls.ssh
+  #    # m1ddc: /opt/homebrew/bin/m1ddc   # default; /usr/local/bin if built by hand
+  #    # screen: 1                 # m1ddc's `display` selector, if the Mac has several
+  #    # standby: 4                # the off value: 4 standby (default), 5 off
+  #    # DDC input names: HDMI1 HDMI2 DISPLAY_PORT_1 DISPLAY_PORT_2 USB-C,
+  #    # or the raw code as a number.
+  #    inputs:
+  #      - { source: HDMI1, name: Mac Studio }
+  #      - { source: USB-C, name: Laptop }
+  #
+  # It then takes the same card and keys as a Samsung, below. Off puts the
+  # monitor in standby; on wakes the Mac's display output
+  # (`caffeinate -u`) and asks the monitor to wake, because a monitor in
+  # standby is often one the Mac can no longer see.
+  #
   # On a page, `display:` on its own is a CARD — power toggle, mute and a
   # volume slider, all read back from the display, laid out like a `volume:`
   # card:

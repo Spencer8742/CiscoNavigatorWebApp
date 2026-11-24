@@ -100,3 +100,4 @@ export { Hub } from '~/hub/index.ts';
  * fallback, Secure MDC's PIN handshake, and power/volume/mute/input.
  */
 export { MdcClient, encodeFrame as mdcEncode, decodeFrame as mdcDecode, sourceName as mdcSourceName } from '~/display/mdc.ts';
+export { DdcClient, ddcSourceName } from '~/display/ddc.ts';
