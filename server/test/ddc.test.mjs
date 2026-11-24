@@ -16,7 +16,10 @@ const M = '/opt/homebrew/bin/m1ddc';
 
 /** An m1ddc on a Mac, answering the commands DdcClient sends. */
 function fakeMac(initial = {}) {
-  const mon = { present: true, installed: true, standby: 1, volume: 30, mute: 2, input: 17, ...initial };
+  // `asleep`: the P4326QEB with no signal — it still answers DDC, reports
+  // standby 4, ignores a switch to any input but USB-C, and wakes for that.
+  const mon = { present: true, installed: true, standby: 1, volume: 30, mute: 2, input: 17, asleep: false, ...initial };
+  if (mon.asleep) mon.standby = 4;
   const commands = [];
   const run = async (host, command) => {
     commands.push({ host, command });
@@ -35,14 +38,23 @@ function fakeMac(initial = {}) {
       // Anything after the wake (a `set input`) still applies.
       if (!/set input/.test(command)) return { problem: null, lines: [] };
     }
-    const set = /set (standby|volume|mute|input) (\w+)/.exec(command);
-    if (!set) return { problem: 'unexpected command', lines: [] };
+    const sets = [...command.matchAll(/set (standby|volume|mute|input) (\w+)/g)];
+    if (sets.length === 0) return { problem: 'unexpected command', lines: [] };
     if (!mon.present) return { problem: 'mac_studio: command exited 1', lines: ['Could not find a suitable display'] };
-    const [, what, value] = set;
+    for (const [, what, value] of sets.slice(0, -1)) apply(what, value);
+    const [, what, value] = sets.at(-1);
+    apply(what, value);
+    return { problem: null, lines: [] };
+  };
+  const apply = (what, value) => {
+    if (what === 'input' && mon.asleep) {
+      if (Number(value) !== 27) return;
+      mon.asleep = false;
+      mon.standby = 1;
+    }
     if (what === 'mute') mon.mute = value === 'on' ? 1 : 2;
     else mon[what] = Number(value);
     if (what === 'standby' && Number(value) !== 1) mon.present = false;
-    return { problem: null, lines: [] };
   };
   return { mon, commands, run };
 }
@@ -170,6 +182,42 @@ describe('DdcClient', () => {
     assert.equal(cold.state.input, 'HDMI1');
     c.stop();
     cold.stop();
+  });
+
+  test('asleep, an input key wakes it on USB-C first, then switches', async () => {
+    const mac = fakeMac({ input: 17, asleep: true });
+    const c = client(mac, { offInput: 'USB_C', onInput: 'HDMI1', wakeSeconds: 0 });
+    assert.equal(await c.setInput('HDMI1'), null);
+    assert.equal(mac.mon.asleep, false, 'woken');
+    assert.equal(mac.mon.input, 17);
+    assert.match(mac.commands.at(-1).command, /set input 27; sleep 0; .* set input 17/);
+    c.stop();
+  });
+
+  test('awake, an input key goes straight there, with no USB-C detour', async () => {
+    const mac = fakeMac({ input: 27 });
+    const c = client(mac, { offInput: 'USB_C', onInput: 'HDMI1', wakeSeconds: 0 });
+    assert.equal(await c.setInput('HDMI1'), null);
+    assert.equal(mac.commands.at(-1).command, `${M} set input 17 2>&1`);
+    assert.equal(mac.mon.input, 17);
+    c.stop();
+  });
+
+  test('On wakes a parked monitor through USB-C and lands on HDMI', async () => {
+    const mac = fakeMac({ input: 17 });
+    const c = client(mac, { offInput: 'USB_C', onInput: 'HDMI1', wakeSeconds: 0 });
+    await c.refresh();
+    await c.turnOff();
+    mac.mon.asleep = true; // no signal on USB-C: it goes to sleep
+    mac.mon.standby = 4;
+    await c.refresh();
+    assert.equal(c.state.power, false);
+    assert.equal(await c.turnOn(), null);
+    assert.equal(mac.mon.asleep, false);
+    assert.equal(mac.mon.input, 17);
+    await c.refresh();
+    assert.equal(c.state.power, true);
+    c.stop();
   });
 
   test("a failed write carries m1ddc's own words", async () => {

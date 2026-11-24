@@ -674,6 +674,7 @@ controls:
   #    # standby: 4                # the off value: 4 standby (default), 5 off
   #    # offInput: USB-C           # off = switch to this empty input instead;
   #    #                           # see below
+  #    # wakeSeconds: 3            # time to wake on offInput before switching
   #    # volume: false             # no slider / no mute key, for a monitor
   #    # mute: false               # that shows them but ignores the change
   #    # DDC input names: HDMI1 HDMI2 DISPLAY_PORT_1 DISPLAY_PORT_2 USB-C,
@@ -693,6 +694,12 @@ controls:
   # unplugged): Off switches to it and the monitor sleeps by itself for lack
   # of a signal, still answering; On switches back to the input it was on.
   # Turn the monitor's own "Auto Select" input off, or it hunts back.
+  #
+  # `offInput:` is also how it WAKES. Asleep, the P4326QEB ignores a switch
+  # to HDMI but wakes for USB-C, so On, and any input key pressed while it
+  # is asleep, switches to `offInput` first, waits `wakeSeconds` (default
+  # 3), then switches to the input asked for. Awake, a key goes straight
+  # there, so a laptop on USB-C never flashes up on the way.
   #
   # The same Dell shows its volume bar for a DDC volume or mute change and
   # then ignores it (DDPM's SpeakerVolume too); `volume: false` and

@@ -928,8 +928,14 @@ export interface DdcConfig {
    * switching back. For a monitor that drops off the DDC bus in standby (the
    * Dell P4326QEB does) but sleeps by itself on an input with no signal, and
    * stays reachable there. Canonical name: USB_C, HDMI1...
+   *
+   * It is also the WAKE input: asleep, that Dell ignores a switch to HDMI
+   * but wakes for USB-C, so switching to any other input while it is asleep
+   * goes by way of this one first.
    */
   offInput?: string;
+  /** Seconds to let the monitor wake on `offInput` before switching on. Default 3. */
+  wakeSeconds?: number;
 }
 
 /**

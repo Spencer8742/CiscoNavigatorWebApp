@@ -87,11 +87,22 @@ export interface DdcOptions {
   offInput?: string;
   /** With `offInput`: where On goes when the input before Off is unknown. */
   onInput?: string;
+  /**
+   * With `offInput`: seconds between the wake (switching to `offInput`) and
+   * switching on to the input that was asked for. Default WAKE_SECONDS.
+   */
+  wakeSeconds?: number;
   /** Runs a shell command on `ssh` and returns what it printed. */
   run: (host: string, command: string) => Promise<DdcRunResult>;
   /** For tests. */
   settleMs?: number;
 }
+
+/**
+ * How long the P4326QEB takes to come up after a switch to USB-C wakes it,
+ * before it will take a switch to another input. A guess with margin.
+ */
+const WAKE_SECONDS = 3;
 
 /** How long a power change is believed over a read that disagrees. */
 const SETTLE_MS = 20_000;
@@ -138,7 +149,8 @@ export class DdcClient {
       (o.display ?? '') === (opts.display ?? '') &&
       o.standby === opts.standby &&
       (o.offInput ?? '') === (opts.offInput ?? '') &&
-      (o.onInput ?? '') === (opts.onInput ?? '')
+      (o.onInput ?? '') === (opts.onInput ?? '') &&
+      o.wakeSeconds === opts.wakeSeconds
     );
   }
 
@@ -232,12 +244,13 @@ export class DdcClient {
   async turnOn(): Promise<string | null> {
     const off = this.#opts.offInput;
     if (off) {
-      // Back to what was showing before Off. Waking the Mac's output first
-      // costs nothing and covers a Mac whose display had gone to sleep.
+      // Back to what was showing before Off, by way of the wake input: a
+      // sleeping P4326QEB ignores a switch to HDMI but wakes for USB-C.
+      // Waking the Mac's output first covers a Mac whose display had slept.
       const target = this.#resume ?? this.#opts.onInput ?? 'HDMI1';
       const code = ddcCode(target);
       if (code === undefined) return `Unknown input "${target}"`;
-      const problem = await this.#write(`/usr/bin/caffeinate -u -t 1; ${this.#base} set input ${code}`);
+      const problem = await this.#write(`/usr/bin/caffeinate -u -t 1; ${this.#wakeThen(target, code)}`);
       if (problem) return problem;
       this.#parked = false;
       this.#apply({ input: target });
@@ -289,7 +302,21 @@ export class DdcClient {
     const name = ddcSourceName(input);
     const code = name ? ddcCode(name) : undefined;
     if (!name || code === undefined) return `Unknown input "${input}"`;
-    const problem = await this.#write(`${this.#base} set input ${code}`);
+
+    /*
+     * Asleep, this monitor ignores a switch to any input but the wake one,
+     * so wake it first — but only when it IS asleep: on an awake monitor
+     * the detour would flash whatever is on the wake input (a laptop) for a
+     * few seconds. Asleep is read fresh, not taken from the last poll, which
+     * may be fifteen seconds old.
+     */
+    let command = `${this.#base} set input ${code}`;
+    if (this.#opts.offInput && name !== this.#opts.offInput) {
+      await this.refresh();
+      if (this.#state.power !== true) command = this.#wakeThen(name, code);
+    }
+
+    const problem = await this.#write(command);
     if (!problem) {
       // Choosing an input — even the "off" one, as a laptop — is turning it on.
       this.#parked = false;
@@ -300,6 +327,15 @@ export class DdcClient {
   }
 
   /* ── Internals ─────────────────────────────────────────────────────────*/
+
+  /** Switch to the wake input, give it time to come up, then to `name`. */
+  #wakeThen(name: string, code: number): string {
+    const off = this.#opts.offInput;
+    const offCode = off ? ddcCode(off) : undefined;
+    if (!off || offCode === undefined || name === off) return `${this.#base} set input ${code}`;
+    const wait = Math.max(0, Math.min(30, Math.round(this.#opts.wakeSeconds ?? WAKE_SECONDS)));
+    return `${this.#base} set input ${offCode}; sleep ${wait}; ${this.#base} set input ${code}`;
+  }
 
   async #write(command: string): Promise<string | null> {
     const { problem, lines } = await this.#exec(`${command} 2>&1`);

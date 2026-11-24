@@ -325,6 +325,7 @@ export class Controls {
           ...(d.ddc.offInput
             ? {
                 offInput: d.ddc.offInput,
+                ...(d.ddc.wakeSeconds !== undefined ? { wakeSeconds: d.ddc.wakeSeconds } : {}),
                 // Where On goes when nothing else is known: the first
                 // configured input that is not the "off" one.
                 onInput:
