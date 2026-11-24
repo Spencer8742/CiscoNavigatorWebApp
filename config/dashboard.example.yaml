@@ -672,6 +672,10 @@ controls:
   #    # m1ddc: /opt/homebrew/bin/m1ddc   # default; /usr/local/bin if built by hand
   #    # screen: 1                 # m1ddc's `display` selector, if the Mac has several
   #    # standby: 4                # the off value: 4 standby (default), 5 off
+  #    # offInput: USB-C           # off = switch to this empty input instead;
+  #    #                           # see below
+  #    # volume: false             # no slider / no mute key, for a monitor
+  #    # mute: false               # that shows them but ignores the change
   #    # DDC input names: HDMI1 HDMI2 DISPLAY_PORT_1 DISPLAY_PORT_2 USB-C,
   #    # or the raw code as a number.
   #    inputs:
@@ -682,6 +686,17 @@ controls:
   # device (see `roomos:` above): its card and key steps leave the pages,
   # and a page with only the monitor on it — a "Dell Monitor" tab — is
   # hidden while it is off. `enabled: false` here makes Off the default.
+  #
+  # WHEN ON DOES NOTHING. Some monitors — the Dell P4326QEB — drop off DDC
+  # entirely in standby, so nothing can wake them over the cable. Give
+  # `offInput:` an input with nothing plugged in (USB-C, with the laptop
+  # unplugged): Off switches to it and the monitor sleeps by itself for lack
+  # of a signal, still answering; On switches back to the input it was on.
+  # Turn the monitor's own "Auto Select" input off, or it hunts back.
+  #
+  # The same Dell shows its volume bar for a DDC volume or mute change and
+  # then ignores it (DDPM's SpeakerVolume too); `volume: false` and
+  # `mute: false` take those controls off its card.
   #
   # It then takes the same card and keys as a Samsung, below. Off puts the
   # monitor in standby; on wakes the Mac's display output
