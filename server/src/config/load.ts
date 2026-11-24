@@ -3,7 +3,7 @@ import { watch, type FSWatcher } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { logger } from '~/lib/log.ts';
-import { DeviceSwitches, applyDeviceSwitches } from '~/config/switches.ts';
+import { DeviceSwitches, applyDeviceSwitches, type DeviceKind } from '~/config/switches.ts';
 import {
   CAST_PANES,
   CAST_TARGETS,
@@ -836,6 +836,7 @@ function mdcDisplayList(v: unknown): DisplayConfig[] {
       host,
       displayId: num(raw['displayId'] ?? raw['display_id'], 0, `${path}.displayId`, 0, 255),
       inputs: sourceRefList(raw['inputs'], `${path}.inputs`),
+      enabled: bool(raw['enabled'], true, `${path}.enabled`),
       ...(ddc ? { ddc } : {}),
     };
 
@@ -1822,7 +1823,7 @@ export class ConfigStore {
       const parsed = parseYaml(text) as unknown;
       const next = validate(parsed);
       this.#loaded = next;
-      this.#current = applyDeviceSwitches(next, this.#switches.roomos);
+      this.#current = applyDeviceSwitches(next, this.#switches);
       log.info(
         `Loaded ${this.#path}: ${next.rooms.length} rooms, ` +
           `${next.home.favorites.length} favourites, ${next.media.players.length} media players`,
@@ -1864,19 +1865,21 @@ export class ConfigStore {
   }
 
   /**
-   * Switch a `controls.roomos` device on or off, from the panel's Settings.
+   * Switch a `controls.roomos` device or a `controls.displays` monitor on or
+   * off, from the panel's Settings.
    *
    * Persisted beside the YAML and applied straight away: listeners get the
    * new config exactly as they would after an edit to dashboard.yaml, so the
    * backend drops or reopens its connection and every panel redraws.
    * Returns an error for the panel, or null.
    */
-  setDeviceEnabled(device: string, enabled: boolean): string | null {
-    const dev = this.#loaded.controls.roomos.find((d) => d.id === device);
+  setDeviceEnabled(device: string, enabled: boolean, kind: DeviceKind = 'roomos'): string | null {
+    const list = kind === 'display' ? this.#loaded.controls.displays : this.#loaded.controls.roomos;
+    const dev = list.find((d) => d.id === device);
     if (!dev) return 'Unknown device';
-    if (!this.#switches.setRoomos(device, enabled)) return null;
+    if (!this.#switches.set(kind, device, enabled)) return null;
     log.info(`${dev.name} (${device}) switched ${enabled ? 'on' : 'off'} in Settings`);
-    this.#current = applyDeviceSwitches(this.#loaded, this.#switches.roomos);
+    this.#current = applyDeviceSwitches(this.#loaded, this.#switches);
     this.#emit();
     return null;
   }

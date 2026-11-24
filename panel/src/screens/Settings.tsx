@@ -204,22 +204,26 @@ export function Settings() {
           whatever is chosen here.
         </p>
 
-        {cfg.controls.roomos.length > 0 ? (
+        {cfg.controls.roomos.length + cfg.controls.displays.length > 0 ? (
           <>
             <div class="section-head">
-              <h2 class="section-title">Cisco devices</h2>
+              <h2 class="section-title">Devices</h2>
             </div>
-            <div class="settings-page-grid" role="group" aria-label="Cisco devices">
+            <div class="settings-page-grid" role="group" aria-label="Devices">
               {cfg.controls.roomos.map((dev) => (
-                <DeviceToggle key={dev.id} id={dev.id} name={dev.name} enabled={dev.enabled} />
+                <DeviceToggle key={`roomos:${dev.id}`} id={dev.id} name={dev.name} enabled={dev.enabled} kind="roomos" />
+              ))}
+              {cfg.controls.displays.map((dev) => (
+                <DeviceToggle key={`display:${dev.id}`} id={dev.id} name={dev.name} enabled={dev.enabled} kind="display" />
               ))}
             </div>
             <p class="settings-note">
-              Turn a device <strong>Off</strong> while it is out of use — swapped for
-              another screen, or away for repair. The panel stops connecting to it,
-              and its tile, volume card and key steps leave every page; a key that
-              also drives other things keeps doing those. Applies to every panel,
-              and turning it back on puts everything back.
+              Turn a device <strong>Off</strong> while it is out of use — a Desk Pro
+              swapped out for another screen, or a monitor that is away. The panel
+              stops connecting to it, and its tile, card and key steps leave every
+              page; a page with nothing else on it is hidden, and a key that also
+              drives other things keeps doing those. Applies to every panel, and
+              turning it back on puts everything back.
             </p>
           </>
         ) : null}
@@ -450,12 +454,22 @@ function PageToggle({ page }: { page: PanelPage }) {
   );
 }
 
-/** One Cisco device's on/off switch. Shared by every panel — see setDeviceEnabled. */
-function DeviceToggle({ id, name, enabled }: { id: string; name: string; enabled: boolean }) {
+/** One device's on/off switch. Shared by every panel — see setDeviceEnabled. */
+function DeviceToggle({
+  id,
+  name,
+  enabled,
+  kind,
+}: {
+  id: string;
+  name: string;
+  enabled: boolean;
+  kind: 'roomos' | 'display';
+}) {
   return (
     <Pressable
       class={enabled ? 'settings-page is-active' : 'settings-page'}
-      onPress={() => setDeviceEnabled(id, !enabled)}
+      onPress={() => setDeviceEnabled(id, !enabled, kind)}
       ariaPressed={enabled}
       ariaLabel={`${name} ${enabled ? 'on' : 'off'}`}
     >

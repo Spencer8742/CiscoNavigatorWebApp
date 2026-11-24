@@ -1197,14 +1197,22 @@ export type ClientMessage =
    */
   | { t: 'reload'; id: number }
   /**
-   * Switch a device in `controls.roomos` on or off for every panel.
+   * Switch a device in `controls.roomos` or `controls.displays` on or off for
+   * every panel.
    *
    * Not a preference: it is about the room, not about one screen, so it is
    * shared by every panel and also changes what the backend connects to. The
    * answer arrives as an ordinary `config` broadcast, with the device marked
    * and its tiles and key steps left out — see server/src/config/switches.ts.
    */
-  | { t: 'device-enabled'; id: number; device: string; enabled: boolean };
+  | {
+      t: 'device-enabled';
+      id: number;
+      device: string;
+      enabled: boolean;
+      /** Which list `device` is in. Absent means `roomos`, as first sent. */
+      kind?: 'roomos' | 'display';
+    };
 
 /* ── Panel preferences ─────────────────────────────────────────────────── */
 

@@ -589,7 +589,7 @@ controls:
   #    username: panel
   #    # enabled: false   # start it switched off (see below)
   #
-  # SWITCHING A DEVICE OFF. Settings → Cisco devices on the panel has an
+  # SWITCHING A DEVICE OFF. Settings → Devices on the panel has an
   # On/Off switch for each device here. Off — while a Desk Pro is swapped
   # out for another screen, say — and the backend stops connecting to it,
   # and its `device:` tile, its `volume:` card and every key step on it
@@ -677,6 +677,11 @@ controls:
   #    inputs:
   #      - { source: HDMI1, name: Mac Studio }
   #      - { source: USB-C, name: Laptop }
+  #
+  # Settings → Devices switches a display On/Off the same way as a Cisco
+  # device (see `roomos:` above): its card and key steps leave the pages,
+  # and a page with only the monitor on it — a "Dell Monitor" tab — is
+  # hidden while it is off. `enabled: false` here makes Off the default.
   #
   # It then takes the same card and keys as a Samsung, below. Off puts the
   # monitor in standby; on wakes the Mac's display output

@@ -96,8 +96,8 @@ export interface HubDeps {
   getPrefs: (panelId: string | null) => PanelPrefs;
   /** Apply a preference change, for the panel that asked. */
   onPref?: (key: string, value: unknown, panelId: string | null) => string | null;
-  /** Switch a `controls.roomos` device on or off. Returns an error, or null. */
-  onDeviceEnabled?: (device: string, enabled: boolean) => string | null;
+  /** Switch a `controls.roomos` device or a display on or off. Returns an error, or null. */
+  onDeviceEnabled?: (device: string, enabled: boolean, kind: 'roomos' | 'display') => string | null;
   /** Apply a player-layout change, for the panel that asked. */
   onLayout?: (layout: unknown, panelId: string | null) => string | null;
   /** Current Elgato Key Light states, sent in `hello`. */
@@ -328,11 +328,16 @@ export class Hub {
 
       case 'device-enabled': {
         if (!this.#deps.onDeviceEnabled) return;
-        if (typeof msg.device !== 'string' || typeof msg.enabled !== 'boolean') {
+        const kind = msg.kind ?? 'roomos';
+        if (
+          typeof msg.device !== 'string' ||
+          typeof msg.enabled !== 'boolean' ||
+          (kind !== 'roomos' && kind !== 'display')
+        ) {
           this.#send(panel, { t: 'error', ref: msg.id, code: 'device_rejected', message: 'Invalid device switch' });
           return;
         }
-        const problem = this.#deps.onDeviceEnabled(msg.device, msg.enabled);
+        const problem = this.#deps.onDeviceEnabled(msg.device, msg.enabled, kind);
         if (problem) {
           this.#send(panel, { t: 'error', ref: msg.id, code: 'device_rejected', message: problem });
         }

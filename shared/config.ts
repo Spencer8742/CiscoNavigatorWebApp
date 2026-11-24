@@ -898,6 +898,12 @@ export interface DisplayConfig {
    * source names: HDMI1, HDMI2, HDMI3, HDMI4, DISPLAY_PORT_1, DVI, PC...
    */
   inputs: SourceRef[];
+  /**
+   * Whether this display is in use. Off: no connection or polling, and its
+   * card and key steps leave `controls.pages`. Set by `enabled:` in the YAML
+   * and overridden by the switch in Settings — see RoomosConfig.enabled.
+   */
+  enabled: boolean;
 }
 
 /** How a DDC monitor is reached. See DisplayConfig.ddc. */

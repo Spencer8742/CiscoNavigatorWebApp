@@ -313,6 +313,8 @@ export class Controls {
      */
     const nextDisplays = new Map<string, MdcClient | DdcClient>();
     for (const d of cfg.displays) {
+      // Switched off in Settings: not polled, not connected. Stopped below.
+      if (d.enabled === false) continue;
       if (d.ddc) {
         const opts = {
           id: d.id,
