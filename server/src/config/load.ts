@@ -802,9 +802,6 @@ function mdcDisplayList(v: unknown): DisplayConfig[] {
       if (raw['offInput'] !== undefined) {
         const offInput = ddcSourceName(str(String(raw['offInput']), '', `${path}.offInput`));
         if (offInput) ddc.offInput = offInput;
-        if (raw['wakeSeconds'] !== undefined) {
-          ddc.wakeSeconds = num(raw['wakeSeconds'], 3, `${path}.wakeSeconds`, 0, 30);
-        }
         else warn(`${path}.offInput`, 'an input like USB-C or HDMI2', raw['offInput']);
       }
       if (raw['wakeSeconds'] !== undefined) {
