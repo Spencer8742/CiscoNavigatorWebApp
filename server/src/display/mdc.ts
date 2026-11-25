@@ -299,6 +299,11 @@ export class MdcClient {
 
   /* ── Reading ───────────────────────────────────────────────────────────*/
 
+  /** The background poll's read. MDC is a local TCP socket: every tick. */
+  poll(): Promise<boolean> {
+    return this.refresh();
+  }
+
   /**
    * Re-read power, volume, mute and input. Resolves to whether anything
    * changed; never throws — a display that does not answer is a state, not

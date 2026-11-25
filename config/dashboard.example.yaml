@@ -670,7 +670,9 @@ controls:
   #    name: Dell
   #    ddc: mac_studio             # an id from controls.ssh
   #    # m1ddc: /opt/homebrew/bin/m1ddc   # default; /usr/local/bin if built by hand
-  #    # screen: 1                 # m1ddc's `display` selector, if the Mac has several
+  #    # screen: 1A2B3C4D-0000-0000-0000-000000000000
+  #    #                           # which of the Mac's screens, if it has
+  #    #                           # several — see SCREEN below
   #    # standby: 4                # the off value: 4 standby (default), 5 off
   #    # offInput: USB-C           # off = switch to this empty input instead;
   #    #                           # see below
@@ -696,10 +698,31 @@ controls:
   # Turn the monitor's own "Auto Select" input off, or it hunts back.
   #
   # `offInput:` is also how it WAKES. Asleep, the P4326QEB ignores a switch
-  # to HDMI but wakes for USB-C, so On, and any input key pressed while it
-  # is asleep, switches to `offInput` first, waits `wakeSeconds` (default
-  # 3), then switches to the input asked for. Awake, a key goes straight
-  # there, so a laptop on USB-C never flashes up on the way.
+  # to HDMI but wakes for USB-C. So On, and an input key, light the Mac's
+  # display output (`caffeinate -u`), switch to `offInput`, wait
+  # `wakeSeconds` (default 3), then switch to the input asked for — unless
+  # a fresh read shows the monitor awake on another input, when a key goes
+  # straight there, so a laptop on USB-C never flashes up for nothing. Sitting
+  # on USB-C it always goes the long way: showing a laptop and asleep look
+  # the same from the Mac, and from USB-C the detour costs only its pause.
+  #
+  # SCREEN. `m1ddc display list` numbers the Mac's screens, and the numbers
+  # move: turn off the Mac's other screen (a TV on another of its ports) and
+  # the Dell goes from 2 to 1, and every command aimed at "2" misses. Use the
+  # UUID that `m1ddc display list detailed` prints in the Dell's heading,
+  # which does not move: `screen: 1A2B3C4D-0000-0000-0000-000000000000`.
+  #
+  # THE MAC ASLEEP. A key's steps all start at once, so a step on the Dell —
+  # or an `ssh:` step — usually reaches the Mac before the same key's
+  # Wake-on-LAN has woken it. Such a step waits up to 45 seconds for the Mac
+  # to answer instead of failing. The monitor is re-read in the background
+  # about once a minute while it is on, and only every ten minutes while it
+  # is off or the Mac does not answer: each read is an SSH connection, and
+  # one can wake a sleeping Mac through a Bonjour Sleep Proxy (an Apple TV
+  # or HomePod on the network does this), which would otherwise keep it from
+  # ever staying asleep. So do not put a Dell step in the same key as the
+  # step that puts the Mac to sleep — the Mac asleep takes the Dell's
+  # picture away and it sleeps by itself, and the two would race.
   #
   # The same Dell shows its volume bar for a DDC volume or mute change and
   # then ignores it (DDPM's SpeakerVolume too); `volume: false` and
@@ -735,6 +758,10 @@ controls:
   # For the one step no API covers — `caffeinate -u -t 1` on a Mac, to light
   # its display once Wake-on-LAN has woken it. Turn on Remote Login on the
   # Mac (System Settings > General > Sharing).
+  #
+  # A key's steps all start at once, so the SSH step reaches the Mac while
+  # the same key's Wake-on-LAN is still waking it. It waits up to 45 seconds
+  # for the Mac to answer, then runs; no `wait:` step is needed (or used).
   #
   # The CREDENTIAL is not written here — this file is sent to the panel. In
   # .env, per host id in upper case:

@@ -4,7 +4,7 @@ import { WebosClient } from '~/tv/webos.ts';
 import { RoomosClient } from '~/roomos/xapi.ts';
 import { MdcClient } from '~/display/mdc.ts';
 import { DdcClient, ddcSourceName } from '~/display/ddc.ts';
-import { SshRunner } from '~/ssh/runner.ts';
+import { SshRunner, type SshOptions } from '~/ssh/runner.ts';
 import type {
   AppleTvKeyOp,
   ControlAction,
@@ -133,6 +133,16 @@ function laneOf(action: ControlAction): string {
 /** A webhook is unauthenticated and idempotent-ish; still, do not hang on it. */
 const WEBHOOK_TIMEOUT_MS = 5000;
 
+/**
+ * How long a step that SSHes into a machine waits for it to answer.
+ *
+ * A key's steps all start at once, so "Office Power" presses the Mac's
+ * Wake-on-LAN and SSHes in to light its display in the same instant, while
+ * the Mac is still asleep. Waiting this long for it covers a wake from
+ * sleep; it is the same budget a television gets to come out of standby.
+ */
+const HOST_WAKE_MS = 45_000;
+
 export class Controls {
   readonly #deps: ControlsDeps;
   readonly #ssh: SshRunner;
@@ -156,27 +166,42 @@ export class Controls {
    * reason for the panel. The command is the caller's: a key's fixed `run:`,
    * or one Plex builds from nothing but a validated item.
    */
-  async runSsh(hostId: string, command: string): Promise<string | null> {
+  async runSsh(hostId: string, command: string, opts: SshOptions = {}): Promise<string | null> {
     const cfg = this.#deps.getConfig().controls.ssh.find((h) => h.id === hostId);
     if (!cfg) {
       log.warn(`Refused SSH host "${hostId}": not in controls.ssh`);
       return 'Unknown host';
     }
     const credential = await this.#deps.sshCredential(cfg.id);
-    return this.#ssh.run({ ...cfg, ...credential }, command);
+    return this.#ssh.run({ ...cfg, ...credential }, command, opts);
   }
 
   /**
    * Run a command on a `controls.ssh` host and collect what it prints — for
-   * a DDC monitor's reads. Bounded, unlike `streamSsh` on its own: a Mac that
-   * stops answering mid-command must not hold the monitor's queue forever.
+   * a DDC monitor. Bounded once connected, so a Mac that stops answering
+   * mid-command cannot hold the monitor's queue forever.
    */
-  async #sshOutput(hostId: string, command: string): Promise<{ problem: string | null; lines: string[] }> {
-    const lines: string[] = [];
-    const signal = AbortSignal.timeout(15_000);
-    const problem = await this.streamSsh(hostId, command, (line) => lines.push(line), signal);
-    if (!problem && signal.aborted) return { problem: `${hostId}: the command did not finish`, lines };
-    return { problem, lines };
+  async #sshCapture(
+    hostId: string,
+    command: string,
+    how: { wait: boolean; timeoutMs: number },
+  ): Promise<{ problem: string | null; lines: string[] }> {
+    const cfg = this.#deps.getConfig().controls.ssh.find((h) => h.id === hostId);
+    if (!cfg) return { problem: `Unknown host "${hostId}" — add it to controls.ssh`, lines: [] };
+    const credential = await this.#deps.sshCredential(cfg.id);
+    return this.#ssh.capture({ ...cfg, ...credential }, command, {
+      timeoutMs: how.timeoutMs,
+      // A command somebody asked for waits for a Mac that is still waking;
+      // a background read does not, and reports its own state changes.
+      ...(how.wait ? { waitForHostMs: HOST_WAKE_MS } : { quiet: true }),
+    });
+  }
+
+  /** Re-read every DDC monitor reached through `hostId`. */
+  #rereadDisplaysOn(hostId: string): void {
+    for (const d of this.#displays.values()) {
+      if (d instanceof DdcClient && d.host === hostId) void d.refresh();
+    }
   }
 
   /** `runSsh`, for a command that keeps reporting: see `SshRunner.stream`. */
@@ -341,7 +366,7 @@ export class Controls {
           continue;
         }
         existing?.stop();
-        const client = new DdcClient({ ...opts, run: (host, command) => this.#sshOutput(host, command) });
+        const client = new DdcClient({ ...opts, run: (host, command, how) => this.#sshCapture(host, command, how) });
         client.onChange(() => this.#deps.onDisplays?.(this.displaySnapshot()));
         void client.refresh();
         nextDisplays.set(d.id, client);
@@ -806,8 +831,14 @@ export class Controls {
       case 'display':
         return this.#displayAction(action.display, action.op, action.input, action.value);
 
-      case 'ssh':
-        return this.runSsh(action.host, action.run);
+      case 'ssh': {
+        // Wait for a host the same key may only just have woken.
+        const problem = await this.runSsh(action.host, action.run, { waitForHostMs: HOST_WAKE_MS });
+        // The Mac answered: a monitor read through it while it slept is
+        // stale, and its next background read could be ten minutes away.
+        if (!problem) this.#rereadDisplaysOn(action.host);
+        return problem;
+      }
 
       case 'appletv':
         return this.#deps.appleTvCommand(action.device, action.op);
@@ -928,8 +959,10 @@ export class Controls {
   }
 
   async #refreshAll(): Promise<void> {
-    // Displays publish their own changes through onChange.
-    for (const d of this.#displays.values()) void d.refresh();
+    // Displays publish their own changes through onChange, and pace
+    // themselves: a DDC monitor is read through an SSH connection to its
+    // Mac, which is not something to open every fifteen seconds all night.
+    for (const d of this.#displays.values()) void d.poll();
     if (this.#lights.size === 0) return;
     const results = await Promise.all([...this.#lights.values()].map((l) => l.read()));
     if (results.some(Boolean)) this.#publish();
