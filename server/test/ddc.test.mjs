@@ -1,4 +1,4 @@
-import { describe, test } from 'node:test';
+import { describe, mock, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -16,52 +16,71 @@ const M = '/opt/homebrew/bin/m1ddc';
 
 /** An m1ddc on a Mac, answering the commands DdcClient sends. */
 function fakeMac(initial = {}) {
-  // `asleep`: the P4326QEB with no signal — it still answers DDC, reports
-  // standby 4, ignores a switch to any input but USB-C, and wakes for that.
-  const mon = { present: true, installed: true, standby: 1, volume: 30, mute: 2, input: 17, asleep: false, ...initial };
-  if (mon.asleep) mon.standby = 4;
+  // `asleep`: the P4326QEB with no signal — it still answers DDC, ignores a
+  // switch to any input but USB-C, and wakes for that. What it reports for
+  // standby while asleep was never seen on the real one, so it is a knob:
+  // `asleepStandby` (4 by default; 1 is "asleep but says it is on").
+  // `flags`: high-byte flags per value, like the 0xFF64 the real one gave.
+  // `unreadable`: values that come back empty this time.
+  // `fumble`: how many writes fail with a DDC error before one works.
+  const mon = {
+    present: true, installed: true, standby: 1, volume: 30, mute: 2, input: 17,
+    asleep: false, asleepStandby: 4, flags: { input: 0x0f00 }, unreadable: [], fumble: 0,
+    ...initial,
+  };
   const commands = [];
-  const run = async (host, command) => {
-    commands.push({ host, command });
+  const run = async (host, command, how) => {
+    commands.push({ host, command, how });
     if (command.includes('|| { echo missing')) {
       if (!mon.installed) return { problem: null, lines: ['missing'] };
       const lines = ['standby', 'volume', 'mute', 'input'].map((c) => {
-        if (!mon.present) return `${c}=`;
-        // A Dell reporting a flag in the high byte of the input.
-        return `${c}=${c === 'input' ? mon.input | 0x0f00 : mon[c]}`;
+        if (!mon.present || mon.unreadable.includes(c)) return `${c}=`;
+        const value = c === 'standby' && mon.asleep ? mon.asleepStandby : mon[c];
+        return `${c}=${value | (mon.flags[c] ?? 0)}`;
       });
       return { problem: null, lines };
     }
     if (command.includes('caffeinate -u')) {
       mon.present = true;
-      mon.standby = 1;
+      // Lighting the Mac's output wakes a monitor asleep for want of a
+      // picture on the input it is on — not one parked on an empty input.
+      if (mon.asleep && mon.input !== 27) mon.asleep = false;
       // Anything after the wake (a `set input`) still applies.
-      if (!/set input/.test(command)) return { problem: null, lines: [] };
+      if (!/set (standby|input)/.test(command)) return { problem: null, lines: [] };
     }
     const sets = [...command.matchAll(/set (standby|volume|mute|input) (\w+)/g)];
     if (sets.length === 0) return { problem: 'unexpected command', lines: [] };
     if (!mon.present) return { problem: 'mac_studio: command exited 1', lines: ['Could not find a suitable display'] };
-    for (const [, what, value] of sets.slice(0, -1)) apply(what, value);
-    const [, what, value] = sets.at(-1);
-    apply(what, value);
-    return { problem: null, lines: [] };
+    if (mon.fumble > 0) {
+      mon.fumble -= 1;
+      return { problem: 'mac_studio: command exited 1', lines: ['DDC communication failure: (iokit/?) unknown subsystem error'] };
+    }
+    for (const [, what, value] of sets) apply(what, value);
+    return { problem: null, lines: sets.map(([, , value]) => `Writing ${value}`) };
   };
   const apply = (what, value) => {
     if (what === 'input' && mon.asleep) {
       if (Number(value) !== 27) return;
       mon.asleep = false;
-      mon.standby = 1;
     }
     if (what === 'mute') mon.mute = value === 'on' ? 1 : 2;
     else mon[what] = Number(value);
-    if (what === 'standby' && Number(value) !== 1) mon.present = false;
+    if (what === 'standby') {
+      if (Number(value) === 1) mon.asleep = false;
+      else mon.present = false;
+    }
   };
   return { mon, commands, run };
 }
 
 function client(mac, extra = {}) {
-  return new DdcClient({ id: 'dell', ssh: 'mac_studio', m1ddc: M, standby: 4, run: mac.run, settleMs: 0, ...extra });
+  return new DdcClient({
+    id: 'dell', ssh: 'mac_studio', m1ddc: M, standby: 4, run: mac.run, settleMs: 0, retryMs: 0, ...extra,
+  });
 }
+
+/** The Dell as configured: off is the empty USB-C input, on is the Mac's HDMI. */
+const dell = (mac, extra = {}) => client(mac, { offInput: 'USB_C', onInput: 'HDMI1', wakeSeconds: 0, ...extra });
 
 describe('DDC input names', () => {
   test('accepts the names people write, and numbers', () => {
@@ -194,13 +213,144 @@ describe('DdcClient', () => {
     c.stop();
   });
 
-  test('awake, an input key goes straight there, with no USB-C detour', async () => {
-    const mac = fakeMac({ input: 27 });
-    const c = client(mac, { offInput: 'USB_C', onInput: 'HDMI1', wakeSeconds: 0 });
+  test('awake on another input, an input key goes straight there, with no USB-C detour', async () => {
+    // The detour would flash the laptop on USB-C for no reason.
+    const mac = fakeMac({ input: 18 });
+    const c = dell(mac);
     assert.equal(await c.setInput('HDMI1'), null);
     assert.equal(mac.commands.at(-1).command, `${M} set input 17 2>&1`);
     assert.equal(mac.mon.input, 17);
     c.stop();
+  });
+
+  test('already on the input asked for, it lights the Mac and stays put', async () => {
+    const mac = fakeMac({ input: 17 });
+    const c = dell(mac);
+    assert.equal(await c.setInput('HDMI1'), null);
+    assert.equal(mac.commands.at(-1).command, `/usr/bin/caffeinate -u -t 1; ${M} set input 17 2>&1`);
+    c.stop();
+  });
+
+  test('on the wake input, an input key always goes by way of it — even reading as awake', async () => {
+    // Showing the laptop or asleep on USB-C look the same from here, and
+    // from USB-C the detour costs nothing.
+    const mac = fakeMac({ input: 27 });
+    const c = dell(mac);
+    assert.equal(await c.setInput('HDMI1'), null);
+    assert.match(mac.commands.at(-1).command, /caffeinate -u -t 1; .* set input 27; sleep 0; .* set input 17/);
+    assert.equal(mac.mon.input, 17);
+    c.stop();
+  });
+
+  test('after a restart, a Dell asleep on USB-C that says it is on is still woken', async () => {
+    // The bug: "parked" lives in memory, so after the container restarts a
+    // Dell left asleep on USB-C read as on (it reports standby 1 asleep), and
+    // the Mac Studio key sent HDMI straight to a monitor that ignores it.
+    const mac = fakeMac({ input: 27, asleep: true, asleepStandby: 1 });
+    const c = dell(mac);
+    assert.equal(await c.setInput('HDMI1'), null);
+    assert.equal(mac.mon.asleep, false, 'woken');
+    assert.equal(mac.mon.input, 17, 'and on HDMI');
+    c.stop();
+  });
+
+  test('when the Mac is still waking, the key waits for it, then wakes the Dell', async () => {
+    // Office Power presses the Mac's Wake-on-LAN and this in the same
+    // instant. The fresh read cannot reach the Mac, so nothing about the
+    // Dell can be trusted — and it is woken the long way once the Mac answers.
+    const mac = fakeMac({ input: 17, asleep: true });
+    let macAwake = false;
+    const run = async (host, command, how) => {
+      if (!macAwake) {
+        mac.commands.push({ host, command, how });
+        if (how.wait) {
+          macAwake = true; // the runner waited for it
+          return mac.run(host, command, how);
+        }
+        return { problem: 'mac_studio: connect EHOSTUNREACH', lines: [] };
+      }
+      return mac.run(host, command, how);
+    };
+    const c = dell({ run });
+    assert.equal(await c.setInput('HDMI1'), null);
+    const [read, write] = mac.commands;
+    assert.equal(read.how.wait, false, 'the read does not wait for the Mac');
+    assert.equal(write.how.wait, true, 'the write does');
+    assert.match(write.command, /set input 27; sleep 0; .* set input 17/);
+    assert.equal(mac.mon.input, 17);
+    assert.equal(mac.mon.asleep, false);
+    c.stop();
+  });
+
+  test('a write the monitor fumbles is tried once more', async () => {
+    const mac = fakeMac({ input: 18, fumble: 1 });
+    const c = dell(mac);
+    assert.equal(await c.setInput('HDMI1'), null);
+    assert.equal(mac.mon.input, 17);
+    const writes = mac.commands.filter((x) => !x.command.includes('echo missing'));
+    assert.equal(writes.length, 2);
+    c.stop();
+  });
+
+  test('a wake sequence gets the time its pause needs', async () => {
+    const mac = fakeMac({ input: 27 });
+    const c = dell(mac, { wakeSeconds: 20 });
+    await c.setInput('HDMI1');
+    assert.ok(mac.commands.at(-1).how.timeoutMs >= 35_000, `timeout ${mac.commands.at(-1).how.timeoutMs}`);
+    c.stop();
+  });
+
+  test('flags in the high byte are ignored, for every value', async () => {
+    // 0xFF64 is what the real Dell answered for its maximum volume.
+    const mac = fakeMac({ input: 17, flags: { standby: 0xff00, volume: 0xff00, mute: 0xff00, input: 0x0f00 } });
+    const c = client(mac);
+    await c.refresh();
+    assert.deepEqual(c.state, { id: 'dell', reachable: true, power: true, volume: 30, muted: false, input: 'HDMI1' });
+    c.stop();
+  });
+
+  test('a value that does not come back keeps the last one read', async () => {
+    const mac = fakeMac({ input: 18 });
+    const c = client(mac);
+    await c.refresh();
+    mac.mon.unreadable = ['input', 'volume'];
+    await c.refresh();
+    assert.equal(c.state.input, 'HDMI2');
+    assert.equal(c.state.volume, 30);
+    c.stop();
+  });
+
+  test('background reads do not wait for the Mac; the poll paces itself', async () => {
+    mock.timers.enable({ apis: ['Date'], now: 1_000_000 });
+    try {
+      const mac = fakeMac({ input: 17 });
+      const c = client(mac);
+      await c.refresh();
+      assert.equal(mac.commands[0].how.wait, false);
+      const reads = () => mac.commands.length;
+
+      await c.poll();
+      assert.equal(reads(), 1, 'not due straight after a read');
+      mock.timers.tick(61_000);
+      await c.poll();
+      assert.equal(reads(), 2, 'on: read about once a minute');
+
+      // Off (or the Mac not answering): rarely, so a sleeping Mac is not
+      // woken over and over by a Bonjour Sleep Proxy.
+      mac.mon.present = false;
+      mock.timers.tick(61_000);
+      await c.poll();
+      assert.equal(c.state.power, false);
+      mock.timers.tick(5 * 60_000);
+      await c.poll();
+      assert.equal(reads(), 3, 'off: not yet');
+      mock.timers.tick(6 * 60_000);
+      await c.poll();
+      assert.equal(reads(), 4, 'off: every ten minutes');
+      c.stop();
+    } finally {
+      mock.timers.reset();
+    }
   });
 
   test('On wakes a parked monitor through USB-C and lands on HDMI', async () => {
@@ -209,7 +359,6 @@ describe('DdcClient', () => {
     await c.refresh();
     await c.turnOff();
     mac.mon.asleep = true; // no signal on USB-C: it goes to sleep
-    mac.mon.standby = 4;
     await c.refresh();
     assert.equal(c.state.power, false);
     assert.equal(await c.turnOn(), null);
@@ -282,12 +431,15 @@ controls:
     - { id: bad_host, ddc: "mac studio" }
     - { id: odd_screen, ddc: mac_studio, screen: "1; reboot", standby: 5 }
     - { id: parked, ddc: mac_studio, offInput: USB-C, volume: false, mute: false }
+    - { id: by_uuid, ddc: mac_studio, screen: 1A2B3C4D-0000-0000-0000-000000000000 }
 `);
     const config = new ConfigStore(path);
     try {
       assert.equal(await config.load(), true);
       const displays = config.current.controls.displays;
-      assert.deepEqual(displays.map((d) => d.id), ['dell', 'odd_screen', 'parked']);
+      assert.deepEqual(displays.map((d) => d.id), ['dell', 'odd_screen', 'parked', 'by_uuid']);
+      // The UUID m1ddc prints does not move when the Mac renumbers its screens.
+      assert.equal(displays[3].ddc.display, '1A2B3C4D-0000-0000-0000-000000000000');
       assert.equal(displays[2].ddc.offInput, 'USB_C');
       assert.equal(displays[2].volume, false);
       assert.equal(displays[2].mute, false);
