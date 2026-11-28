@@ -552,6 +552,20 @@ controls:
   #       - { appletv: office_apple_tv, action: power_on }
   #       - { entity: button.wake_on_lan_mac, service: press }
   #       - { ssh: mac_studio, run: caffeinate -u -t 1 }
+  #
+  # A monitor driven over DDC (`ddc:` under `displays:`) counts as the Mac it
+  # is plugged into, so its steps queue with that Mac's `ssh:` steps, in the
+  # order written. And `with: <device id>` puts any step in a device's queue:
+  # a Home Assistant script that puts the Mac to sleep, written after the
+  # steps that turn its monitors off, waits for them instead of racing them —
+  # a monitor step that runs after the Mac is asleep cannot reach it.
+  #
+  #   - name: Shut Down Office
+  #     actions:
+  #       - { display: dell, action: off }
+  #       - { display: lg_monitor, action: off }
+  #       - { entity: script.sleepmac, with: mac_studio }   # after both
+  #       - { tv: office_lg, action: off }                  # at once
 
   # ── Cisco devices, spoken to directly ──────────────────────────────────
   #
@@ -720,9 +734,9 @@ controls:
   # is off or the Mac does not answer: each read is an SSH connection, and
   # one can wake a sleeping Mac through a Bonjour Sleep Proxy (an Apple TV
   # or HomePod on the network does this), which would otherwise keep it from
-  # ever staying asleep. So do not put a Dell step in the same key as the
-  # step that puts the Mac to sleep — the Mac asleep takes the Dell's
-  # picture away and it sleeps by itself, and the two would race.
+  # ever staying asleep. In a key that also puts the Mac to sleep, give the
+  # sleep step `with: <the Mac's ssh id>` so it runs after the monitor steps
+  # (see "A key may carry SEVERAL actions" above); without it they race.
   #
   # The same Dell shows its volume bar for a DDC volume or mute change and
   # then ignores it (DDPM's SpeakerVolume too); `volume: false` and

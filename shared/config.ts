@@ -331,7 +331,7 @@ export interface CastDisplay {
  * Deliberately small. Each variant is one HTTP call whose shape is fixed by
  * the far end, so there is nothing to configure beyond which one.
  */
-export type ControlAction =
+export type ControlAction = (
   /**
    * Fire a Home Assistant webhook: `POST /api/webhook/<id>`.
    *
@@ -404,7 +404,27 @@ export type ControlAction =
    * added to the allow-list by allReferencedEntities(), so putting a scene on
    * a macro page grants no more than putting it on Home does.
    */
-  | { kind: 'entity'; entity: string; service: string; data?: Record<string, unknown> };
+  | { kind: 'entity'; entity: string; service: string; data?: Record<string, unknown> }
+) &
+  ControlStepOrder;
+
+/**
+ * Where a step waits its turn.
+ *
+ * A key's steps start at once, except that steps on the same device run in
+ * the order they are written. A DDC monitor counts as the Mac it is driven
+ * from, so its steps queue with that Mac's `ssh:` steps.
+ */
+export interface ControlStepOrder {
+  /**
+   * Queue this step with another device's steps, by that device's id — for
+   * a step that is ABOUT the device without being sent to it. A Home
+   * Assistant script that puts the Mac to sleep, written after the steps
+   * that turn the Mac's monitors off, with `with: mac_studio`, waits for
+   * them instead of racing them.
+   */
+  with?: string;
+}
 
 /** What a key may ask an Apple TV to do. The remote's own commands, less the swipes. */
 export type AppleTvKeyOp =

@@ -103,33 +103,6 @@ export interface ControlsDeps {
   wakeOnLan?: (mac: string, broadcast?: string) => Promise<void>;
 }
 
-/**
- * Which device a step drives, so steps on one device keep their order while
- * steps on different devices run together. See `#runAll`.
- */
-function laneOf(action: ControlAction): string {
-  switch (action.kind) {
-    case 'webhook':
-      return `webhook:${action.id}`;
-    case 'keylight':
-      // One lane for every key light: `all` and a named light overlap.
-      return 'keylight';
-    case 'tv':
-      return `tv:${action.tv}`;
-    case 'roomos':
-    case 'xcommand':
-      return `roomos:${action.device}`;
-    case 'display':
-      return `display:${action.display}`;
-    case 'ssh':
-      return `ssh:${action.host}`;
-    case 'appletv':
-      return `appletv:${action.device}`;
-    case 'entity':
-      return `entity:${action.entity}`;
-  }
-}
-
 /** A webhook is unauthenticated and idempotent-ish; still, do not hang on it. */
 const WEBHOOK_TIMEOUT_MS = 5000;
 
@@ -446,6 +419,56 @@ export class Controls {
     this.#poll = undefined;
     for (const d of this.#roomos.values()) d.stop();
     for (const d of this.#displays.values()) d.stop();
+  }
+
+  /* ── Ordering a key's steps ─────────────────────────────────────────────*/
+
+  /**
+   * Which device a step drives, so steps on one device keep their order while
+   * steps on different devices run together. See `#runAll`.
+   *
+   * A DDC monitor's steps are sent through the Mac it is plugged into, so
+   * they queue with that Mac's own `ssh:` steps: "monitors off, then sleep
+   * the Mac" happens in that order. `with:` queues any step with a device.
+   */
+  #laneOf(action: ControlAction): string {
+    if (action.with) return this.#deviceLane(action.with);
+    switch (action.kind) {
+      case 'webhook':
+        return `webhook:${action.id}`;
+      case 'keylight':
+        // One lane for every key light: `all` and a named light overlap.
+        return 'keylight';
+      case 'tv':
+        return `tv:${action.tv}`;
+      case 'roomos':
+      case 'xcommand':
+        return `roomos:${action.device}`;
+      case 'display': {
+        const display = this.#deps.getConfig().controls.displays.find((d) => d.id === action.display);
+        return display?.ddc ? `ssh:${display.ddc.ssh}` : `display:${action.display}`;
+      }
+      case 'ssh':
+        return `ssh:${action.host}`;
+      case 'appletv':
+        return `appletv:${action.device}`;
+      case 'entity':
+        return `entity:${action.entity}`;
+    }
+  }
+
+  /** The lane of the device with this id, for `with:`. */
+  #deviceLane(id: string): string {
+    const cfg = this.#deps.getConfig().controls;
+    if (cfg.ssh.some((h) => h.id === id)) return `ssh:${id}`;
+    const display = cfg.displays.find((d) => d.id === id);
+    if (display) return display.ddc ? `ssh:${display.ddc.ssh}` : `display:${id}`;
+    if (cfg.tvs.some((t) => t.id === id)) return `tv:${id}`;
+    if (cfg.roomos.some((d) => d.id === id)) return `roomos:${id}`;
+    if (cfg.appleTvs.some((d) => d.id === id)) return `appletv:${id}`;
+    // Names nothing configured: a queue of its own, shared by every step
+    // that names the same id.
+    return `with:${id}`;
   }
 
   /* ── Running a button ──────────────────────────────────────────────────*/
@@ -789,7 +812,7 @@ export class Controls {
 
     const lanes = new Map<string, number[]>();
     actions.forEach((action, i) => {
-      const key = laneOf(action);
+      const key = this.#laneOf(action);
       const lane = lanes.get(key);
       if (lane) lane.push(i);
       else lanes.set(key, [i]);
