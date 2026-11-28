@@ -21,6 +21,8 @@ let hostKey;
 const ran = [];
 /** Passwords the server was offered. */
 const offered = [];
+/** Monitor commands the server finished, and when. */
+const finished = [];
 
 /*
  * ssh2's ed25519 generator occasionally (about 1 in 250) writes a key its own
@@ -64,6 +66,15 @@ async function listen(port, key) {
           }
           if (info.command === 'forever') {
             stream.write('tick\n');
+            return;
+          }
+          if (info.command.includes('m1ddc')) {
+            // A monitor command takes a moment, so what waits for it shows.
+            setTimeout(() => {
+              finished.push({ command: info.command, at: Date.now() });
+              stream.exit(0);
+              stream.end();
+            }, 300);
             return;
           }
           if (info.command === 'say') {
@@ -288,6 +299,75 @@ controls:
     controls.stop();
     config.close();
     await new Promise((resolve) => (late ? late.close(resolve) : resolve()));
+    await rm(own, { recursive: true, force: true });
+  }
+});
+
+/*
+ * "Shut Down Office": turn the Mac's monitors off, THEN put the Mac to sleep.
+ * Every step starts at once, so without an order the sleep can win, and the
+ * monitor step finds a Mac that is already asleep. A monitor driven from the
+ * Mac queues with the Mac, and `with: mac_studio` puts the Home Assistant
+ * script that sleeps the Mac in the same queue, after it.
+ */
+test('a step queued with the Mac waits for the Mac\'s monitor steps; others do not', async () => {
+  const own = await mkdtemp(join(tmpdir(), 'ssh-order-'));
+  const path = join(own, 'dashboard.yaml');
+  await writeFile(path, `
+version: 1
+controls:
+  ssh:
+    - { id: mac_studio, host: "127.0.0.1:${PORT}", username: me }
+  displays:
+    - { id: lg_monitor, name: LG Monitor, ddc: mac_studio }
+  pages:
+    - id: room
+      name: Room
+      items:
+        - id: shut_down
+          name: Shut Down Office
+          actions:
+            - { display: lg_monitor, action: off }
+            - { entity: script.sleepmac, with: mac_studio }
+            - { entity: light.office, service: turn_off }
+`);
+  const config = new ConfigStore(path);
+  assert.equal(await config.load(), true);
+  const services = [];
+  const controls = new Controls({
+    getConfig: () => config.current,
+    haUrl: '',
+    callService: async (call) => {
+      services.push({ entity: call.entity, at: Date.now() });
+      return null;
+    },
+    getEntity: () => null,
+    onLights: () => {},
+    onTvs: () => {},
+    onRoomos: () => {},
+    roomosPassword: () => '',
+    appleTvCommand: async () => null,
+    sshCredential: async () => ({ password: 'right' }),
+    sshKnownHostsFile: join(own, 'known.json'),
+    hasPanels: () => false,
+    tvKeyFile: join(own, 'tv-keys.json'),
+  });
+  try {
+    assert.deepEqual(
+      config.current.controls.pages[0].items[0].actions[1],
+      { kind: 'entity', entity: 'script.sleepmac', service: 'turn_on', with: 'mac_studio' },
+    );
+    finished.length = 0;
+    assert.equal(await controls.press('shut_down'), null);
+    const off = finished.find((f) => f.command.includes('set standby'));
+    assert.ok(off, 'the monitor was turned off');
+    const sleep = services.find((x) => x.entity === 'script.sleepmac');
+    const lights = services.find((x) => x.entity === 'light.office');
+    assert.ok(sleep.at >= off.at, 'the Mac is put to sleep only after its monitor is off');
+    assert.ok(lights.at < off.at, 'a step on another device did not wait');
+  } finally {
+    controls.stop();
+    config.close();
     await rm(own, { recursive: true, force: true });
   }
 });

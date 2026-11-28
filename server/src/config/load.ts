@@ -1339,7 +1339,23 @@ function defaultIcon(action: ControlAction | undefined): string {
   }
 }
 
+/**
+ * One step of a key, with its `with:` if it has one (see ControlStepOrder).
+ * The id is not checked against the devices here: one that names nothing
+ * just makes a queue of its own, which is what an unknown id should mean.
+ */
 function controlAction(raw: Raw, path: string): ControlAction | null {
+  const step = controlStep(raw, path);
+  if (!step || raw['with'] === undefined) return step;
+  const id = str(String(raw['with']), '', `${path}.with`);
+  if (!/^[A-Za-z0-9_]+$/.test(id)) {
+    warn(`${path}.with`, 'the id of a device, like mac_studio', raw['with']);
+    return step;
+  }
+  return { ...step, with: id };
+}
+
+function controlStep(raw: Raw, path: string): ControlAction | null {
   /*
    * Companion is gone: every step goes to its device directly now. A key
    * still carrying one is named rather than silently dropped, because a key
